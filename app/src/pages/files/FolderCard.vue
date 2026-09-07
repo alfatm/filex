@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n';
 import { MoreVertical, Star } from 'lucide-vue-next';
 import type { Node } from '@/data/types';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
+import { useClipboardStore } from '@/features/files/clipboardStore';
 import { useNodeDrag } from '@/features/files/useNodeDrag';
 import { IconButton } from '@/ui';
 import FolderIcon from './FolderIcon.vue';
@@ -10,6 +11,7 @@ import FolderIcon from './FolderIcon.vue';
 const props = withDefaults(defineProps<{ node: Node; selected: boolean; focused?: boolean }>(), { focused: false });
 const { t } = useI18n();
 const itemMenu = useItemMenuStore();
+const clipboard = useClipboardStore();
 const { drag, onDragStart, onDragOver, onDragLeave, onDrop } = useNodeDrag();
 
 function onContextMenu(event: MouseEvent) {
@@ -27,6 +29,7 @@ function onContextMenu(event: MouseEvent) {
         : 'border-border hover:border-border-hover hover:bg-hover-card',
       focused && 'ring-2 ring-primary-ring ring-offset-2',
       drag.overId === node.id && '!border-primary bg-primary-tint ring-2 ring-primary',
+      clipboard.isCut(node.id) && 'opacity-50',
     ]"
     :id="`node-${node.id}`"
     :aria-selected="selected"

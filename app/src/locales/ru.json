@@ -4,7 +4,8 @@
   },
   "common": {
     "comingSoon": "Скоро",
-    "loading": "Загрузка"
+    "loading": "Загрузка",
+    "unavailable": "Недоступно на этом сервере"
   },
   "nav": {
     "menu": "Меню",
@@ -120,6 +121,33 @@
       "titleMany": "Переместить {count} элемент в | Переместить {count} элемента в | Переместить {count} элементов в",
       "destination": "Папка назначения",
       "confirm": "Переместить"
+    },
+    "tags": {
+      "title": "Теги",
+      "hint": "Теги объединяют файлы из разных папок; в поиске они находятся как tag:имя.",
+      "placeholder": "Введите тег и нажмите Enter",
+      "empty": "Тегов пока нет",
+      "save": "Сохранить"
+    },
+    "versions": {
+      "title": "История версий",
+      "hint": "Все сохранённые ревизии «{name}».",
+      "current": "Текущая",
+      "by": "{name} • {size}",
+      "restore": "Восстановить",
+      "restored": "Восстановлена ревизия от {date}",
+      "empty": "У папки нет ревизий"
+    },
+    "access": {
+      "title": "Управление доступом",
+      "hint": "Кто может открыть «{name}» и с какими правами.",
+      "email": "Адрес эл. почты",
+      "emailPlaceholder": "name@example.com",
+      "role": "Роль",
+      "roleOf": "Роль {name}",
+      "invite": "Пригласить",
+      "people": "У кого есть доступ",
+      "revoke": "Убрать {name}"
     }
   },
   "toast": {
@@ -138,7 +166,8 @@
     "unstarredMany": "{count} элемент убран из избранного | {count} элемента убраны из избранного | {count} элементов убрано из избранного",
     "movedOne": "«{name}» перемещён в {folder}",
     "movedMany": "{count} элемент перемещён в {folder} | {count} элемента перемещены в {folder} | {count} элементов перемещено в {folder}",
-    "linkCopied": "Ссылка скопирована"
+    "linkCopied": "Ссылка скопирована",
+    "tagsSaved": "Теги «{name}» сохранены"
   },
   "upload": {
     "title": "Загрузка {done} из {total}",
@@ -237,10 +266,6 @@
       "owner": "Владелец",
       "editor": "Редактор",
       "viewer": "Просмотр"
-    },
-    "activity": {
-      "modified": "Вы изменили {name}",
-      "created": "Вы создали {name}"
     }
   },
   "type": {
@@ -271,7 +296,9 @@
     "restore": "Восстановить",
     "deleteForever": "Удалить навсегда",
     "selectAll": "Выделить всё",
-    "clearSelection": "Снять выделение"
+    "clearSelection": "Снять выделение",
+    "cut": "Вырезать",
+    "paste": "Вставить"
   },
   "preview": {
     "download": "Скачать",
@@ -493,5 +520,20 @@
       "title": "Не удалось загрузить список",
       "hint": "Проверьте соединение и повторите"
     }
+  },
+  "activity": {
+    "created": "{actor} создал",
+    "modified": "{actor} изменил содержимое",
+    "renamed": "{actor} переименовал из «{detail}»",
+    "moved": "{actor} переместил в «{detail}»",
+    "linkShared": "{actor} создал ссылку",
+    "linkRemoved": "{actor} удалил ссылку",
+    "invited": "{actor} открыл доступ: {detail}",
+    "revoked": "{actor} закрыл доступ: {detail}",
+    "trashed": "{actor} переместил в корзину",
+    "restored": "{actor} восстановил",
+    "starred": "{actor} добавил в избранное",
+    "unstarred": "{actor} убрал из избранного",
+    "tagged": "{actor} задал теги: {detail}"
   }
 }

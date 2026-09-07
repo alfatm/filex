@@ -259,6 +259,11 @@ export const useFilesStore = defineStore('files', () => {
     toast.push(subjectMessage(t, starred ? 'toast.starred' : 'toast.unstarred', nodes));
   }
 
+  async function setTags(node: Node, tags: string[]) {
+    await mutate(() => repository.setTags(node.id, tags));
+    toast.push(t('toast.tagsSaved', { name: node.name }));
+  }
+
   async function move(nodes: Node[], target: Node) {
     await mutate(() => repository.move(nodes.map((n) => n.id), target.id));
     toast.push(subjectMessage(t, 'toast.moved', nodes, { folder: target.name }));
@@ -313,6 +318,7 @@ export const useFilesStore = defineStore('files', () => {
     deleteForever,
     emptyTrash,
     setStarred,
+    setTags,
     move,
     createShareLink,
     removeShareLink,

@@ -10,6 +10,9 @@ export type ActiveModal =
   | { kind: 'rename'; node: Node }
   | { kind: 'share'; node: Node }
   | { kind: 'move'; nodes: Node[] }
+  | { kind: 'tags'; node: Node }
+  | { kind: 'versions'; node: Node }
+  | { kind: 'access'; node: Node }
   | { kind: 'delete'; variant: DeleteVariant; nodes: Node[] }
   /** Full-screen file preview over `nodes` (files only, listing order), starting at `index`. */
   | { kind: 'preview'; nodes: Node[]; index: number };

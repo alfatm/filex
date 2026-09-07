@@ -54,7 +54,7 @@ function onPageDrop(event: DragEvent) {
   drag.end();
   if (!dropped?.length) return;
   event.preventDefault();
-  uploads.start(dropped);
+  void uploads.start(dropped);
 }
 
 const FILTERS: FilterId[] = ['type', 'people', 'modified', 'size'];

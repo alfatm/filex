@@ -34,9 +34,9 @@ describe('listing filter', () => {
   beforeEach(resetMock);
 
   it('narrows a folder listing by type, dropping folders with it', async () => {
-    expect(names(await repo.listFolder('demo', filter())).length).toBe(16);
+    expect(names(await repo.listFolder('demo', filter())).length).toBe(17);
     expect(names(await repo.listFolder('demo', filter({ fileType: 'images' })))).toEqual(['beach.png', 'mountains.jpg']);
-    expect(names(await repo.listFolder('demo', filter({ fileType: 'design' })))).toEqual(['UI Design.fig']);
+    expect(names(await repo.listFolder('demo', filter({ fileType: 'design' })))).toEqual(['Mechanical UI KIT 1.0 (Community).fig', 'UI Design.fig']);
   });
 
   it('narrows by size, which is a file property too', async () => {
@@ -50,9 +50,21 @@ describe('listing filter', () => {
     const now = Date.parse('2026-07-10T16:00:00Z');
     const root = await repo.listFolder('demo');
     const week = root.filter((n) => matchesFilter(n, filter({ modified: 'week' }), now));
-    expect(names(week)).toEqual(['Code', 'README.md', 'UI Design.fig', 'app.ts', 'beach.png', 'data.csv', 'mountains.jpg', 'overview.pdf']);
+    expect(names(week)).toEqual([
+      'Code',
+      'Mechanical UI KIT 1.0 (Community).fig',
+      'README.md',
+      'UI Design.fig',
+      'app.ts',
+      'beach.png',
+      'data.csv',
+      'mountains.jpg',
+      'overview.pdf',
+    ]);
     expect(week.some((n) => n.kind === 'folder')).toBe(true);
-    expect(root.filter((n) => matchesFilter(n, filter({ modified: 'today' }), now))).toHaveLength(1);
+    // Two: the newest reference file, and the asset dated after the pinned clock — "within the last day" holds for
+    // anything not older than that, which is also how a server behaves when a client's clock runs behind.
+    expect(root.filter((n) => matchesFilter(n, filter({ modified: 'today' }), now))).toHaveLength(2);
   });
 
   it('narrows Shared with me by owner, and offers exactly those owners', async () => {
@@ -77,19 +89,19 @@ describe('mock repository mutations', () => {
   beforeEach(resetMock);
 
   it('trash → restore → emptyTrash keeps folder listings and item counts consistent', async () => {
-    expect((await repo.getNode('demo')).itemCount).toBe(16);
+    expect((await repo.getNode('demo')).itemCount).toBe(17);
     await repo.moveToTrash(['archive', 'data-csv']);
     expect(names(await repo.listFolder('demo'))).not.toContain('Archive');
     const trash = await repo.listTrash();
     expect(names(trash)).toEqual(['Archive', 'data.csv']);
     expect(trash.every((n) => n.deletedAt && n.originalPath === '/demo')).toBe(true);
-    expect((await repo.getNode('demo')).itemCount).toBe(14);
+    expect((await repo.getNode('demo')).itemCount).toBe(15);
     await expect(repo.resolvePath('demo', 'Archive')).rejects.toThrow('path not found');
 
     await repo.restore(['archive']);
     expect(names(await repo.listFolder('demo'))).toContain('Archive');
     expect((await repo.getNode('archive')).deletedAt).toBeUndefined();
-    expect((await repo.getNode('demo')).itemCount).toBe(15);
+    expect((await repo.getNode('demo')).itemCount).toBe(16);
 
     await repo.emptyTrash();
     expect(await repo.listTrash()).toEqual([]);
@@ -148,7 +160,7 @@ describe('mock repository mutations', () => {
     const file = await repo.uploadFile(q3.id, { name: 'summary.pdf', size: 10 });
     await repo.move([file.id], 'demo');
     expect((await repo.getNode(q3.id)).itemCount).toBe(0);
-    expect((await repo.getNode('demo')).itemCount).toBe(18);
+    expect((await repo.getNode('demo')).itemCount).toBe(19);
     expect(names(await repo.listFolder('demo'))).toContain('summary.pdf');
     expect((await repo.getPath(file.id)).map((n) => n.id)).toEqual(['demo']);
   });
@@ -189,7 +201,7 @@ describe('mock repository mutations', () => {
     for (const id of ['shared', 'shared/roadmap-md', 'shared/brand-assets', 'shared/q3-report-pdf']) {
       await expect(repo.getNode(id)).rejects.toThrow('node not found');
     }
-    expect((await repo.getNode('demo')).itemCount).toBe(15);
+    expect((await repo.getNode('demo')).itemCount).toBe(16);
   });
 
   it('navigates demo → Design and lists the 8 real files of the asset tree', async () => {

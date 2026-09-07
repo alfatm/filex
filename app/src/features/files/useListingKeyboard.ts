@@ -1,5 +1,6 @@
 import { computed, watch } from 'vue';
 import { useFilesStore } from '@/stores/files';
+import { useClipboardStore } from './clipboardStore';
 import { useItemMenuStore } from './itemMenuStore';
 import { useFileActions } from './useFileActions';
 
@@ -14,9 +15,22 @@ export function useListingKeyboard() {
   const files = useFilesStore();
   const actions = useFileActions();
   const itemMenu = useItemMenuStore();
+  const clipboard = useClipboardStore();
 
   function onKeydown(event: KeyboardEvent) {
     if ((event.target as HTMLElement | null)?.closest(INTERACTIVE)) return;
+    // `code`, not `key`: the shortcuts must survive a non-latin keyboard layout, as Ctrl+A already does.
+    if (event.ctrlKey || event.metaKey) {
+      if (event.code === 'KeyX') {
+        const cut = files.selected.length ? files.selected : files.ordered.filter((n) => n.id === files.focusedId);
+        if (cut.length) clipboard.cut(cut);
+        return event.preventDefault();
+      }
+      if (event.code === 'KeyV') {
+        if (clipboard.canPaste) void clipboard.paste();
+        return event.preventDefault();
+      }
+    }
     const consumed = files.handleKeydown(event, {
       open: actions.open,
       remove: (node) => void actions.run(node.deletedAt ? 'deleteForever' : 'moveToTrash', node),

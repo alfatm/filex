@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 
-const ROW_COUNT = 16;
+const ROW_COUNT = 17;
 
 function rows(page: Page) {
   return page.getByRole('grid').locator('tbody tr');

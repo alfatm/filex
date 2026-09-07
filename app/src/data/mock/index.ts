@@ -1,7 +1,8 @@
 import { segments } from '@/lib/path';
 import { DUPLICATE_NAME, type Repository } from '../repository';
 import type { ListingFilter, Node } from '../types';
-import { fileTypeOf, filterPeople, indexedOnly, live, nodes, people, storages, TYPE_THUMBNAILS, user } from './dataset';
+import { fileTypeOf, filterPeople, indexedOnly, live, nodes, storages, TYPE_THUMBNAILS, user } from './dataset';
+import * as history from './history';
 import { assistantAsk } from './assistant';
 import { matchesFilter, search } from './search';
 
@@ -12,6 +13,7 @@ let seq = 0;
 /** Tests only: puts the dataset back to its initial shape. */
 export function resetMock() {
   nodes.splice(0, nodes.length, ...structuredClone(initial));
+  history.resetHistory();
   seq = 0;
 }
 
@@ -91,14 +93,52 @@ export const mockRepository: Repository = {
     }
     return chain;
   },
-  async listPeople() {
-    return people;
+  async listPeople(nodeId) {
+    return history.listAccess(nodeId);
+  },
+  async addPerson(nodeId, email, role) {
+    history.addPerson(nodeId, email, role);
+  },
+  async setPersonRole(nodeId, personId, role) {
+    history.setPersonRole(nodeId, personId, role);
+  },
+  async removePerson(nodeId, personId) {
+    history.removePerson(nodeId, personId);
+  },
+  async listVersions(nodeId) {
+    return history.listVersions(nodeId);
+  },
+  async restoreVersion(nodeId, versionId) {
+    history.restoreVersion(nodeId, versionId);
+    history.record(nodeId, 'restored');
+  },
+  async listActivity(nodeId) {
+    return history.listActivity(nodeId);
   },
   async listFilterPeople() {
     return filterPeople();
   },
   async currentUser() {
     return user;
+  },
+  async capabilities() {
+    // What this mock actually implements. Zipping a folder is the one thing it cannot do.
+    return {
+      upload: true,
+      move: true,
+      copy: false,
+      delete: true,
+      mkdir: true,
+      search: true,
+      versions: true,
+      ocr: true,
+      assistant: true,
+      tags: true,
+      activity: true,
+      permissions: true,
+      deleteForever: true,
+      folderDownload: false,
+    };
   },
   async search(query) {
     return search(query);
@@ -174,6 +214,7 @@ export const mockRepository: Repository = {
   async rename(id, name) {
     const node = byId(id);
     assertNoSibling(node.parentId, name, node.id);
+    history.record(id, 'renamed', node.name);
     node.name = name;
     node.modifiedAt = new Date().toISOString();
     return { ...node };
@@ -185,6 +226,7 @@ export const mockRepository: Repository = {
       if (node.deletedAt) continue;
       node.deletedAt = now;
       node.originalPath = node.parentId ? absolutePath(node.parentId) : '/';
+      history.record(id, 'trashed');
       bumpItemCount(node.parentId, -1);
     }
   },
@@ -194,6 +236,7 @@ export const mockRepository: Repository = {
       if (!node.deletedAt) continue;
       delete node.deletedAt;
       delete node.originalPath;
+      history.record(id, 'restored');
       bumpItemCount(node.parentId, 1);
     }
   },
@@ -205,13 +248,25 @@ export const mockRepository: Repository = {
       for (const n of [node, ...descendants(node.id)]) gone.add(n.id);
     }
     nodes.splice(0, nodes.length, ...nodes.filter((n) => !gone.has(n.id)));
+    for (const id of gone) history.forget(id);
   },
   async emptyTrash() {
     // Nested trashed nodes vanish with their ancestor; listing the top-level ones is enough.
     await this.deleteForever(nodes.filter((n) => n.deletedAt).map((n) => n.id));
   },
   async setStarred(ids, starred) {
-    for (const id of ids) byId(id).starred = starred;
+    for (const id of ids) {
+      byId(id).starred = starred;
+      history.record(id, starred ? 'starred' : 'unstarred');
+    }
+  },
+  async setTags(id, tags) {
+    // Trimmed, de-duplicated, order preserved: what the user typed, minus the noise.
+    const clean = [...new Set(tags.map((t) => t.trim()).filter(Boolean))];
+    const node = byId(id);
+    if (clean.length) node.tags = clean;
+    else delete node.tags;
+    history.record(id, 'tagged', clean.join(', '));
   },
   async move(ids, targetFolderId) {
     const target = byId(targetFolderId);
@@ -225,18 +280,21 @@ export const mockRepository: Repository = {
       bumpItemCount(node.parentId, -1);
       node.parentId = target.id;
       bumpItemCount(target.id, 1);
+      history.record(id, 'moved', target.name);
     }
   },
   async createShareLink(id) {
     const node = byId(id);
     node.shareUrl ??= `https://filex.example/s/${node.id.replace(/\//g, '-')}-${(++seq).toString(36)}`;
     node.shared = true;
+    history.record(id, 'linkShared');
     return node.shareUrl;
   },
   async removeShareLink(id) {
     const node = byId(id);
     delete node.shareUrl;
     node.shared = false;
+    history.record(id, 'linkRemoved');
   },
   async recordOpen(id) {
     // The search-only reference hits are not in `nodes`; opening them must not throw.

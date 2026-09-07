@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, MoreVertical, Star } from 'lucide-vue-next';
 import { useFormat } from '@/composables/useFormat';
 import type { Node } from '@/data/types';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
+import { useClipboardStore } from '@/features/files/clipboardStore';
 import { useNodeDrag } from '@/features/files/useNodeDrag';
 import { useSettingsStore } from '@/features/settings/settingsStore';
 import HitIcon from '@/features/search/HitIcon.vue';
@@ -30,6 +31,7 @@ const { formatDateTime, formatSize } = useFormat();
 const files = useFilesStore();
 const view = useViewStore();
 const itemMenu = useItemMenuStore();
+const clipboard = useClipboardStore();
 const { drag, onDragStart, onDragOver, onDragLeave, onDrop } = useNodeDrag();
 const settings = useSettingsStore();
 
@@ -137,6 +139,7 @@ function onContextMenu(node: Node, event: MouseEvent) {
             files.isSelected(node.id) ? 'bg-primary-soft' : 'hover:bg-hover-row',
             files.cursorId === node.id && 'cursor-row',
             drag.overId === node.id && '!bg-primary-tint outline outline-2 -outline-offset-2 outline-primary',
+            clipboard.isCut(node.id) && 'opacity-50',
           ]"
           draggable="true"
           @click="files.selectFromEvent(node.id, $event)"

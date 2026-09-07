@@ -64,7 +64,9 @@ test.describe('Pages', () => {
     const files = page.locator('tbody tr[data-id]');
     await expect(files.first()).toContainText('Q3 report.pdf');
     await expect(files.nth(1)).toContainText('README.md');
-    await expect(files.nth(2)).toContainText('Roadmap.md');
+    // Assets beyond the reference set are dated below them, in the order the generator walked the tree.
+    await expect(files.nth(2)).toContainText('Mechanical UI KIT 1.0 (Community).fig');
+    await expect(files.nth(3)).toContainText('Roadmap.md');
     await expect(page.getByRole('button', { name: 'Sort by' })).toHaveCount(0);
   });
 

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Copy, Link, Star, X } from 'lucide-vue-next';
-import type { Node, Person, User } from '@/data/types';
+import { repository } from '@/data';
+import type { ActivityEvent, Node, Person, User } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
 import { useFileActions } from '@/features/files/useFileActions';
 import { useFilesStore } from '@/stores/files';
@@ -44,15 +45,29 @@ const rows = computed(() => [
   { key: 'location', value: location.value },
   { key: 'size', value: props.node.kind === 'folder' ? '—' : formatSize(props.node.size) },
   { key: 'modified', value: formatDateTime(props.node.modifiedAt) },
-  { key: 'created', value: formatDateTime(props.node.createdAt) },
+  // A listing row carries no creation date on every backend; the row is dropped rather than shown empty.
+  ...(props.node.createdAt ? [{ key: 'created', value: formatDateTime(props.node.createdAt) }] : []),
   { key: 'owner', value: personName(props.node.ownerId, props.node.ownerName ?? props.node.ownerId) },
 ]);
 
-// Stub: the repository has no activity feed yet, so the tab shows the two events the node itself records.
-const activity = computed(() => [
-  { id: 'modified', text: t('panel.activity.modified', { name: props.node.name }), at: props.node.modifiedAt },
-  { id: 'created', text: t('panel.activity.created', { name: props.node.name }), at: props.node.createdAt },
-]);
+// The feed is per node and reloads whenever the node or the store's revision changes, so an action the user just
+// took is at the top of the list by the time they switch to the tab.
+const activity = ref<ActivityEvent[]>([]);
+watch(
+  [() => props.node.id, () => files.revision, tab] as const,
+  async ([id, , current]) => {
+    if (current !== 'activity') return;
+    const list = await repository.listActivity(id);
+    if (props.node.id === id) activity.value = list;
+  },
+  { immediate: true },
+);
+
+/** "You renamed it from “notes.md”" — the actor, the verb, and at most one variable part. */
+function sentence(event: ActivityEvent): string {
+  const actor = event.actorId === props.user?.id ? t('panel.you') : event.actorName;
+  return t(`activity.${event.kind}`, { actor, detail: event.detail ?? '' });
+}
 </script>
 
 <template>
@@ -127,11 +142,11 @@ const activity = computed(() => [
       </div>
     </template>
 
-    <ul v-else class="mt-6 space-y-4">
+    <ul v-else class="mt-6 space-y-4" :aria-label="t('panel.tabActivity')">
       <li v-for="event in activity" :key="event.id" class="flex items-start">
-        <Avatar :initial="user?.initial ?? ''" />
+        <Avatar :initial="event.actorId === user?.id ? (user?.initial ?? '') : event.actorName.charAt(0)" />
         <div class="ml-3 min-w-0">
-          <p class="text-15 leading-snug">{{ event.text }}</p>
+          <p class="text-15 leading-snug">{{ sentence(event) }}</p>
           <p class="mt-1 text-13 leading-none text-text-3">{{ formatDateTime(event.at) }}</p>
         </div>
       </li>

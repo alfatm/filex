@@ -410,6 +410,8 @@ func BuildRouter(d *Deps) http.Handler {
 	sharesAdmH := handlers.NewSharesAdmin(d.Store)
 	externalH := handlers.NewExternalAdmin(d.Store, d.Caps, d.External, envManagedExternal(d.Cfg))
 	authProvH := handlers.NewAuthProviders(d.Store)
+	storagesUserH := handlers.NewStoragesUser(d.Store)
+	storagesUserH.AttachACL(d.ACL)
 	storagesAdmH := handlers.NewStoragesAdmin(d.Store)
 	// Test probes a plugin driver properly (handlers/storages_admin.go).
 	storagesAdmH.Plugins = d.Plugins
@@ -731,6 +733,11 @@ func BuildRouter(d *Deps) http.Handler {
 			// proxy (which injects the token); returns {ticket, ws_url} for a
 			// direct cross-origin wss:// connection. Confinement is inherited.
 			r.Post("/ws-ticket", wsh.Ticket)
+			// The drives this user may open, by the name that addresses them
+			// (`<name>://<path>`). The same list reaches a client as a side
+			// effect of `?q=index`; this route answers it without listing a
+			// folder first, so a drive switcher can render before navigation.
+			r.Get("/storages", storagesUserH.List)
 			r.Get("/manager", mh.List)
 			r.Post("/manager", mh.Mutate)
 			r.Get("/manager/trash", trashH.List)

@@ -5,9 +5,10 @@ import { useAssistantStore } from '@/features/assistant/assistantStore';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
 import { useModalsStore } from '@/features/files/modalsStore';
 import { THEMES, useSettingsStore, type Theme } from '@/features/settings/settingsStore';
+import { useCapabilitiesStore } from '@/stores/capabilities';
 import { previewList } from '@/features/files/preview';
 import { emptyQuery, useSearchStore } from '@/features/search/searchStore';
-import { FILE_TYPE_GROUPS, MODIFIED_PRESETS, SIZE_PRESETS, type ListingFilter } from '@/data/types';
+import { FILE_TYPE_GROUPS, MODIFIED_PRESETS, SIZE_PRESETS, type Capabilities, type ListingFilter } from '@/data/types';
 import { joinPath, segments } from '@/lib/path';
 import router from '@/router';
 import { useFilesStore } from '@/stores/files';
@@ -25,6 +26,7 @@ import { useViewStore } from '@/stores/view';
  *   ?modal=settings            opens the user settings modal
  *   ?theme=light|dark|system   applies a theme without going through the settings modal
  *   ?filter=type:images        sets one listing filter chip (`type`, `modified`, `size`, `person`)
+ *   ?caps=assistant:0,tags:1   overrides the capability snapshot, to see a server that lacks a feature
  *   ?modal=rename              opens Rename for the selected node
  *   ?modal=preview             opens the preview of the selected file
  *   ?menu=item                 opens the ⋮ menu of the selected node
@@ -64,6 +66,7 @@ export function installScreenshotQuery() {
   const search = useSearchStore();
   const assistant = useAssistantStore();
   const settings = useSettingsStore();
+  const capabilities = useCapabilitiesStore();
 
   let assistantSeeded = false;
   let searchPatched = false;
@@ -92,6 +95,18 @@ export function installScreenshotQuery() {
     const theme = first(query.theme);
     if (THEMES.includes(theme as Theme)) settings.settings.theme = theme as Theme;
     if (first(query.modal) === 'settings') settings.open = true;
+    const caps = first(query.caps);
+    if (caps) {
+      // The snapshot may not have arrived yet; apply the override on top of whatever lands.
+      const overrides = caps.split(',').map((pair) => pair.split(':'));
+      const apply = () => {
+        for (const [name, value] of overrides) {
+          if (name in capabilities.can) capabilities.can[name as keyof Capabilities] = value !== '0';
+        }
+      };
+      apply();
+      watch(() => capabilities.loaded, apply);
+    }
     const chip = first(query.filter)?.split(':');
     if (chip) void files.setFilter(withChip(files.filter, chip[0], chip[1] ?? ''));
     if (first(query.modal) === 'search') {

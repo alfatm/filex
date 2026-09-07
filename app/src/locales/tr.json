@@ -4,7 +4,8 @@
   },
   "common": {
     "comingSoon": "Çok yakında",
-    "loading": "Yükleniyor"
+    "loading": "Yükleniyor",
+    "unavailable": "Bu sunucuda kullanılamıyor"
   },
   "nav": {
     "menu": "Menü",
@@ -120,6 +121,33 @@
       "titleMany": "{count} öğeyi şuraya taşı",
       "destination": "Hedef klasör",
       "confirm": "Taşı"
+    },
+    "tags": {
+      "title": "Etiketler",
+      "hint": "Etiketler dosyaları klasörlerden bağımsız gruplar; aramada tag:ad ile bulunur.",
+      "placeholder": "Etiket yazıp Enter'a basın",
+      "empty": "Henüz etiket yok",
+      "save": "Kaydet"
+    },
+    "versions": {
+      "title": "Sürüm geçmişi",
+      "hint": "“{name}” dosyasının kayıtlı tüm sürümleri.",
+      "current": "Geçerli",
+      "by": "{name} • {size}",
+      "restore": "Geri yükle",
+      "restored": "{date} tarihli sürüm geri yüklendi",
+      "empty": "Klasörlerin sürümü olmaz"
+    },
+    "access": {
+      "title": "Erişimi yönet",
+      "hint": "“{name}” dosyasını kim, hangi yetkiyle açabilir.",
+      "email": "E-posta adresi",
+      "emailPlaceholder": "ad@ornek.com",
+      "role": "Rol",
+      "roleOf": "{name} rolü",
+      "invite": "Davet et",
+      "people": "Erişimi olanlar",
+      "revoke": "{name} kişisini kaldır"
     }
   },
   "toast": {
@@ -138,7 +166,8 @@
     "unstarredMany": "{count} öğe yıldızlılardan kaldırıldı",
     "movedOne": "“{name}” {folder} klasörüne taşındı",
     "movedMany": "{count} öğe {folder} klasörüne taşındı",
-    "linkCopied": "Bağlantı kopyalandı"
+    "linkCopied": "Bağlantı kopyalandı",
+    "tagsSaved": "“{name}” etiketleri kaydedildi"
   },
   "upload": {
     "title": "{total} dosyadan {done} tanesi yükleniyor",
@@ -237,10 +266,6 @@
       "owner": "Sahip",
       "editor": "Düzenleyici",
       "viewer": "Görüntüleyici"
-    },
-    "activity": {
-      "modified": "{name} öğesini değiştirdiniz",
-      "created": "{name} öğesini oluşturdunuz"
     }
   },
   "type": {
@@ -271,7 +296,9 @@
     "restore": "Geri yükle",
     "deleteForever": "Kalıcı olarak sil",
     "selectAll": "Tümünü seç",
-    "clearSelection": "Seçimi kaldır"
+    "clearSelection": "Seçimi kaldır",
+    "cut": "Kes",
+    "paste": "Yapıştır"
   },
   "preview": {
     "download": "İndir",
@@ -493,5 +520,20 @@
       "title": "Liste yüklenemedi",
       "hint": "Bağlantınızı kontrol edip yeniden deneyin"
     }
+  },
+  "activity": {
+    "created": "{actor} oluşturdu",
+    "modified": "{actor} içeriği değiştirdi",
+    "renamed": "{actor} “{detail}” adından yeniden adlandırdı",
+    "moved": "{actor} “{detail}” klasörüne taşıdı",
+    "linkShared": "{actor} paylaşım bağlantısı oluşturdu",
+    "linkRemoved": "{actor} paylaşım bağlantısını kaldırdı",
+    "invited": "{actor}, {detail} kişisine erişim verdi",
+    "revoked": "{actor}, {detail} kişisinin erişimini kaldırdı",
+    "trashed": "{actor} çöp kutusuna taşıdı",
+    "restored": "{actor} geri yükledi",
+    "starred": "{actor} yıldızladı",
+    "unstarred": "{actor} yıldızı kaldırdı",
+    "tagged": "{actor} etiketleri {detail} yaptı"
   }
 }

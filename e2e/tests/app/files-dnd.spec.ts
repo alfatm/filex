@@ -31,7 +31,7 @@ test.describe('Drag and drop', () => {
 
     await rows.filter({ hasText: 'app.ts' }).dragTo(rows.filter({ hasText: 'Documents' }));
     await expect(page.getByText('2 items moved to Documents')).toBeVisible();
-    await expect(rows).toHaveCount(14);
+    await expect(rows).toHaveCount(15);
   });
 
   test('a breadcrumb above the open folder accepts a drop', async ({ page }) => {

@@ -49,16 +49,16 @@ const connections = [
   { id: 'apiKeys', icon: KeyRound, label: 'nav.apiKeys' },
 ] as const;
 
-// Folder upload needs the sub-folder chain created from `webkitRelativePath`; until then the entry is disabled.
 const newItems = computed<FloatingMenuEntry[]>(() => [
   { id: 'folder', label: t('new.folder'), icon: FolderPlus },
   { id: 'fileUpload', label: t('new.fileUpload'), icon: Upload },
-  { id: 'folderUpload', label: t('new.folderUpload'), icon: FolderUp, disabled: true, hint: t('common.comingSoon') },
+  { id: 'folderUpload', label: t('new.folderUpload'), icon: FolderUp },
   { id: 'document', label: t('new.document'), icon: FilePlus, dividerBefore: true, disabled: true, hint: t('common.comingSoon') },
 ]);
 
 const newMenu = ref<{ x: number; y: number } | null>(null);
 const fileInput = ref<HTMLInputElement>();
+const folderInput = ref<HTMLInputElement>();
 const NEW_MENU_GAP = 6;
 
 function openNewMenu(event: MouseEvent) {
@@ -70,11 +70,12 @@ function onNewSelect(id: string) {
   newMenu.value = null;
   if (id === 'folder') modals.open({ kind: 'newFolder' });
   else if (id === 'fileUpload') fileInput.value?.click();
+  else if (id === 'folderUpload') folderInput.value?.click();
 }
 
 function onFilesPicked(event: Event) {
   const input = event.target as HTMLInputElement;
-  if (input.files?.length) uploads.start(input.files);
+  if (input.files?.length) void uploads.start(input.files);
   input.value = '';
 }
 
@@ -126,8 +127,10 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
         <span v-if="!view.sidebarCollapsed">{{ t('new.button') }}</span>
       </Button>
       <FloatingMenu v-if="newMenu" :items="newItems" :x="newMenu.x" :y="newMenu.y" :label="t('new.button')" @select="onNewSelect" @close="newMenu = null" />
-      <!-- Native picker behind the "File upload" entry. -->
+      <!-- Native pickers behind the "File upload" and "Folder upload" entries; the second one hands us a flat
+           list whose files carry `webkitRelativePath`, which the upload store turns back into folders. -->
       <input ref="fileInput" type="file" multiple class="hidden" tabindex="-1" :aria-label="t('new.fileUpload')" @change="onFilesPicked" />
+      <input ref="folderInput" type="file" webkitdirectory multiple class="hidden" tabindex="-1" :aria-label="t('new.folderUpload')" @change="onFilesPicked" />
     </div>
 
     <div class="min-h-0 overflow-y-auto" :class="view.sidebarCollapsed && 'w-full'">

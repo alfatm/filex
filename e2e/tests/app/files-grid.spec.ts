@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 // The mock storage (app/src/data/mock/dataset.ts) holds 8 folders and 8 files at the root.
 const FOLDER_COUNT = 8;
-const FILE_COUNT = 8;
+const FILE_COUNT = 9;
 
 test.describe('My files — grid view', () => {
   test.beforeEach(async ({ page }) => {

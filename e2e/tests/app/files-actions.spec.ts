@@ -23,7 +23,9 @@ test.describe('File actions', () => {
     await newButton.click();
     await expect(newButton).toHaveAttribute('aria-expanded', 'true');
     const menu = page.getByRole('menu', { name: 'New' });
-    await expect(menu.getByRole('menuitem', { name: 'Folder upload' })).toHaveAttribute('aria-disabled', 'true');
+    // "New document" is the only entry still waiting for a backend.
+    await expect(menu.getByRole('menuitem', { name: 'Folder upload' })).not.toHaveAttribute('aria-disabled', 'true');
+    await expect(menu.getByRole('menuitem', { name: 'New document' })).toHaveAttribute('aria-disabled', 'true');
     await menu.getByRole('menuitem', { name: 'Folder', exact: true }).click();
 
     const dialog = page.getByRole('dialog');

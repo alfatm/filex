@@ -10,7 +10,7 @@ test.describe('Listing filters', () => {
   test('Type narrows the folder listing to files of that group', async ({ page }) => {
     await page.goto('files?view=list');
     const rows = page.getByRole('grid').locator('tbody tr');
-    await expect(rows).toHaveCount(16);
+    await expect(rows).toHaveCount(17);
 
     await chips(page, 'Type').click();
     const menu = page.getByRole('menu', { name: 'Type' });
@@ -26,7 +26,7 @@ test.describe('Listing filters', () => {
 
     await chip.click();
     await page.getByRole('menu', { name: 'Type' }).getByRole('menuitemradio', { name: 'Any file type' }).click();
-    await expect(rows).toHaveCount(16);
+    await expect(rows).toHaveCount(17);
   });
 
   test('an empty result offers a way back', async ({ page }) => {
@@ -37,7 +37,7 @@ test.describe('Listing filters', () => {
     await expect(page.getByRole('grid')).toHaveCount(0);
     await expect(page.getByText('No matching items')).toBeVisible();
     await page.getByRole('button', { name: 'Clear filters' }).click();
-    await expect(page.getByRole('grid').locator('tbody tr')).toHaveCount(16);
+    await expect(page.getByRole('grid').locator('tbody tr')).toHaveCount(17);
   });
 
   test('People filters Shared with me down to one owner', async ({ page }) => {
@@ -63,7 +63,7 @@ test.describe('Listing filters', () => {
     await page.getByRole('menu', { name: 'Modified' }).getByRole('menuitemradio', { name: 'Last 7 days' }).click();
 
     const rows = page.getByRole('grid').locator('tbody tr');
-    await expect(rows).toHaveCount(9);
+    await expect(rows).toHaveCount(10);
     // Folders survive a date filter, unlike a type or size one.
     await expect(rows.filter({ hasText: 'Code' })).toHaveCount(1);
   });

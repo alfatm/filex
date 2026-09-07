@@ -25,7 +25,7 @@ describe('files store', () => {
     expect(files.user?.id).toBe('demo');
     expect(files.folder?.id).toBe('demo');
     expect(files.path).toEqual([]);
-    expect(files.ordered).toHaveLength(16);
+    expect(files.ordered).toHaveLength(17);
     await files.openPath('Design');
     expect(files.folder?.name).toBe('Design');
     expect(files.path.map((n) => n.id)).toEqual(['demo']);
@@ -100,7 +100,7 @@ describe('files store', () => {
     await files.trash([design]);
     expect(files.ordered.map((n) => n.name)).not.toContain('Design');
     expect(files.selected).toEqual([]);
-    expect(files.folder?.itemCount).toBe(15);
+    expect(files.folder?.itemCount).toBe(16);
     expect(toast.toasts).toHaveLength(1);
     expect(toast.toasts[0].text).toBe('“Design” moved to trash');
     expect(toast.toasts[0].action?.label).toBe('Undo');
@@ -109,7 +109,7 @@ describe('files store', () => {
     await nextTick();
     await new Promise((r) => setTimeout(r, 0));
     expect(files.ordered.map((n) => n.name)).toContain('Design');
-    expect(files.folder?.itemCount).toBe(16);
+    expect(files.folder?.itemCount).toBe(17);
     expect(files.revision).toBe(2);
     // The restore owns its toast (the menu, the selection bar and Undo all go through it).
     expect(toast.toasts.map((t) => t.text)).toEqual(['“Design” moved to trash', '“Design” restored']);

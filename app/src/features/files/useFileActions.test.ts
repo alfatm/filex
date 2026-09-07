@@ -77,8 +77,8 @@ describe('useFileActions', () => {
     expect(active.kind).toBe('preview');
     // Default sort is last modified, newest first; folders are not part of the walk.
     expect(active.nodes.map((n) => n.name)).toEqual(files.files.map((n) => n.name));
-    expect(active.nodes.map((n) => n.name).slice(0, 3)).toEqual(['README.md', 'mountains.jpg', 'app.ts']);
-    expect(active.index).toBe(2);
+    expect(active.nodes.map((n) => n.name).slice(0, 3)).toEqual(['README.md', 'Mechanical UI KIT 1.0 (Community).fig', 'mountains.jpg']);
+    expect(active.index).toBe(3);
 
     // Explicit siblings (search results) replace the listing; a node outside them previews alone.
     await actions.run('preview', byName(files, 'data.csv'));

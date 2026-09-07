@@ -1,6 +1,8 @@
 import type {
+  ActivityEvent,
   AssistantEvent,
   AssistantMode,
+  Capabilities,
   ListingFilter,
   Node,
   Person,
@@ -9,6 +11,7 @@ import type {
   Storage,
   UploadInput,
   User,
+  Version,
 } from './types';
 
 /** `createFolder` / `rename` reject with an Error carrying this message when a live sibling has the same name. */
@@ -25,9 +28,21 @@ export interface Repository {
   /** Root-to-node chain, root first, excluding the node itself. */
   getPath(id: string): Promise<Node[]>;
   listPeople(nodeId: string): Promise<Person[]>;
+  /** Adds someone by email address; the display name is derived server-side. */
+  addPerson(nodeId: string, email: string, role: Person['role']): Promise<void>;
+  setPersonRole(nodeId: string, personId: string, role: Person['role']): Promise<void>;
+  removePerson(nodeId: string, personId: string): Promise<void>;
+  /** Revisions of a file, newest first; folders have none. */
+  listVersions(nodeId: string): Promise<Version[]>;
+  /** Makes an older revision the current one, keeping the ones in between. */
+  restoreVersion(nodeId: string, versionId: string): Promise<void>;
+  /** What happened to a node, newest first. */
+  listActivity(nodeId: string): Promise<ActivityEvent[]>;
   /** Options of the People chip: everyone who can own a row in the user's listings. */
   listFilterPeople(): Promise<Person[]>;
   currentUser(): Promise<User>;
+  /** Feature snapshot for this user; read once at start-up. */
+  capabilities(): Promise<Capabilities>;
   search(query: SearchQuery): Promise<SearchResult>;
   /**
    * Streams the assistant's answer to `prompt`; aborting `signal` ends the stream early. `conversationId` is the id
@@ -55,6 +70,8 @@ export interface Repository {
   deleteForever(ids: string[]): Promise<void>;
   emptyTrash(): Promise<void>;
   setStarred(ids: string[], starred: boolean): Promise<void>;
+  /** Replaces the node's tag list; an empty array clears it. */
+  setTags(id: string, tags: string[]): Promise<void>;
   move(ids: string[], targetFolderId: string): Promise<void>;
   createShareLink(id: string): Promise<string>;
   removeShareLink(id: string): Promise<void>;

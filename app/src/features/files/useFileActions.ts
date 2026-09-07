@@ -5,6 +5,7 @@ import type { Node } from '@/data/types';
 import { filesRoute } from '@/lib/path';
 import { useFilesStore } from '@/stores/files';
 import { useToastStore } from '@/stores/toast';
+import { useClipboardStore } from './clipboardStore';
 import { useModalsStore } from './modalsStore';
 import { downloadUrl, previewList } from './preview';
 
@@ -14,6 +15,7 @@ export function useFileActions() {
   const router = useRouter();
   const files = useFilesStore();
   const modals = useModalsStore();
+  const clipboard = useClipboardStore();
   const toast = useToastStore();
 
   /** Folders navigate through the router so the URL owns the state; files open the preview modal. */
@@ -66,6 +68,14 @@ export function useFileActions() {
         return modals.open({ kind: 'rename', node });
       case 'moveTo':
         return modals.open({ kind: 'move', nodes });
+      case 'cut':
+        return clipboard.cut(nodes);
+      case 'tags':
+        return modals.open({ kind: 'tags', node });
+      case 'versionHistory':
+        return modals.open({ kind: 'versions', node });
+      case 'manageAccess':
+        return modals.open({ kind: 'access', node });
       case 'addToStarred':
         return files.setStarred(nodes, true);
       case 'removeFromStarred':

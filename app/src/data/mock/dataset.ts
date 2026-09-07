@@ -1,4 +1,4 @@
-import type { FileType, Node, NodeKind, Person, Storage, ThumbnailKind, User } from '../types';
+import type { Node, NodeKind, Person, Storage, User } from '../types';
 import tree from './tree.json';
 
 const KB = 1024;
@@ -26,34 +26,8 @@ interface TreeEntry {
   text?: string;
 }
 
-const EXTENSION_TYPES: Record<string, FileType> = {
-  md: 'md',
-  jpg: 'image',
-  jpeg: 'image',
-  png: 'image',
-  gif: 'image',
-  webp: 'image',
-  svg: 'image',
-  ts: 'ts',
-  pdf: 'pdf',
-  fig: 'fig',
-  csv: 'csv',
-  mp4: 'mp4',
-};
-
-/** Placeholder artwork per type; images carry the real file in `assetUrl` and fall back to the mountain. */
-export const TYPE_THUMBNAILS: Partial<Record<FileType, ThumbnailKind>> = {
-  md: 'document',
-  ts: 'code',
-  pdf: 'pdf',
-  fig: 'figma',
-  csv: 'spreadsheet',
-  mp4: 'video',
-};
-
-export function fileTypeOf(name: string): FileType {
-  return EXTENSION_TYPES[name.split('.').pop()?.toLowerCase() ?? ''] ?? 'other';
-}
+export { fileTypeOf, TYPE_THUMBNAILS } from '../fileTypes';
+import { fileTypeOf, TYPE_THUMBNAILS } from '../fileTypes';
 
 /** The dev server / build ship every file under demo-assets/ (see vite.config.ts). */
 function assetUrl(path: string): string {

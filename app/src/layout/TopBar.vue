@@ -6,6 +6,7 @@ import { ChevronDown, HelpCircle, LayoutGrid, LogOut, Search, Settings, SlidersH
 import { emptyQuery, toUrlQuery, useSearchStore } from '@/features/search/searchStore';
 import { joinPath, segments } from '@/lib/path';
 import { useSettingsStore } from '@/features/settings/settingsStore';
+import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
 import { Avatar, IconButton } from '@/ui';
@@ -21,6 +22,7 @@ const files = useFilesStore();
 const search = useSearchStore();
 const view = useViewStore();
 const settings = useSettingsStore();
+const capabilities = useCapabilitiesStore();
 
 const accountMenu = ref<{ x: number; y: number } | null>(null);
 const ACCOUNT_MENU_WIDTH = 208;
@@ -112,7 +114,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
 
     <div class="ml-auto flex items-center gap-2 pl-6">
       <!-- The panel's own X closes it; hiding the trigger keeps the bar at the reference width while it is open. -->
-      <IconButton v-if="!view.assistantOpen" :label="t('topbar.assistant')" @click="view.assistantOpen = true">
+      <IconButton v-if="!view.assistantOpen && capabilities.can.assistant" :label="t('topbar.assistant')" @click="view.assistantOpen = true">
         <Sparkles :size="22" :stroke-width="1.75" />
       </IconButton>
       <IconButton :label="t('topbar.apps')" :disabled-hint="t('common.comingSoon')"><LayoutGrid :size="22" :stroke-width="1.75" /></IconButton>

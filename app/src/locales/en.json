@@ -4,7 +4,8 @@
   },
   "common": {
     "comingSoon": "Coming soon",
-    "loading": "Loading"
+    "loading": "Loading",
+    "unavailable": "Not available on this server"
   },
   "nav": {
     "menu": "Menu",
@@ -120,6 +121,33 @@
       "titleMany": "Move {count} item to | Move {count} items to",
       "destination": "Destination folder",
       "confirm": "Move"
+    },
+    "tags": {
+      "title": "Tags",
+      "hint": "Tags group files across folders; the search box finds them with tag:name.",
+      "placeholder": "Add a tag and press Enter",
+      "empty": "No tags yet",
+      "save": "Save"
+    },
+    "versions": {
+      "title": "Version history",
+      "hint": "Every saved revision of “{name}”.",
+      "current": "Current",
+      "by": "{name} • {size}",
+      "restore": "Restore",
+      "restored": "Restored the revision from {date}",
+      "empty": "A folder keeps no revisions"
+    },
+    "access": {
+      "title": "Manage access",
+      "hint": "Who can open “{name}”, and as what.",
+      "email": "Email address",
+      "emailPlaceholder": "name@example.com",
+      "role": "Role",
+      "roleOf": "Role of {name}",
+      "invite": "Invite",
+      "people": "People with access",
+      "revoke": "Remove {name}"
     }
   },
   "toast": {
@@ -138,7 +166,8 @@
     "unstarredMany": "{count} item removed from starred | {count} items removed from starred",
     "movedOne": "“{name}” moved to {folder}",
     "movedMany": "{count} item moved to {folder} | {count} items moved to {folder}",
-    "linkCopied": "Link copied"
+    "linkCopied": "Link copied",
+    "tagsSaved": "Tags of “{name}” saved"
   },
   "upload": {
     "title": "Uploading {done} of {total}",
@@ -237,10 +266,6 @@
       "owner": "Owner",
       "editor": "Editor",
       "viewer": "Viewer"
-    },
-    "activity": {
-      "modified": "You modified {name}",
-      "created": "You created {name}"
     }
   },
   "type": {
@@ -271,7 +296,9 @@
     "restore": "Restore",
     "deleteForever": "Delete forever",
     "selectAll": "Select all",
-    "clearSelection": "Deselect all"
+    "clearSelection": "Deselect all",
+    "cut": "Cut",
+    "paste": "Paste"
   },
   "preview": {
     "download": "Download",
@@ -493,5 +520,20 @@
       "title": "Could not load this listing",
       "hint": "Check your connection and try again"
     }
+  },
+  "activity": {
+    "created": "{actor} created it",
+    "modified": "{actor} changed the contents",
+    "renamed": "{actor} renamed it from “{detail}”",
+    "moved": "{actor} moved it to “{detail}”",
+    "linkShared": "{actor} created a share link",
+    "linkRemoved": "{actor} removed the share link",
+    "invited": "{actor} gave {detail} access",
+    "revoked": "{actor} removed {detail}’s access",
+    "trashed": "{actor} moved it to trash",
+    "restored": "{actor} restored it",
+    "starred": "{actor} starred it",
+    "unstarred": "{actor} removed the star",
+    "tagged": "{actor} set the tags to {detail}"
   }
 }

@@ -13,7 +13,8 @@ export interface Node {
   /** Bytes; 0 for folders. */
   size: number;
   modifiedAt: string;
-  createdAt: string;
+  /** Absent when the listing that produced the node does not carry one; the details panel then omits the row. */
+  createdAt?: string;
   /** Id of the owning user; `ownerName` carries the display name when it is not the current user (shared drives). */
   ownerId: string;
   ownerName?: string;
@@ -38,10 +39,80 @@ export interface Node {
   sharedAt?: string;
 }
 
+/**
+ * What the server lets this user do. The first block mirrors `/api/capabilities` field for field (the backend's
+ * `model.Capabilities`); the second names features filex does not report yet, so the UI can hide them the day the
+ * endpoint grows them instead of hard-coding "coming soon" — see docs/BACKEND-GAP.md.
+ */
+export interface Capabilities {
+  upload: boolean;
+  move: boolean;
+  copy: boolean;
+  /** Move to trash. */
+  delete: boolean;
+  mkdir: boolean;
+  search: boolean;
+  versions: boolean;
+  ocr: boolean;
+
+  assistant: boolean;
+  tags: boolean;
+  activity: boolean;
+  /** Reading and changing who has access to a node. */
+  permissions: boolean;
+  /** Emptying the trash and deleting a node for good; admin-only in filex today. */
+  deleteForever: boolean;
+  /** Downloading a folder or a mixed selection as one archive. */
+  folderDownload: boolean;
+}
+
+/** Everything off: what an unreachable or older server is assumed to offer until it answers. */
+export function noCapabilities(): Capabilities {
+  return {
+    upload: false,
+    move: false,
+    copy: false,
+    delete: false,
+    mkdir: false,
+    search: false,
+    versions: false,
+    ocr: false,
+    assistant: false,
+    tags: false,
+    activity: false,
+    permissions: false,
+    deleteForever: false,
+    folderDownload: false,
+  };
+}
+
+/** One stored revision of a file. The newest is `current`; restoring an older one adds a new current revision. */
+export interface Version {
+  id: string;
+  /** When this revision became the file's content. */
+  at: string;
+  size: number;
+  authorId: string;
+  authorName: string;
+  current: boolean;
+}
+
+/** What happened to a node, newest first. `detail` carries the one variable part of the sentence (a name, a folder). */
+export interface ActivityEvent {
+  id: string;
+  at: string;
+  actorId: string;
+  actorName: string;
+  kind: 'created' | 'modified' | 'renamed' | 'moved' | 'linkShared' | 'linkRemoved' | 'invited' | 'revoked' | 'trashed' | 'restored' | 'starred' | 'unstarred' | 'tagged';
+  detail?: string;
+}
+
 /** What the upload flow hands to the repository once a file has "arrived". */
 export interface UploadInput {
   name: string;
   size: number;
+  /** The bytes. The mock never reads them; the HTTP repository has nothing to send without them. */
+  blob?: Blob;
 }
 
 export interface Quota {

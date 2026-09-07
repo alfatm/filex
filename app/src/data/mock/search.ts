@@ -1,5 +1,8 @@
 import { joinPath, segments } from '@/lib/path';
-import type { FileType, FileTypeGroup, ListingFilter, MatchRange, Node, SearchHit, SearchQuery, SearchResult } from '../types';
+import { MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
+
+export { matchesFilter } from '../listingFilter';
+import type { MatchRange, Node, SearchHit, SearchQuery, SearchResult } from '../types';
 import { contentIndex, indexedOnly, live, nodes, rootNode, storages } from './dataset';
 
 const KB = 1024;
@@ -8,32 +11,6 @@ const GB = MB * 1024;
 const DAY = 24 * 60 * 60 * 1000;
 
 const UNIT_BYTES = { KB, MB, GB } as const;
-const MODIFIED_WINDOW_DAYS = { today: 1, week: 7, month: 30, year: 365 } as const;
-const SIZE_PRESET_BYTES = { small: [0, MB], medium: [MB, 100 * MB], large: [100 * MB, Infinity] } as const;
-const TYPE_GROUPS: Record<Exclude<FileTypeGroup, 'any'>, FileType[]> = {
-  documents: ['md', 'pdf'],
-  images: ['image'],
-  videos: ['mp4'],
-  code: ['ts'],
-  spreadsheets: ['csv'],
-  design: ['fig'],
-};
-
-/**
- * The chips above a listing, applied where the server would apply them. Type and size are properties of files, so
- * either narrows the listing to files; Modified and People also keep folders.
- */
-export function matchesFilter(node: Node, filter: ListingFilter, now = Date.now()): boolean {
-  if (filter.fileType !== 'any' && (node.kind !== 'file' || !TYPE_GROUPS[filter.fileType].includes(node.fileType ?? 'other'))) return false;
-  if (filter.modified !== 'any' && now - Date.parse(node.modifiedAt) > MODIFIED_WINDOW_DAYS[filter.modified] * DAY) return false;
-  if (filter.size !== 'any') {
-    if (node.kind !== 'file') return false;
-    const [min, max] = SIZE_PRESET_BYTES[filter.size];
-    if (node.size < min || node.size > max) return false;
-  }
-  if (filter.personId && node.ownerId !== filter.personId) return false;
-  return true;
-}
 
 /** Indexed text is up to 2 KB; a hit shows this many characters around the first match. */
 const SNIPPET_CHARS = 120;

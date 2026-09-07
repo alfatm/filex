@@ -240,9 +240,9 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
 ## 7. Secondary surfaces (no ref — same language)
 
 - **Item ⋮ / context menu**: white, radius 12, shadow-menu, padding 6, items h 38
-  15 with 18px icon: Open, Preview, Download, Share, Rename, Move to, Copy to,
-  Add to starred, Tags, Version history, Manage access, divider, Move to trash
-  (red `#dc2626`).
+  15 with 18px icon: Open, Preview, Download, Share, Rename, Move to, Cut,
+  Copy to, Add to starred, Tags, Version history, Manage access, divider, Move
+  to trash (red `#dc2626`).
 - **Modals** (Rename, New folder, Delete, Share): radius 16, w 480, padding 26,
   title 20/600, inputs h 44, footer buttons h 44 radius 10.
 - **Pages** Home / Shared with me / Recent / Starred / Trash: same content
@@ -298,6 +298,37 @@ query params. Nothing is narrowed after the fact in the client.
   "Try again" button; the shell around it stays usable.
 - **Search results** carry a "Refine" button that reopens Advanced search on
   the query behind the chips.
+- **Cut and paste** (Ctrl/Cmd+X, Ctrl/Cmd+V, and the two menus) is a move in
+  two steps: cut rows stay in place at 50% opacity until they land. Paste
+  targets the open folder, so it is disabled on the flat listings, and it
+  silently skips a node that is already there or that would swallow its own
+  parent. Copying is a separate feature and shares nothing with the clipboard.
+- **Folder upload** takes the flat list the directory picker returns and
+  rebuilds the tree from `webkitRelativePath`, reusing folders that already
+  exist; the folders appear at once, the files as their transfers finish.
+
+## 7c. Capabilities and tags
+
+The app reads one feature snapshot at start-up (`GET /api/capabilities`, the
+backend's `model.Capabilities`) and keeps it in `stores/capabilities.ts`.
+Everything starts off, so no screen offers an action the server would reject;
+the answer switches on what is really there. An action the server cannot serve
+keeps its place in the menu, disabled, with "Not available on this server" —
+a familiar menu that quietly loses entries is worse than one that explains
+itself. The snapshot gates: Move to / Cut (`move`), Copy to (`copy`), Move to
+trash (`delete`), New folder (`mkdir`), File upload (`upload`), Tags (`tags`),
+Version history (`versions`), Manage access (`permissions`), Delete forever and
+Empty trash (`delete_forever`), a folder or mixed-selection download
+(`folder_download`), and the assistant's topbar trigger (`assistant`), which is
+hidden rather than disabled because it opens a panel, not an action. `?caps=`
+overrides the snapshot in dev builds.
+
+**Tags** are edited in their own modal (item menu → Tags): a text field that
+takes one tag per Enter, the current tags as removable chips, Cancel / Save,
+and the whole list written in one call. A tag still in the box when Save is
+pressed counts as typed. The details panel deliberately does not show tags —
+the panel is a reference state (ref 1) and the folder it shows is tagged, so a
+tags row there would move everything below it; revisit when the refs do.
 
 ## 8. User settings modal (ref 5)
 
@@ -333,6 +364,11 @@ profile fields, notification switches, photo buttons and every Security row
 are mocks until the backend grows the endpoints (see BACKEND-GAP.md).
 
 ## 9. Mock data (matches the refs)
+
+The reference entries below are pinned by `REF_OVERRIDES` (dates, sizes, stars)
+and always sort first; anything else in the assets directory is listed after
+them with generated dates, so the root count follows the demo assets rather
+than this document — the tests read it from the dataset.
 
 Storage "demo", 12.4 GB of 100 GB. Folders: Code 12, Design 8, Documents 24,
 Photos 56, example 3, Archive 17, Resources 9, Shared 5 (shared). Starred:

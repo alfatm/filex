@@ -302,5 +302,14 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 		}
 		results = kept
 	}
+	// A hit carries only a numeric storage_id, and a client in multi-storage
+	// mode cannot build the `<name>://<path>` it needs to open one — the same
+	// dead-row problem the starred and recently-opened listings already fixed
+	// this way (see model.Node.Storage).
+	nodes := make([]*model.Node, len(results))
+	for i := range results {
+		nodes[i] = results[i].Node
+	}
+	attachStorageNames(r.Context(), h.Store, nodes)
 	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { Download, FolderInput, RotateCcw, Share2, Star, Trash2, X } from 'lucide-vue-next';
 import { useModalsStore } from '@/features/files/modalsStore';
 import { useFileActions } from '@/features/files/useFileActions';
+import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 import { IconButton } from '@/ui';
 
@@ -11,6 +12,7 @@ const { t } = useI18n();
 const files = useFilesStore();
 const modals = useModalsStore();
 const fileActions = useFileActions();
+const capabilities = useCapabilitiesStore();
 
 interface Action {
   id: string;
@@ -30,10 +32,20 @@ const actions = computed<Action[]>(() =>
   files.listing?.kind === 'trash'
     ? [
         { id: 'restore', icon: RotateCcw, run: () => void files.restore(files.selected) },
-        { id: 'deleteForever', icon: Trash2, run: () => modals.open({ kind: 'delete', variant: 'forever', nodes: files.selected }) },
+        {
+          id: 'deleteForever',
+          icon: Trash2,
+          hint: capabilities.can.deleteForever ? undefined : t('common.unavailable'),
+          run: () => modals.open({ kind: 'delete', variant: 'forever', nodes: files.selected }),
+        },
       ]
     : [
-        { id: 'download', icon: Download, hint: hasFolder.value ? t('common.comingSoon') : undefined, run: () => fileActions.download(files.selected) },
+        {
+          id: 'download',
+          icon: Download,
+          hint: hasFolder.value && !capabilities.can.folderDownload ? t('common.unavailable') : undefined,
+          run: () => fileActions.download(files.selected),
+        },
         {
           id: 'share',
           icon: Share2,

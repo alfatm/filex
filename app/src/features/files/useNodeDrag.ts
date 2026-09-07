@@ -39,7 +39,7 @@ export function useNodeDrag() {
     const dropped = event.dataTransfer?.files;
     const moved = [...drag.nodes];
     drag.end();
-    if (dropped?.length) uploads.start(dropped, node.id);
+    if (dropped?.length) await uploads.start(dropped, node.id);
     else if (moved.length) await files.move(moved, node);
   }
 

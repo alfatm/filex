@@ -78,6 +78,7 @@ func seedSearchContent(t *testing.T) (base string, client *http.Client, store db
 type searchRespItem struct {
 	Name    string `json:"name"`
 	Path    string `json:"path"`
+	Storage string `json:"storage"`
 	Snippet string `json:"snippet"`
 	Matched string `json:"matched"`
 }

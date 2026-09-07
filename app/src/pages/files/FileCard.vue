@@ -4,6 +4,7 @@ import { MoreVertical, Star } from 'lucide-vue-next';
 import type { Node } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
+import { useClipboardStore } from '@/features/files/clipboardStore';
 import { useNodeDrag } from '@/features/files/useNodeDrag';
 import { IconButton } from '@/ui';
 import FileTypeTile from './FileTypeTile.vue';
@@ -13,6 +14,7 @@ const props = withDefaults(defineProps<{ node: Node; selected: boolean; focused?
 const { t } = useI18n();
 const { formatDate, formatSize } = useFormat();
 const itemMenu = useItemMenuStore();
+const clipboard = useClipboardStore();
 const { drag, onDragStart } = useNodeDrag();
 
 function onContextMenu(event: MouseEvent) {
@@ -27,6 +29,7 @@ function onContextMenu(event: MouseEvent) {
     :class="[
       selected ? 'border-2 border-primary-ring bg-primary-tint' : 'border-border hover:border-border-hover hover:bg-hover-card',
       focused && 'ring-2 ring-primary-ring ring-offset-2',
+      clipboard.isCut(node.id) && 'opacity-50',
     ]"
     :id="`node-${node.id}`"
     :aria-selected="selected"
