@@ -1,6 +1,7 @@
 import type {
   AssistantEvent,
   AssistantMode,
+  ListingFilter,
   Node,
   Person,
   SearchQuery,
@@ -16,13 +17,16 @@ export const DUPLICATE_NAME = 'duplicateName';
 export interface Repository {
   listStorages(): Promise<Storage[]>;
   getStorage(id: string): Promise<Storage>;
-  listFolder(folderId: string): Promise<Node[]>;
+  /** `filter` is applied by the repository, not by the caller: the HTTP one sends it as query params. */
+  listFolder(folderId: string, filter?: ListingFilter): Promise<Node[]>;
   /** Folder at a slash-separated path relative to the storage root; "" resolves to the root. */
   resolvePath(storageId: string, path: string): Promise<Node>;
   getNode(id: string): Promise<Node>;
   /** Root-to-node chain, root first, excluding the node itself. */
   getPath(id: string): Promise<Node[]>;
   listPeople(nodeId: string): Promise<Person[]>;
+  /** Options of the People chip: everyone who can own a row in the user's listings. */
+  listFilterPeople(): Promise<Person[]>;
   currentUser(): Promise<User>;
   search(query: SearchQuery): Promise<SearchResult>;
   /**
@@ -33,12 +37,12 @@ export interface Repository {
 
   // Listings beyond the folder tree. Trashed nodes never appear in `listFolder`, `listRecent`, `listStarred`, `listShared`.
   /** Files only, newest `openedAt` (falling back to `modifiedAt`) first. */
-  listRecent(): Promise<Node[]>;
-  listStarred(): Promise<Node[]>;
+  listRecent(filter?: ListingFilter): Promise<Node[]>;
+  listStarred(filter?: ListingFilter): Promise<Node[]>;
   /** Nodes other people shared with the current user (`sharedBy` / `sharedAt` set). */
-  listShared(): Promise<Node[]>;
+  listShared(filter?: ListingFilter): Promise<Node[]>;
   /** Trashed nodes with `deletedAt` / `originalPath` set. */
-  listTrash(): Promise<Node[]>;
+  listTrash(filter?: ListingFilter): Promise<Node[]>;
   /** Every live folder of the storage, root included; the Move-to picker builds its tree from `parentId`. */
   listFolders(storageId: string): Promise<Node[]>;
 

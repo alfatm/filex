@@ -3,7 +3,8 @@
     "name": "filex"
   },
   "common": {
-    "comingSoon": "Скоро"
+    "comingSoon": "Скоро",
+    "loading": "Загрузка"
   },
   "nav": {
     "menu": "Меню",
@@ -17,7 +18,9 @@
     "connections": "Подключения",
     "howToConnect": "Как подключиться",
     "apiKeys": "API-ключи",
-    "search": "Поиск"
+    "search": "Поиск",
+    "collapseMenu": "Свернуть меню",
+    "expandMenu": "Развернуть меню"
   },
   "new": {
     "button": "Создать",
@@ -60,6 +63,10 @@
     "trash": {
       "title": "Корзина пуста",
       "hint": "Элементы, перемещённые в корзину, появятся здесь"
+    },
+    "filtered": {
+      "title": "Ничего не найдено",
+      "hint": "Измените фильтр или сбросьте его"
     }
   },
   "trash": {
@@ -150,7 +157,6 @@
   },
   "files": {
     "breadcrumbHome": "Главная",
-    "siblings": "Соседние папки",
     "listView": "Список",
     "gridView": "Сетка",
     "details": "Сведения",
@@ -169,13 +175,22 @@
     "sharedBy": "Кто поделился",
     "sharedOn": "Дата доступа",
     "deleted": "Удалено",
-    "originalPath": "Исходное расположение"
+    "originalPath": "Исходное расположение",
+    "breadcrumb": "Расположение",
+    "breadcrumbMore": "Ещё папки",
+    "subfolders": "Подпапки",
+    "noSubfolders": "Подпапок нет",
+    "listingActions": "Действия со списком",
+    "dropHere": "Отпустите файлы, чтобы загрузить в «{folder}»"
   },
   "filter": {
     "type": "Тип",
     "people": "Люди",
     "modified": "Изменён",
-    "size": "Размер"
+    "size": "Размер",
+    "anyone": "Любой",
+    "clear": "Сбросить фильтры",
+    "title": "Фильтры"
   },
   "sort": {
     "name": "Имя",
@@ -254,7 +269,9 @@
     "moveToTrash": "В корзину",
     "removeFromStarred": "Убрать из избранного",
     "restore": "Восстановить",
-    "deleteForever": "Удалить навсегда"
+    "deleteForever": "Удалить навсегда",
+    "selectAll": "Выделить всё",
+    "clearSelection": "Снять выделение"
   },
   "preview": {
     "download": "Скачать",
@@ -352,7 +369,8 @@
     "chipQuery": "«{text}»",
     "chipTags": "Теги: {tags}",
     "chipPath": "Путь: {path}",
-    "chipNoOcr": "OCR выкл."
+    "chipNoOcr": "OCR выкл.",
+    "refine": "Уточнить"
   },
   "assistant": {
     "title": "ИИ-ассистент",
@@ -463,6 +481,17 @@
       "enabled": "Включить ИИ-ассистента",
       "defaultMode": "Режим поиска по умолчанию",
       "providerNote": "Модель и ключ API настраивает администратор."
+    }
+  },
+  "error": {
+    "retry": "Повторить",
+    "notFound": {
+      "title": "Папка не найдена",
+      "hint": "Её могли переименовать, переместить или удалить"
+    },
+    "load": {
+      "title": "Не удалось загрузить список",
+      "hint": "Проверьте соединение и повторите"
     }
   }
 }

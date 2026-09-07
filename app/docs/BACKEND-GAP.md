@@ -25,6 +25,9 @@ Decide each row before writing the HTTP repository (stage 7).
 | `uploadFile` | staged resumable upload (begin / put / commit) | ❌ | repository signature `upload(parent, File, onProgress, signal)`; folder upload needs subfolder creation |
 | `createShareLink`, `removeShareLink` | `POST /share` → share id + url; `DELETE /share/{id}`; many shares per node | ⚠️ | node carries share list; UI shows first link, "Manage" for the rest |
 | `listFolders` (Move picker) | none | ⚠️ | lazy tree via `listFolder` |
+| `listFolder`/`listRecent`/… with a `ListingFilter` | listings take no filter | ❌ | needs `mime_group`, `mtime`, `size` and `owner` params on the listing endpoints — the same four the search row asks for; without them the filter chips cannot stay server-side |
+| download of a folder or a selection | single-file `GET /read` only | ❌ | needs a zip endpoint; today the selection bar downloads files one by one and stays inert when a folder is selected |
+| `listFilterPeople` (People chip options) | none | ❌ | needs "people I share with" (permission tables); today derived from the owners present in the mock |
 
 ## User settings modal
 

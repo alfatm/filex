@@ -261,6 +261,21 @@ export const indexedOnly: Node[] = [
 
 export const people: Person[] = [{ id: user.id, name: user.name, initial: user.initial, role: 'owner' }];
 
+/**
+ * Options of the People chip: the user, then everyone else who owns something they can see. The server will answer
+ * this from its permission tables; here it is derived from the nodes themselves.
+ */
+export function filterPeople(): Person[] {
+  const others = new Map<string, string>();
+  for (const node of nodes) {
+    if (node.ownerId !== user.id && live(node)) others.set(node.ownerId, node.ownerName ?? node.ownerId);
+  }
+  return [
+    ...people,
+    ...[...others].map(([id, name]) => ({ id, name, initial: name.charAt(0), role: 'editor' as const })),
+  ];
+}
+
 /** Indexed text per node id; `ocr` marks text recognised from images/scans (searched only when the query asks for OCR). */
 export const contentIndex: Record<string, { text: string; ocr?: boolean }> = {
   ...Object.fromEntries(entries.filter((e) => e.text).map((e) => [idOf(e.path), { text: e.text! }])),

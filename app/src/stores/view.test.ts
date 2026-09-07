@@ -37,7 +37,7 @@ describe('view store persistence', () => {
     view.togglePanel('assistant');
     view.toggleSortDir();
     await nextTick();
-    expect(JSON.parse(backing.get(KEY) ?? '{}')).toEqual({ mode: 'list', sortKey: 'modified', sortDir: 'asc' });
+    expect(JSON.parse(backing.get(KEY) ?? '{}')).toEqual({ mode: 'list', sortKey: 'modified', sortDir: 'asc', sidebarCollapsed: false });
   });
 
   it('ignores non-object payloads', () => {
@@ -49,9 +49,14 @@ describe('view store persistence', () => {
   });
 
   it('restores a valid payload', () => {
-    localStorage.setItem(KEY, JSON.stringify({ mode: 'list', sortKey: 'name', sortDir: 'asc' }));
+    localStorage.setItem(KEY, JSON.stringify({ mode: 'list', sortKey: 'name', sortDir: 'asc', sidebarCollapsed: true }));
     const view = useViewStore();
-    expect([view.mode, view.sortKey, view.sortDir]).toEqual(['list', 'name', 'asc']);
+    expect([view.mode, view.sortKey, view.sortDir, view.sidebarCollapsed]).toEqual(['list', 'name', 'asc', true]);
+  });
+
+  it('keeps the sidebar expanded when the stored flag is not a boolean', () => {
+    localStorage.setItem(KEY, JSON.stringify({ sidebarCollapsed: 'yes' }));
+    expect(useViewStore().sidebarCollapsed).toBe(false);
   });
 
   it('toggles the two right panels independently', () => {

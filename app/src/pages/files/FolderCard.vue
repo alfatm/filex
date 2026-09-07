@@ -3,12 +3,14 @@ import { useI18n } from 'vue-i18n';
 import { MoreVertical, Star } from 'lucide-vue-next';
 import type { Node } from '@/data/types';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
+import { useNodeDrag } from '@/features/files/useNodeDrag';
 import { IconButton } from '@/ui';
 import FolderIcon from './FolderIcon.vue';
 
 const props = withDefaults(defineProps<{ node: Node; selected: boolean; focused?: boolean }>(), { focused: false });
 const { t } = useI18n();
 const itemMenu = useItemMenuStore();
+const { drag, onDragStart, onDragOver, onDragLeave, onDrop } = useNodeDrag();
 
 function onContextMenu(event: MouseEvent) {
   itemMenu.openAt(props.node, event.clientX, event.clientY);
@@ -24,13 +26,20 @@ function onContextMenu(event: MouseEvent) {
         ? 'border-2 border-primary-ring bg-primary-tint pl-[19px] pr-[3px]'
         : 'border-border hover:border-border-hover hover:bg-hover-card',
       focused && 'ring-2 ring-primary-ring ring-offset-2',
+      drag.overId === node.id && '!border-primary bg-primary-tint ring-2 ring-primary',
     ]"
     :id="`node-${node.id}`"
     :aria-selected="selected"
     :data-id="node.id"
     role="option"
     tabindex="0"
+    draggable="true"
     @contextmenu.prevent="onContextMenu"
+    @dragstart="onDragStart(node, $event)"
+    @dragend="drag.end()"
+    @dragover="onDragOver(node, $event)"
+    @dragleave="onDragLeave(node)"
+    @drop="onDrop(node, $event)"
   >
     <FolderIcon :shared="node.shared" />
     <div class="ml-6 min-w-0 flex-1">

@@ -7,6 +7,7 @@ import { useModalsStore } from '@/features/files/modalsStore';
 import { THEMES, useSettingsStore, type Theme } from '@/features/settings/settingsStore';
 import { previewList } from '@/features/files/preview';
 import { emptyQuery, useSearchStore } from '@/features/search/searchStore';
+import { FILE_TYPE_GROUPS, MODIFIED_PRESETS, SIZE_PRESETS, type ListingFilter } from '@/data/types';
 import { joinPath, segments } from '@/lib/path';
 import router from '@/router';
 import { useFilesStore } from '@/stores/files';
@@ -23,6 +24,7 @@ import { useViewStore } from '@/stores/view';
  *   ?modal=search              opens Advanced search with the reference form (tags, path) and "24 matching items"
  *   ?modal=settings            opens the user settings modal
  *   ?theme=light|dark|system   applies a theme without going through the settings modal
+ *   ?filter=type:images        sets one listing filter chip (`type`, `modified`, `size`, `person`)
  *   ?modal=rename              opens Rename for the selected node
  *   ?modal=preview             opens the preview of the selected file
  *   ?menu=item                 opens the ⋮ menu of the selected node
@@ -41,6 +43,16 @@ const TRASH_DEMO_IDS = ['archive', 'data-csv'];
 function first(value: LocationQuery[string]): string | undefined {
   const single = Array.isArray(value) ? value[0] : value;
   return typeof single === 'string' ? single : undefined;
+}
+
+/** `?filter=type:images` → the matching field of the listing filter; unknown values are ignored. */
+function withChip(filter: ListingFilter, field: string, value: string): ListingFilter {
+  const next = { ...filter };
+  if (field === 'type' && FILE_TYPE_GROUPS.includes(value as ListingFilter['fileType'])) next.fileType = value as ListingFilter['fileType'];
+  else if (field === 'modified' && MODIFIED_PRESETS.includes(value as ListingFilter['modified'])) next.modified = value as ListingFilter['modified'];
+  else if (field === 'size' && SIZE_PRESETS.includes(value as ListingFilter['size'])) next.size = value as ListingFilter['size'];
+  else if (field === 'person') next.personId = value;
+  return next;
 }
 
 export function installScreenshotQuery() {
@@ -80,6 +92,8 @@ export function installScreenshotQuery() {
     const theme = first(query.theme);
     if (THEMES.includes(theme as Theme)) settings.settings.theme = theme as Theme;
     if (first(query.modal) === 'settings') settings.open = true;
+    const chip = first(query.filter)?.split(':');
+    if (chip) void files.setFilter(withChip(files.filter, chip[0], chip[1] ?? ''));
     if (first(query.modal) === 'search') {
       patchSearchTotal();
       search.assign({ ...emptyQuery(), ...REF_SEARCH });

@@ -18,9 +18,11 @@ interface Persisted {
   mode: ViewMode;
   sortKey: SortKey;
   sortDir: SortDir;
+  /** The sidebar's rail mode: a layout choice, so it outlives the session unlike the right panels. */
+  sidebarCollapsed: boolean;
 }
 
-const DEFAULTS: Persisted = { mode: 'grid', sortKey: 'modified', sortDir: 'desc' };
+const DEFAULTS: Persisted = { mode: 'grid', sortKey: 'modified', sortDir: 'desc', sidebarCollapsed: false };
 
 function pick<T>(value: unknown, allowed: readonly T[], fallback: T): T {
   return allowed.includes(value as T) ? (value as T) : fallback;
@@ -39,6 +41,7 @@ function load(): Persisted {
     mode: pick(saved.mode, VIEW_MODES, DEFAULTS.mode),
     sortKey: pick(saved.sortKey, SORT_KEYS, DEFAULTS.sortKey),
     sortDir: pick(saved.sortDir, SORT_DIRS, DEFAULTS.sortDir),
+    sidebarCollapsed: typeof saved.sidebarCollapsed === 'boolean' ? saved.sidebarCollapsed : DEFAULTS.sidebarCollapsed,
   };
 }
 
@@ -47,11 +50,12 @@ export const useViewStore = defineStore('view', () => {
   const mode = ref<ViewMode>(saved.mode);
   const sortKey = ref<SortKey>(saved.sortKey);
   const sortDir = ref<SortDir>(saved.sortDir);
+  const sidebarCollapsed = ref(saved.sidebarCollapsed);
   const detailsOpen = ref(true);
   const assistantOpen = ref(false);
 
-  watch([mode, sortKey, sortDir], () => {
-    const data: Persisted = { mode: mode.value, sortKey: sortKey.value, sortDir: sortDir.value };
+  watch([mode, sortKey, sortDir, sidebarCollapsed], () => {
+    const data: Persisted = { mode: mode.value, sortKey: sortKey.value, sortDir: sortDir.value, sidebarCollapsed: sidebarCollapsed.value };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch {
@@ -77,5 +81,5 @@ export const useViewStore = defineStore('view', () => {
     target.value = !target.value;
   }
 
-  return { mode, sortKey, sortDir, detailsOpen, assistantOpen, toggleSortDir, setSortKey, togglePanel };
+  return { mode, sortKey, sortDir, sidebarCollapsed, detailsOpen, assistantOpen, toggleSortDir, setSortKey, togglePanel };
 });

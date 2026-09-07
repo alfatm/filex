@@ -36,6 +36,7 @@ const STATES: { name: string; route: string; ready: string | ((page: Page) => Lo
     route: 'files?modal=preview&select=app.ts',
     ready: (page) => page.getByRole('dialog', { name: 'app.ts' }).locator('pre li').first(),
   },
+  { name: 'files-filtered', route: 'files?view=list&filter=type:images&panel=none', ready: 'beach.png' },
   { name: 'settings', route: 'files?modal=settings', ready: 'Manage your profile, preferences, and security.' },
   // The dark palette is the same tokens through `color-scheme`, so one listing is enough to catch a broken pair.
   { name: 'files-list-dark', route: 'files?view=list&select=Design&panel=none&theme=dark', ready: 'Last modified' },

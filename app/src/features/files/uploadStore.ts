@@ -22,8 +22,9 @@ export const useUploadStore = defineStore('uploads', () => {
   const doneCount = computed(() => items.value.filter((i) => i.done).length);
   let seq = 0;
 
-  function start(list: FileList | File[]) {
-    const parentId = files.targetFolderId;
+  /** `target` overrides the open folder: a drop on a folder card uploads into that folder. */
+  function start(list: FileList | File[], target?: string) {
+    const parentId = target ?? files.targetFolderId;
     if (!parentId) return;
     for (const file of Array.from(list)) {
       const item: UploadItem = { id: ++seq, name: file.name, size: file.size, progress: 0, done: false };

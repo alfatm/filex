@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { DUPLICATE_NAME } from '../repository';
-import type { SearchQuery } from '../types';
+import type { ListingFilter, SearchQuery } from '../types';
 import { mockRepository as repo, resetMock } from './index';
+import { matchesFilter } from './search';
 
 const names = (nodes: { name: string }[]) => nodes.map((n) => n.name).sort();
 
@@ -20,6 +21,57 @@ const emptyQuery: SearchQuery = {
   caseSensitive: false,
   ocr: false,
 };
+
+const filter = (patch: Partial<ListingFilter> = {}): ListingFilter => ({
+  fileType: 'any',
+  modified: 'any',
+  size: 'any',
+  personId: null,
+  ...patch,
+});
+
+describe('listing filter', () => {
+  beforeEach(resetMock);
+
+  it('narrows a folder listing by type, dropping folders with it', async () => {
+    expect(names(await repo.listFolder('demo', filter())).length).toBe(16);
+    expect(names(await repo.listFolder('demo', filter({ fileType: 'images' })))).toEqual(['beach.png', 'mountains.jpg']);
+    expect(names(await repo.listFolder('demo', filter({ fileType: 'design' })))).toEqual(['UI Design.fig']);
+  });
+
+  it('narrows by size, which is a file property too', async () => {
+    // README.md 2.4 KB and app.ts 4.8 KB are the only sub-megabyte files of the root.
+    expect(names(await repo.listFolder('demo', filter({ size: 'small' })))).toEqual(['README.md', 'app.ts', 'data.csv']);
+    expect(names(await repo.listFolder('demo', filter({ size: 'large' })))).toEqual([]);
+  });
+
+  // The dataset is pinned to July 2026, so the window is checked against a fixed clock rather than the real one.
+  it('narrows by the modification window, keeping folders', async () => {
+    const now = Date.parse('2026-07-10T16:00:00Z');
+    const root = await repo.listFolder('demo');
+    const week = root.filter((n) => matchesFilter(n, filter({ modified: 'week' }), now));
+    expect(names(week)).toEqual(['Code', 'README.md', 'UI Design.fig', 'app.ts', 'beach.png', 'data.csv', 'mountains.jpg', 'overview.pdf']);
+    expect(week.some((n) => n.kind === 'folder')).toBe(true);
+    expect(root.filter((n) => matchesFilter(n, filter({ modified: 'today' }), now))).toHaveLength(1);
+  });
+
+  it('narrows Shared with me by owner, and offers exactly those owners', async () => {
+    const people = await repo.listFilterPeople();
+    expect(people.map((p) => p.name)).toEqual(['demo', 'Alice Johnson', 'Marcus Lee']);
+    const marcus = people.find((p) => p.name === 'Marcus Lee')!;
+    const shared = await repo.listShared(filter({ personId: marcus.id }));
+    expect(shared.length).toBeGreaterThan(0);
+    expect(shared.every((n) => n.sharedBy === 'Marcus Lee')).toBe(true);
+    expect(await repo.listShared(filter({ personId: 'nobody' }))).toEqual([]);
+  });
+
+  it('applies to every flat listing', async () => {
+    expect((await repo.listStarred(filter({ fileType: 'images' }))).every((n) => n.fileType === 'image')).toBe(true);
+    expect(await repo.listRecent(filter({ fileType: 'videos' }))).toHaveLength(1);
+    await repo.moveToTrash(['archive', 'data-csv']);
+    expect(names(await repo.listTrash(filter({ fileType: 'spreadsheets' })))).toEqual(['data.csv']);
+  });
+});
 
 describe('mock repository mutations', () => {
   beforeEach(resetMock);

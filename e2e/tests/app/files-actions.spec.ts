@@ -220,3 +220,37 @@ test.describe('File actions', () => {
     await expect(panel.getByText('Not shared')).toBeVisible();
   });
 });
+
+test.describe('Listing menu', () => {
+  test('right-click on empty surface offers the listing actions', async ({ page }) => {
+    // Design holds 8 rows in list view, so the lower half of the page is bare surface.
+    await page.goto('files/Design?view=list');
+    const bare = { button: 'right' as const, position: { x: 400, y: 700 } };
+    await page.locator('main').click(bare);
+    const menu = page.getByRole('menu', { name: 'Listing actions' });
+    await expect(menu.getByRole('menuitem', { name: 'Deselect all', exact: true })).toHaveAttribute('aria-disabled', 'true');
+    await menu.getByRole('menuitem', { name: 'Select all', exact: true }).click();
+    await expect(page.getByRole('row', { selected: true })).toHaveCount(8);
+
+    await page.locator('main').click(bare);
+    await page.getByRole('menu', { name: 'Listing actions' }).getByRole('menuitem', { name: 'Deselect all', exact: true }).click();
+    await expect(page.getByRole('row', { selected: true })).toHaveCount(0);
+  });
+
+  test('the grid ⋮ button opens the same menu and creates a folder', async ({ page }) => {
+    await page.goto('files');
+    await page.getByRole('button', { name: 'Listing actions' }).click();
+    await page.getByRole('menu', { name: 'Listing actions' }).getByRole('menuitem', { name: 'Folder', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('textbox').fill('From the menu');
+    await dialog.getByRole('button', { name: 'Create' }).click();
+    await expect(page.getByRole('option', { name: /^From the menu/ })).toBeVisible();
+  });
+
+  test('right-clicking a card still opens that item’s menu', async ({ page }) => {
+    await page.goto('files');
+    await page.getByRole('option', { name: /^Design\b/ }).click({ button: 'right' });
+    await expect(page.getByRole('menu', { name: 'More' }).getByRole('menuitem', { name: 'Rename' })).toBeVisible();
+    await expect(page.getByRole('menu', { name: 'Listing actions' })).toHaveCount(0);
+  });
+});

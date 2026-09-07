@@ -2,12 +2,14 @@
 import { computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
+import { SlidersHorizontal } from 'lucide-vue-next';
 import type { SearchHit } from '@/data/types';
 import { useFileActions } from '@/features/files/useFileActions';
 import ResultRow from '@/features/search/ResultRow.vue';
 import { fromUrlQuery, useSearchStore } from '@/features/search/searchStore';
 import { filesRoute, segments } from '@/lib/path';
 import { useFilesStore } from '@/stores/files';
+import { Button } from '@/ui';
 
 const { t } = useI18n();
 const route = useRoute();
@@ -76,6 +78,11 @@ function open(hit: SearchHit) {
         </li>
       </ul>
       <span class="ml-auto text-15 leading-none text-text-3" aria-live="polite">{{ t('search.matching', store.total) }}</span>
+      <!-- Reopens Advanced search on the query behind these chips, so a result set can be narrowed in place. -->
+      <Button variant="outline" class="mr-[9px] gap-2" @click="store.openModal()">
+        <SlidersHorizontal :size="16" />
+        <span>{{ t('search.refine') }}</span>
+      </Button>
     </div>
 
     <div class="mr-[9px] mt-[22px]">

@@ -4,6 +4,7 @@ import { MoreVertical, Star } from 'lucide-vue-next';
 import type { Node } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
+import { useNodeDrag } from '@/features/files/useNodeDrag';
 import { IconButton } from '@/ui';
 import FileTypeTile from './FileTypeTile.vue';
 import Thumbnail from './Thumbnail.vue';
@@ -12,6 +13,7 @@ const props = withDefaults(defineProps<{ node: Node; selected: boolean; focused?
 const { t } = useI18n();
 const { formatDate, formatSize } = useFormat();
 const itemMenu = useItemMenuStore();
+const { drag, onDragStart } = useNodeDrag();
 
 function onContextMenu(event: MouseEvent) {
   itemMenu.openAt(props.node, event.clientX, event.clientY);
@@ -31,7 +33,10 @@ function onContextMenu(event: MouseEvent) {
     :data-id="node.id"
     role="option"
     tabindex="0"
+    draggable="true"
     @contextmenu.prevent="onContextMenu"
+    @dragstart="onDragStart(node, $event)"
+    @dragend="drag.end()"
   >
     <div class="h-[108px] overflow-hidden rounded-t-[11px]" :class="selected && '-mx-px -mt-px'">
       <Thumbnail v-if="node.thumbnail" :kind="node.thumbnail" :duration="node.duration" :src="node.assetUrl" />
@@ -51,7 +56,7 @@ function onContextMenu(event: MouseEvent) {
     <!-- Starred badge, last in DOM so the card's accessible name still starts with the file name; the disc keeps it readable on any thumbnail. -->
     <span
       v-if="node.starred"
-      class="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-bg/90 text-folder shadow-sm"
+      class="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-bg text-folder shadow-sm"
       role="img"
       :aria-label="t('panel.starred')"
     >

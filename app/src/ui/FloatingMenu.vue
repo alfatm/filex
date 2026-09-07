@@ -1,11 +1,14 @@
 <script lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue';
+import { Check } from 'lucide-vue-next';
 
 export interface FloatingMenuEntry {
   id: string;
   label: string;
   icon?: Component;
   danger?: boolean;
+  /** Set on the entries of a single-choice menu: renders a check column and makes them `menuitemradio`. */
+  checked?: boolean;
   disabled?: boolean;
   /** Tooltip for disabled entries ("Coming soon"). */
   hint?: string;
@@ -125,13 +128,18 @@ watch(() => [props.x, props.y], place);
       <div v-if="item.dividerBefore" class="my-1.5 h-px bg-border" />
       <button
         type="button"
-        role="menuitem"
+        :role="item.checked === undefined ? 'menuitem' : 'menuitemradio'"
+        :aria-checked="item.checked"
         :aria-disabled="item.disabled || undefined"
         :title="item.disabled ? item.hint : undefined"
         class="flex h-[38px] w-full items-center gap-3 rounded px-3 text-15 leading-none hover:bg-bg-muted focus:outline-none focus-visible:bg-bg-muted"
         :class="item.disabled ? 'cursor-default text-text-3' : item.danger ? 'text-danger' : 'text-text'"
         @click="onSelect(item)"
       >
+        <!-- The column is reserved for every entry of a single-choice menu, so the labels stay on one line. -->
+        <span v-if="item.checked !== undefined" class="flex w-[18px] shrink-0 justify-center text-primary">
+          <Check v-if="item.checked" :size="16" :stroke-width="2.5" />
+        </span>
         <component :is="item.icon" v-if="item.icon" :size="18" class="shrink-0" />
         <span>{{ item.label }}</span>
       </button>

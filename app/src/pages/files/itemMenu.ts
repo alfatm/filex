@@ -1,18 +1,22 @@
 import type { Composer } from 'vue-i18n';
 import {
+  CheckSquare,
   Copy,
   Download,
   ExternalLink,
   Eye,
   FolderInput,
+  FolderPlus,
   History,
   PencilLine,
   RotateCcw,
   Share2,
+  Square,
   Star,
   StarOff,
   Tag,
   Trash2,
+  Upload,
   UserCog,
 } from 'lucide-vue-next';
 import type { Node } from '@/data/types';
@@ -46,5 +50,22 @@ export function itemMenuEntries(t: Composer['t'], node: Node): FloatingMenuEntry
     { id: 'versionHistory', label: t('menu.versionHistory'), icon: History, disabled: true, hint: soon },
     { id: 'manageAccess', label: t('menu.manageAccess'), icon: UserCog, disabled: true, hint: soon },
     { id: 'moveToTrash', label: t('menu.moveToTrash'), icon: Trash2, danger: true, dividerBefore: true },
+  ];
+}
+
+/**
+ * Right-click on empty listing surface, and the grid's ⋮ button: what can be done to the listing rather than to a
+ * node. The flat listings (Recent, Starred, Trash) hold no folder to create in, so they keep the selection entries.
+ */
+export function listingMenuEntries(t: Composer['t'], state: { canCreate: boolean; canSelectAll: boolean; hasSelection: boolean }): FloatingMenuEntry[] {
+  return [
+    ...(state.canCreate
+      ? [
+          { id: 'newFolder', label: t('new.folder'), icon: FolderPlus },
+          { id: 'fileUpload', label: t('new.fileUpload'), icon: Upload },
+        ]
+      : []),
+    { id: 'selectAll', label: t('menu.selectAll'), icon: CheckSquare, dividerBefore: state.canCreate, disabled: !state.canSelectAll },
+    { id: 'clearSelection', label: t('menu.clearSelection'), icon: Square, disabled: !state.hasSelection },
   ];
 }

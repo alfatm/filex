@@ -1,9 +1,9 @@
 import { segments } from '@/lib/path';
 import { DUPLICATE_NAME, type Repository } from '../repository';
-import type { Node } from '../types';
-import { fileTypeOf, indexedOnly, live, nodes, people, storages, TYPE_THUMBNAILS, user } from './dataset';
+import type { ListingFilter, Node } from '../types';
+import { fileTypeOf, filterPeople, indexedOnly, live, nodes, people, storages, TYPE_THUMBNAILS, user } from './dataset';
 import { assistantAsk } from './assistant';
-import { search } from './search';
+import { matchesFilter, search } from './search';
 
 // `nodes` is the single in-memory state: search reads it too, so mutations edit that array in place.
 const initial: Node[] = structuredClone(nodes);
@@ -20,6 +20,9 @@ function byId(id: string): Node {
   if (!node) throw new Error(`node not found: ${id}`);
   return node;
 }
+
+/** Every listing runs the chips through the same predicate the server would apply. */
+const keep = (node: Node, filter?: ListingFilter) => !filter || matchesFilter(node, filter);
 
 /** Callers get copies so the store's reactive proxies never alias mock state. */
 const copy = (list: Node[]) => list.map((n) => ({ ...n }));
@@ -63,8 +66,8 @@ export const mockRepository: Repository = {
     if (!storage) throw new Error(`storage not found: ${id}`);
     return storage;
   },
-  async listFolder(folderId) {
-    return copy(nodes.filter((n) => n.parentId === folderId && live(n)));
+  async listFolder(folderId, filter) {
+    return copy(nodes.filter((n) => n.parentId === folderId && live(n) && keep(n, filter)));
   },
   async resolvePath(storageId, path) {
     const storage = await this.getStorage(storageId);
@@ -91,6 +94,9 @@ export const mockRepository: Repository = {
   async listPeople() {
     return people;
   },
+  async listFilterPeople() {
+    return filterPeople();
+  },
   async currentUser() {
     return user;
   },
@@ -101,19 +107,19 @@ export const mockRepository: Repository = {
     return assistantAsk(prompt, mode, conversationId, signal);
   },
 
-  async listRecent() {
+  async listRecent(filter) {
     const at = (n: Node) => Date.parse(n.openedAt ?? n.modifiedAt);
-    return copy(nodes.filter((n) => n.kind === 'file' && live(n))).sort((a, b) => at(b) - at(a));
+    return copy(nodes.filter((n) => n.kind === 'file' && live(n) && keep(n, filter))).sort((a, b) => at(b) - at(a));
   },
-  async listStarred() {
-    return copy(nodes.filter((n) => n.starred && live(n)));
+  async listStarred(filter) {
+    return copy(nodes.filter((n) => n.starred && live(n) && keep(n, filter)));
   },
-  async listShared() {
-    return copy(nodes.filter((n) => n.sharedBy && live(n)));
+  async listShared(filter) {
+    return copy(nodes.filter((n) => n.sharedBy && live(n) && keep(n, filter)));
   },
-  async listTrash() {
+  async listTrash(filter) {
     // Only the top of a trashed subtree is listed; its children restore / vanish with it.
-    return copy(nodes.filter((n) => n.deletedAt && (n.parentId === null || live(byId(n.parentId)))));
+    return copy(nodes.filter((n) => n.deletedAt && (n.parentId === null || live(byId(n.parentId))) && keep(n, filter)));
   },
   async listFolders(storageId) {
     const storage = await this.getStorage(storageId);

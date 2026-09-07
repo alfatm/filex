@@ -3,12 +3,14 @@ import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Download, FolderInput, RotateCcw, Share2, Star, Trash2, X } from 'lucide-vue-next';
 import { useModalsStore } from '@/features/files/modalsStore';
+import { useFileActions } from '@/features/files/useFileActions';
 import { useFilesStore } from '@/stores/files';
 import { IconButton } from '@/ui';
 
 const { t } = useI18n();
 const files = useFilesStore();
 const modals = useModalsStore();
+const fileActions = useFileActions();
 
 interface Action {
   id: string;
@@ -20,6 +22,8 @@ interface Action {
 }
 
 const allStarred = computed(() => files.selected.every((n) => n.starred));
+/** A folder in the selection would need the zip endpoint, so the button stays inert for it. */
+const hasFolder = computed(() => files.selected.some((n) => n.kind === 'folder'));
 
 // Spec §7 actions; the trash listing swaps them for Restore / Delete forever.
 const actions = computed<Action[]>(() =>
@@ -29,7 +33,7 @@ const actions = computed<Action[]>(() =>
         { id: 'deleteForever', icon: Trash2, run: () => modals.open({ kind: 'delete', variant: 'forever', nodes: files.selected }) },
       ]
     : [
-        { id: 'download', icon: Download, hint: t('common.comingSoon') },
+        { id: 'download', icon: Download, hint: hasFolder.value ? t('common.comingSoon') : undefined, run: () => fileActions.download(files.selected) },
         {
           id: 'share',
           icon: Share2,

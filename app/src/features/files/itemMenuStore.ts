@@ -4,7 +4,8 @@ import type { Node } from '@/data/types';
 import { anchorBelow } from '@/ui/FloatingMenu.vue';
 
 export interface ItemMenuState {
-  node: Node;
+  /** null when the menu was opened on bare listing surface: the listing's own actions instead of a node's. */
+  node: Node | null;
   x: number;
   y: number;
   /** Element that had focus before the menu opened; focus returns there on close. */
@@ -27,11 +28,22 @@ export const useItemMenuStore = defineStore('itemMenu', () => {
     state.value = { node, x, y, returnTo: anchor };
   }
 
+  /** Right-click on empty listing surface. */
+  function openBackgroundAt(x: number, y: number) {
+    state.value = { node: null, x, y, returnTo: document.activeElement as HTMLElement | null };
+  }
+
+  /** The grid's ⋮ button, which offers the same listing actions. */
+  function openBackgroundFor(anchor: HTMLElement) {
+    const { x, y } = anchorBelow(anchor, MENU_WIDTH);
+    state.value = { node: null, x, y, returnTo: anchor };
+  }
+
   function close() {
     const returnTo = state.value?.returnTo;
     state.value = null;
     returnTo?.focus();
   }
 
-  return { state, openAt, openFor, close };
+  return { state, openAt, openFor, openBackgroundAt, openBackgroundFor, close };
 });

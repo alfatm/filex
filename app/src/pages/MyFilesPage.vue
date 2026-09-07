@@ -1,16 +1,22 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue';
+import { watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
-import { ChevronRight, FolderOpen, Home, Info, LayoutGrid, List, MoreVertical } from 'lucide-vue-next';
-import { FILTER_WIDTHS, type FilterId } from '@/features/files/filters';
+import { AlertTriangle, Filter, FolderOpen, Info, LayoutGrid, List, MoreVertical, Upload } from 'lucide-vue-next';
+import FilterChip from '@/features/files/FilterChip.vue';
+import { type FilterId } from '@/features/files/filters';
+import { useDragStore } from '@/features/files/dragStore';
+import { useItemMenuStore } from '@/features/files/itemMenuStore';
 import { useListingKeyboard } from '@/features/files/useListingKeyboard';
-import { filesRoute, joinPath, segments } from '@/lib/path';
+import { useUploadStore } from '@/features/files/uploadStore';
+import { joinPath, segments } from '@/lib/path';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
-import { Chip, IconButton } from '@/ui';
+import { Button, IconButton } from '@/ui';
+import Breadcrumbs from './files/Breadcrumbs.vue';
 import DetailsPanel from './files/DetailsPanel.vue';
 import EmptyState from './files/EmptyState.vue';
+import ListingSkeleton from './files/ListingSkeleton.vue';
 import FileCard from './files/FileCard.vue';
 import FileTable from './files/FileTable.vue';
 import FolderCard from './files/FolderCard.vue';
@@ -21,10 +27,37 @@ const { t } = useI18n();
 const route = useRoute();
 const files = useFilesStore();
 const view = useViewStore();
-const { onKeydown, onMainClick, activeDescendant, open: openNode } = useListingKeyboard();
+const { onKeydown, onMainClick, onMainContextMenu, activeDescendant, open: openNode } = useListingKeyboard();
+const itemMenu = useItemMenuStore();
+const drag = useDragStore();
+const uploads = useUploadStore();
+
+const LISTING_TARGET = 'listing';
+
+/** Files dragged in from the OS land in the open folder unless a folder card takes the drop first. */
+function onPageDragOver(event: DragEvent) {
+  if (!event.dataTransfer?.types.includes('Files')) return;
+  event.preventDefault();
+  drag.files = true;
+  drag.overId = LISTING_TARGET;
+  event.dataTransfer.dropEffect = 'copy';
+}
+
+function onPageDragLeave(event: DragEvent) {
+  // dragleave also fires when the pointer crosses into a child; only a real exit ends the drag.
+  if ((event.currentTarget as HTMLElement).contains(event.relatedTarget as HTMLElement | null)) return;
+  drag.end();
+}
+
+function onPageDrop(event: DragEvent) {
+  const dropped = event.dataTransfer?.files;
+  drag.end();
+  if (!dropped?.length) return;
+  event.preventDefault();
+  uploads.start(dropped);
+}
 
 const FILTERS: FilterId[] = ['type', 'people', 'modified', 'size'];
-const filters = computed(() => FILTERS.map((id) => ({ id, label: t(`filter.${id}`), width: FILTER_WIDTHS[id] })));
 
 // The folder follows the URL (`/files/:path*`); the storage is bootstrapped by App.vue, so wait for it too.
 watch(
@@ -37,12 +70,27 @@ watch(
 </script>
 
 <template>
-  <main class="min-w-0 flex-1 overflow-y-auto pb-8 pl-[29px] pr-3 pt-[18px]" @click="onMainClick">
+  <main
+    class="relative min-w-0 flex-1 overflow-y-auto pb-8 pl-[29px] pr-3 pt-[18px]"
+    @click="onMainClick"
+    @contextmenu="onMainContextMenu"
+    @dragover="onPageDragOver"
+    @dragleave="onPageDragLeave"
+    @drop="onPageDrop"
+  >
+    <!-- Drop hint for files coming from the OS; a folder card under the pointer takes the drop instead. -->
+    <div
+      v-if="drag.overId === LISTING_TARGET"
+      class="pointer-events-none absolute inset-2 z-10 flex items-start justify-center rounded-xl border-2 border-dashed border-primary pt-24"
+    >
+      <!-- Solid pill: the label has to stay readable over whatever thumbnails sit under the overlay. -->
+      <p class="flex items-center gap-2 rounded-full bg-bg px-5 py-3 text-17 font-medium leading-none text-primary shadow-menu">
+        <Upload :size="20" />
+        {{ t('files.dropHere', { folder: files.folder?.name ?? '' }) }}
+      </p>
+    </div>
     <div class="flex h-[38px] items-center">
-      <IconButton :label="t('files.breadcrumbHome')" class="text-text-2" @click="$router.push(filesRoute([]))"><Home :size="20" /></IconButton>
-      <ChevronRight :size="16" class="text-text-3" />
-      <h1 class="mx-2 text-18 font-semibold leading-none">{{ files.folder?.name }}</h1>
-      <IconButton :label="t('files.siblings')" :size="24" class="text-text-3" :disabled-hint="t('common.comingSoon')"><ChevronRight :size="16" /></IconButton>
+      <Breadcrumbs />
 
       <div class="ml-auto flex items-center">
         <div
@@ -81,21 +129,33 @@ watch(
     <!-- Multi-selection only (single selection keeps the filters); centred on the 38px filter row it replaces, so nothing below moves. -->
     <SelectionBar v-if="files.selected.length >= 2" class="-mb-[5px] mt-[7px]" :class="view.mode === 'list' && 'mr-[9px]'" />
     <div v-else class="mt-3 flex h-[38px] items-center gap-[10px]">
-      <Chip v-for="chip in filters" :key="chip.id" :label="chip.label" :width="chip.width" :disabled-hint="t('common.comingSoon')" />
+      <div role="group" :aria-label="t('filter.title')" class="flex items-center gap-[10px]">
+        <FilterChip v-for="id in FILTERS" :key="id" :id="id" />
+      </div>
       <SortControl v-if="view.mode === 'list'" variant="pill" class="ml-auto mr-[10px]" />
       <template v-else>
         <SortControl class="ml-auto" />
-        <IconButton :label="t('files.more')" :size="32" class="text-text-2" :disabled-hint="t('common.comingSoon')"><MoreVertical :size="20" /></IconButton>
+        <IconButton
+          :label="t('files.listingActions')"
+          :size="32"
+          class="text-text-2"
+          aria-haspopup="menu"
+          @click="itemMenu.openBackgroundFor($event.currentTarget as HTMLElement)"
+        >
+          <MoreVertical :size="20" />
+        </IconButton>
       </template>
     </div>
 
-    <div v-if="view.mode === 'list' && files.ordered.length" class="mr-[9px] mt-[22px]">
+    <ListingSkeleton v-if="files.loading && !files.ordered.length" class="mr-[9px] mt-[22px]" :mode="view.mode" />
+
+    <div v-else-if="view.mode === 'list' && files.ordered.length" class="mr-[9px] mt-[22px]">
       <FileTable tabindex="0" :aria-activedescendant="activeDescendant" @keydown="onKeydown" @open="openNode" />
     </div>
 
     <!-- One listbox for both sections so ↑/↓ walk folders then files; cards stay tabbable and sync the cursor on focus. -->
     <div
-      v-if="view.mode === 'grid' && files.ordered.length"
+      v-else-if="view.mode === 'grid' && files.ordered.length"
       role="listbox"
       aria-multiselectable="true"
       tabindex="0"
@@ -136,7 +196,21 @@ watch(
       </template>
     </div>
 
-    <EmptyState v-if="!files.ordered.length" class="mt-24" :icon="FolderOpen" :title="t('files.emptyState')" :hint="t('files.emptyHint')" />
+    <!-- A load that failed keeps the page usable: say what happened and offer to run it again. -->
+    <EmptyState v-else-if="files.error" class="mt-24" :icon="AlertTriangle" :title="t(`error.${files.error}.title`)" :hint="t(`error.${files.error}.hint`)">
+      <Button variant="outline" @click="files.retry()">{{ t('error.retry') }}</Button>
+    </EmptyState>
+
+    <!-- A folder can be empty, or emptied by the chips; the second case offers the way out. -->
+    <EmptyState
+      v-else-if="!files.ordered.length"
+      class="mt-24"
+      :icon="files.filtered ? Filter : FolderOpen"
+      :title="files.filtered ? t('empty.filtered.title') : t('files.emptyState')"
+      :hint="files.filtered ? t('empty.filtered.hint') : t('files.emptyHint')"
+    >
+      <Button v-if="files.filtered" variant="outline" @click="files.clearFilter()">{{ t('filter.clear') }}</Button>
+    </EmptyState>
   </main>
 
   <DetailsPanel

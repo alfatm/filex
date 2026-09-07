@@ -1,5 +1,6 @@
 import { computed, watch } from 'vue';
 import { useFilesStore } from '@/stores/files';
+import { useItemMenuStore } from './itemMenuStore';
 import { useFileActions } from './useFileActions';
 
 /** Anything interactive inside the listing keeps its native keys (row checkbox, sort header, ⋮ menu). */
@@ -12,6 +13,7 @@ const INTERACTIVE = 'button, a, input, select, textarea, [contenteditable], [rol
 export function useListingKeyboard() {
   const files = useFilesStore();
   const actions = useFileActions();
+  const itemMenu = useItemMenuStore();
 
   function onKeydown(event: KeyboardEvent) {
     if ((event.target as HTMLElement | null)?.closest(INTERACTIVE)) return;
@@ -33,6 +35,13 @@ export function useListingKeyboard() {
     files.clearSelection();
   }
 
+  /** Right-click on the same bare surface opens the listing's own menu; cards and rows open their node's. */
+  function onMainContextMenu(event: MouseEvent) {
+    if ((event.target as HTMLElement | null)?.closest('[data-id], button, [role="menu"], [role="dialog"]')) return;
+    event.preventDefault();
+    itemMenu.openBackgroundAt(event.clientX, event.clientY);
+  }
+
   // Keep the keyboard cursor visible while ↑/↓ walk past the viewport edge. Keyboard only (`cursorId`): a right-click
   // also moves the cursor, and scrolling then would close its menu.
   watch(
@@ -43,5 +52,5 @@ export function useListingKeyboard() {
     { flush: 'post' },
   );
 
-  return { onKeydown, onMainClick, activeDescendant, open: actions.open };
+  return { onKeydown, onMainClick, onMainContextMenu, activeDescendant, open: actions.open };
 }

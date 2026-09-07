@@ -32,14 +32,19 @@ export function useFileActions() {
     modals.open({ kind: 'preview', ...previewList(siblings, node) });
   }
 
-  /** Single files only: a real anchor click so the browser saves the file (folders / selections need a zip endpoint). */
-  function download(node: Node) {
-    const url = downloadUrl(node);
-    if (!url) return;
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = node.name;
-    anchor.click();
+  /**
+   * A real anchor click per file, so the browser saves them (a second file makes Chrome ask once for the site).
+   * Folders are skipped: zipping a subtree needs an endpoint the backend does not have yet.
+   */
+  function download(nodes: Node[]) {
+    for (const node of nodes) {
+      const url = node.kind === 'file' ? downloadUrl(node) : null;
+      if (!url) continue;
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = node.name;
+      anchor.click();
+    }
   }
 
   /**
@@ -54,7 +59,7 @@ export function useFileActions() {
       case 'preview':
         return preview(node);
       case 'download':
-        return download(node);
+        return download(nodes);
       case 'share':
         return modals.open({ kind: 'share', node });
       case 'rename':
@@ -79,5 +84,5 @@ export function useFileActions() {
     toast.push(t('toast.linkCopied'));
   }
 
-  return { open, preview, run, copyLink };
+  return { open, preview, download, run, copyLink };
 }

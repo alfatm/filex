@@ -62,11 +62,13 @@ breadcrumb row at y 90 and ends at x 1651 (or 1297 with the details panel
 open); §3/§4 are authoritative where an earlier draft said "padding 28 32".
 
 **Sidebar** (w 280, bg `--c-bg-sidebar`, border-right 1px):
-- Row 1 (h 72): burger icon 22px at x 40 center (inert, "Coming soon"); logo mark 32×32 radius 8 primary
-  with white folder glyph at x 84; word "filex" 22/600 at x 132.
-- **New** button: x 22, y 82, w 136, h 52, radius 12, primary bg, white
-  `Plus` 20px + "New" 18/500, gap 12. Opens a dropdown (Folder, File upload,
-  Folder upload, divider, New document).
+- Row 1 (h 72): burger icon 22px at x 40 center (collapses the sidebar, see §7b); logo mark 32×32 radius 8
+  primary with white folder glyph at x 84; word "filex" 22/600 at x 132.
+- **New** button: x 14, y 82, w 136, h 52, radius 12, primary bg, white
+  `Plus` 20px + "New" 18/500. Left edge, icon (x 24) and label (x 70) sit in
+  the same columns as the nav rows below — the ref draws it at x 22 with the
+  content centred, which reads as misaligned against the list. Opens a dropdown
+  (Folder, File upload, Folder upload, divider, New document).
 - Nav list starts y 156, item h 40, gap 1, padding-left 24 (icon), text at x 70,
   icon 20px. Active item: bg `--c-primary-soft`, radius 10, extends x 14..260.
   Items: Home, My files, Shared with me, Recent, Starred, Trash.
@@ -252,6 +254,50 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
   icon buttons Download, Share, Move, Star, Delete, `X` clear.
 - **Toasts** bottom-left, radius 12, shadow-menu.
 - **Upload tray** bottom-right card w 360 with per-file progress.
+
+## 7a. Filter chips
+
+The four chips above every listing (Type, People, Modified, Size) are real
+filters. Each opens a single-choice menu (`menuitemradio`, check column on the
+left) whose values are the ones the advanced search form already uses, so the
+two speak one vocabulary. A chosen value replaces the chip's label, drops its
+fixed width and paints it `--c-primary-soft` with a primary border; "Any…"
+clears it. Type and Size narrow the listing to files (a folder has neither),
+Modified and People keep folders. The filter is session state: it follows the
+user into the next folder and resets on reload. When it empties a listing, the
+empty state offers "Clear filters".
+
+The value lives in the store as a `ListingFilter` and is handed to the
+repository, which applies it — the mock in `mock/search.ts`, the HTTP one as
+query params. Nothing is narrowed after the fact in the client.
+
+## 7b. Navigation, dragging and load states
+
+- **Breadcrumbs**: the home button, then every folder above the open one, then
+  the open folder as the `h1` (18/600, parents in `--c-text-2`). Above four
+  crumbs the middle folds behind a "…" button that lists them. The chevron
+  after the last crumb opens the open folder's subfolders, read fresh so the
+  filter chips hide none; it says "No subfolders" when there are none.
+- **Sidebar rail**: the hamburger collapses the sidebar to 76 px. Rows keep
+  their height and active box, labels move to `sr-only` plus a tooltip, the
+  section captions become a short rule, the New button becomes a round 44,
+  and the quota block is dropped (it is nothing without its numbers). The
+  choice is persisted next to the view mode.
+- **Listing menu**: right-click on bare listing surface, or the grid's ⋮
+  button — New folder, File upload, then Select all / Deselect all. The flat
+  listings keep only the selection entries.
+- **Drag and drop**: cards and rows are drag sources; dragging a selected node
+  takes the whole selection. Folder cards, folder rows and every breadcrumb
+  above the open folder are drop targets and highlight in primary. Files
+  dragged from the OS drop on a folder to upload there, or anywhere else in
+  the listing to upload into the open folder, which paints a dashed primary
+  overlay across the content area.
+- **Loading and failure**: while a listing loads with nothing to show, the page
+  paints a skeleton in the shape of the cards or rows. A failed load — or a URL
+  naming a folder that is gone — replaces the listing with a message and a
+  "Try again" button; the shell around it stays usable.
+- **Search results** carry a "Refine" button that reopens Advanced search on
+  the query behind the chips.
 
 ## 8. User settings modal (ref 5)
 

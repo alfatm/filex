@@ -84,6 +84,20 @@ export type SearchIn = (typeof SEARCH_INS)[number];
 export type ModifiedPreset = (typeof MODIFIED_PRESETS)[number];
 export type FileTypeGroup = (typeof FILE_TYPE_GROUPS)[number];
 export type SizePreset = (typeof SIZE_PRESETS)[number];
+
+/**
+ * What the filter chips above a listing express: the subset of `SearchQuery` a listing can carry. The repository
+ * applies it — the mock in `mock/search.ts`, the HTTP one as query params — so the store never post-filters rows
+ * the server already returned, and a folder with 10k children stays one request.
+ */
+export interface ListingFilter {
+  fileType: FileTypeGroup;
+  modified: ModifiedPreset;
+  size: Exclude<SizePreset, 'custom'>;
+  /** Matches the owner or, on Shared with me, whoever shared the node; null means anyone. */
+  personId: string | null;
+}
+
 export type SizeUnit = (typeof SIZE_UNITS)[number];
 
 export interface SizeRange {

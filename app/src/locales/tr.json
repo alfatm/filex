@@ -3,7 +3,8 @@
     "name": "filex"
   },
   "common": {
-    "comingSoon": "Çok yakında"
+    "comingSoon": "Çok yakında",
+    "loading": "Yükleniyor"
   },
   "nav": {
     "menu": "Menü",
@@ -17,7 +18,9 @@
     "connections": "Bağlantılar",
     "howToConnect": "Nasıl bağlanılır",
     "apiKeys": "API anahtarları",
-    "search": "Arama"
+    "search": "Arama",
+    "collapseMenu": "Menüyü daralt",
+    "expandMenu": "Menüyü genişlet"
   },
   "new": {
     "button": "Yeni",
@@ -60,6 +63,10 @@
     "trash": {
       "title": "Çöp kutusu boş",
       "hint": "Çöp kutusuna taşıdığınız öğeler burada görünür"
+    },
+    "filtered": {
+      "title": "Eşleşen öğe yok",
+      "hint": "Başka bir filtre deneyin veya hepsini temizleyin"
     }
   },
   "trash": {
@@ -150,7 +157,6 @@
   },
   "files": {
     "breadcrumbHome": "Ana sayfa",
-    "siblings": "Kardeş klasörler",
     "listView": "Liste görünümü",
     "gridView": "Izgara görünümü",
     "details": "Ayrıntılar",
@@ -169,13 +175,22 @@
     "sharedBy": "Paylaşan",
     "sharedOn": "Paylaşım tarihi",
     "deleted": "Silinme tarihi",
-    "originalPath": "Özgün konum"
+    "originalPath": "Özgün konum",
+    "breadcrumb": "Konum",
+    "breadcrumbMore": "Diğer klasörler",
+    "subfolders": "Alt klasörler",
+    "noSubfolders": "Alt klasör yok",
+    "listingActions": "Liste eylemleri",
+    "dropHere": "“{folder}” klasörüne yüklemek için bırakın"
   },
   "filter": {
     "type": "Tür",
     "people": "Kişiler",
     "modified": "Değiştirilme",
-    "size": "Boyut"
+    "size": "Boyut",
+    "anyone": "Herkes",
+    "clear": "Filtreleri temizle",
+    "title": "Filtreler"
   },
   "sort": {
     "name": "Ad",
@@ -254,7 +269,9 @@
     "moveToTrash": "Çöp kutusuna taşı",
     "removeFromStarred": "Yıldızlılardan kaldır",
     "restore": "Geri yükle",
-    "deleteForever": "Kalıcı olarak sil"
+    "deleteForever": "Kalıcı olarak sil",
+    "selectAll": "Tümünü seç",
+    "clearSelection": "Seçimi kaldır"
   },
   "preview": {
     "download": "İndir",
@@ -352,7 +369,8 @@
     "chipQuery": "“{text}”",
     "chipTags": "Etiketler: {tags}",
     "chipPath": "Yol: {path}",
-    "chipNoOcr": "OCR kapalı"
+    "chipNoOcr": "OCR kapalı",
+    "refine": "Daralt"
   },
   "assistant": {
     "title": "Yapay zekâ asistanı",
@@ -463,6 +481,17 @@
       "enabled": "AI asistanı etkinleştir",
       "defaultMode": "Varsayılan arama modu",
       "providerNote": "Model ve API anahtarı yöneticiniz tarafından yapılandırılır."
+    }
+  },
+  "error": {
+    "retry": "Yeniden dene",
+    "notFound": {
+      "title": "Klasör bulunamadı",
+      "hint": "Yeniden adlandırılmış, taşınmış veya silinmiş olabilir"
+    },
+    "load": {
+      "title": "Liste yüklenemedi",
+      "hint": "Bağlantınızı kontrol edip yeniden deneyin"
     }
   }
 }

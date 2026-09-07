@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 import { useSelection } from '@/composables/useSelection';
+import { emptyFilter, isFiltered } from '@/features/files/filters';
 import { repository } from '@/data';
-import type { Node, Person, Storage, UploadInput, User } from '@/data/types';
+import type { ListingFilter, Node, Person, Storage, UploadInput, User } from '@/data/types';
 import { i18n } from '@/i18n';
 import { subjectMessage } from '@/i18n/subject';
 import { useToastStore } from './toast';
@@ -26,11 +27,21 @@ export const useFilesStore = defineStore('files', () => {
   const path = ref<Node[]>([]);
   const items = ref<Node[]>([]);
   const people = ref<Person[]>([]);
+  /** Chips above the listing. The repository applies them, so every change is a fresh load, as it will be over HTTP. */
+  const filter = ref<ListingFilter>(emptyFilter());
+  const filtered = computed(() => isFiltered(filter.value));
+  const filterPeople = ref<Person[]>([]);
   const listing = ref<Listing | null>(null);
+  /** True while the newest load is in flight; the pages show a skeleton instead of an empty listing. */
+  const loading = ref(false);
+  /** i18n key under `error.` when the last load failed, so the page can offer a retry instead of a blank listing. */
+  const error = ref<'notFound' | 'load' | null>(null);
   /** Bumped after every mutation; pages that keep their own data (Home, Search) reload on it. */
   const revision = ref(0);
   // Out-of-order guard: only the newest `load` may publish its result.
   let loadSeq = 0;
+  /** Path of the last `openPath`, so a retry can resolve it again. */
+  let lastPath: string | null = null;
 
   const sorted = computed(() => {
     // Recent is a timeline: its day groups only make sense newest-first.
@@ -74,11 +85,27 @@ export const useFilesStore = defineStore('files', () => {
 
   async function load(target: Listing) {
     const seq = ++loadSeq;
+    loading.value = true;
+    error.value = null;
+    try {
+      await read(target, seq);
+    } catch {
+      // A newer load already owns the listing; its own result decides what is shown.
+      if (seq === loadSeq) {
+        error.value = 'load';
+        items.value = [];
+      }
+    } finally {
+      if (seq === loadSeq) loading.value = false;
+    }
+  }
+
+  async function read(target: Listing, seq: number) {
     if (target.kind === 'folder') {
       const [node, chain, list] = await Promise.all([
         repository.getNode(target.folderId),
         repository.getPath(target.folderId),
-        repository.listFolder(target.folderId),
+        repository.listFolder(target.folderId, filter.value),
       ]);
       if (seq !== loadSeq) return;
       folder.value = node;
@@ -90,8 +117,8 @@ export const useFilesStore = defineStore('files', () => {
         starred: repository.listStarred,
         shared: repository.listShared,
         trash: repository.listTrash,
-      } satisfies Record<ListingKind, () => Promise<Node[]>>;
-      const list = await loaders[target.kind].call(repository);
+      } satisfies Record<ListingKind, (filter: ListingFilter) => Promise<Node[]>>;
+      const list = await loaders[target.kind].call(repository, filter.value);
       if (seq !== loadSeq) return;
       folder.value = null;
       path.value = [];
@@ -120,16 +147,38 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   /** Opens the folder at `path` (slash-separated, relative to the active storage root). */
-  async function openPath(path: string) {
+  async function openPath(folderPath: string) {
     if (!storage.value) throw new Error('storage not loaded');
-    const node = await repository.resolvePath(storage.value.id, path);
+    lastPath = folderPath;
+    let node: Node;
+    try {
+      node = await repository.resolvePath(storage.value.id, folderPath);
+    } catch {
+      // A URL naming a folder that is gone: say so and offer a retry, rather than leaving a blank page behind.
+      loadSeq++;
+      selection.clear();
+      items.value = [];
+      folder.value = null;
+      path.value = [];
+      listing.value = null;
+      loading.value = false;
+      error.value = 'notFound';
+      return;
+    }
     await open(node.id);
   }
 
   async function openListing(kind: ListingKind) {
+    lastPath = null;
     selection.clear();
     selection.focusedId.value = null;
     await load({ kind });
+  }
+
+  /** Runs the failed load again: the folder behind the URL, else the open listing. */
+  async function retry() {
+    if (lastPath !== null) return openPath(lastPath);
+    if (listing.value) return load(listing.value);
   }
 
   /** Re-reads the current listing after a mutation; ids that vanished simply drop out of the selection. */
@@ -138,7 +187,21 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   async function bootstrap() {
-    [storages.value, user.value] = await Promise.all([repository.listStorages(), repository.currentUser()]);
+    [storages.value, user.value, filterPeople.value] = await Promise.all([
+      repository.listStorages(),
+      repository.currentUser(),
+      repository.listFilterPeople(),
+    ]);
+  }
+
+  /** A chip changed: reload the listing through the repository rather than narrowing what is already in memory. */
+  async function setFilter(next: ListingFilter) {
+    filter.value = next;
+    await refresh();
+  }
+
+  function clearFilter() {
+    return setFilter(emptyFilter());
   }
 
   async function mutate<T>(action: () => Promise<T>): Promise<T> {
@@ -217,6 +280,11 @@ export const useFilesStore = defineStore('files', () => {
     path,
     items,
     people,
+    loading,
+    error,
+    filter,
+    filtered,
+    filterPeople,
     listing,
     revision,
     folders,
@@ -233,6 +301,9 @@ export const useFilesStore = defineStore('files', () => {
     openListing,
     leave,
     refresh,
+    retry,
+    setFilter,
+    clearFilter,
     bootstrap,
     createFolder,
     addUploaded,

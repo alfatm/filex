@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, MoreVertical, Star } from 'lucide-vue-next';
 import { useFormat } from '@/composables/useFormat';
 import type { Node } from '@/data/types';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
+import { useNodeDrag } from '@/features/files/useNodeDrag';
 import { useSettingsStore } from '@/features/settings/settingsStore';
 import HitIcon from '@/features/search/HitIcon.vue';
 import { useFilesStore } from '@/stores/files';
@@ -29,6 +30,7 @@ const { formatDateTime, formatSize } = useFormat();
 const files = useFilesStore();
 const view = useViewStore();
 const itemMenu = useItemMenuStore();
+const { drag, onDragStart, onDragOver, onDragLeave, onDrop } = useNodeDrag();
 const settings = useSettingsStore();
 
 // Spec §4: name flex, owner 160, modified 236, size 160; 12px outer padding. The menu column is the spec's 48 plus
@@ -134,10 +136,17 @@ function onContextMenu(node: Node, event: MouseEvent) {
             settings.settings.compactList ? 'h-[34px]' : 'h-[42px]',
             files.isSelected(node.id) ? 'bg-primary-soft' : 'hover:bg-hover-row',
             files.cursorId === node.id && 'cursor-row',
+            drag.overId === node.id && '!bg-primary-tint outline outline-2 -outline-offset-2 outline-primary',
           ]"
+          draggable="true"
           @click="files.selectFromEvent(node.id, $event)"
           @dblclick="emit('open', node)"
           @contextmenu.prevent="onContextMenu(node, $event)"
+          @dragstart="onDragStart(node, $event)"
+          @dragend="drag.end()"
+          @dragover="onDragOver(node, $event)"
+          @dragleave="onDragLeave(node)"
+          @drop="onDrop(node, $event)"
         >
           <td class="!pl-3">
             <Checkbox

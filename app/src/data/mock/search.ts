@@ -1,5 +1,5 @@
 import { joinPath, segments } from '@/lib/path';
-import type { FileType, FileTypeGroup, MatchRange, Node, SearchHit, SearchQuery, SearchResult } from '../types';
+import type { FileType, FileTypeGroup, ListingFilter, MatchRange, Node, SearchHit, SearchQuery, SearchResult } from '../types';
 import { contentIndex, indexedOnly, live, nodes, rootNode, storages } from './dataset';
 
 const KB = 1024;
@@ -18,6 +18,22 @@ const TYPE_GROUPS: Record<Exclude<FileTypeGroup, 'any'>, FileType[]> = {
   spreadsheets: ['csv'],
   design: ['fig'],
 };
+
+/**
+ * The chips above a listing, applied where the server would apply them. Type and size are properties of files, so
+ * either narrows the listing to files; Modified and People also keep folders.
+ */
+export function matchesFilter(node: Node, filter: ListingFilter, now = Date.now()): boolean {
+  if (filter.fileType !== 'any' && (node.kind !== 'file' || !TYPE_GROUPS[filter.fileType].includes(node.fileType ?? 'other'))) return false;
+  if (filter.modified !== 'any' && now - Date.parse(node.modifiedAt) > MODIFIED_WINDOW_DAYS[filter.modified] * DAY) return false;
+  if (filter.size !== 'any') {
+    if (node.kind !== 'file') return false;
+    const [min, max] = SIZE_PRESET_BYTES[filter.size];
+    if (node.size < min || node.size > max) return false;
+  }
+  if (filter.personId && node.ownerId !== filter.personId) return false;
+  return true;
+}
 
 /** Indexed text is up to 2 KB; a hit shows this many characters around the first match. */
 const SNIPPET_CHARS = 120;

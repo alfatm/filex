@@ -3,7 +3,8 @@
     "name": "filex"
   },
   "common": {
-    "comingSoon": "Coming soon"
+    "comingSoon": "Coming soon",
+    "loading": "Loading"
   },
   "nav": {
     "menu": "Menu",
@@ -17,7 +18,9 @@
     "connections": "Connections",
     "howToConnect": "How to connect",
     "apiKeys": "API keys",
-    "search": "Search"
+    "search": "Search",
+    "collapseMenu": "Collapse menu",
+    "expandMenu": "Expand menu"
   },
   "new": {
     "button": "New",
@@ -60,6 +63,10 @@
     "trash": {
       "title": "Trash is empty",
       "hint": "Items you move to trash will appear here"
+    },
+    "filtered": {
+      "title": "No matching items",
+      "hint": "Try a different filter or clear them all"
     }
   },
   "trash": {
@@ -150,7 +157,6 @@
   },
   "files": {
     "breadcrumbHome": "Home",
-    "siblings": "Sibling folders",
     "listView": "List view",
     "gridView": "Grid view",
     "details": "Details",
@@ -169,13 +175,22 @@
     "sharedBy": "Shared by",
     "sharedOn": "Shared on",
     "deleted": "Deleted",
-    "originalPath": "Original location"
+    "originalPath": "Original location",
+    "breadcrumb": "Location",
+    "breadcrumbMore": "More folders",
+    "subfolders": "Subfolders",
+    "noSubfolders": "No subfolders",
+    "listingActions": "Listing actions",
+    "dropHere": "Drop files to upload to “{folder}”"
   },
   "filter": {
     "type": "Type",
     "people": "People",
     "modified": "Modified",
-    "size": "Size"
+    "size": "Size",
+    "anyone": "Anyone",
+    "clear": "Clear filters",
+    "title": "Filters"
   },
   "sort": {
     "name": "Name",
@@ -254,7 +269,9 @@
     "moveToTrash": "Move to trash",
     "removeFromStarred": "Remove from starred",
     "restore": "Restore",
-    "deleteForever": "Delete forever"
+    "deleteForever": "Delete forever",
+    "selectAll": "Select all",
+    "clearSelection": "Deselect all"
   },
   "preview": {
     "download": "Download",
@@ -352,7 +369,8 @@
     "chipQuery": "“{text}”",
     "chipTags": "Tags: {tags}",
     "chipPath": "Path: {path}",
-    "chipNoOcr": "OCR off"
+    "chipNoOcr": "OCR off",
+    "refine": "Refine"
   },
   "assistant": {
     "title": "AI assistant",
@@ -463,6 +481,17 @@
       "enabled": "Enable AI assistant",
       "defaultMode": "Default search mode",
       "providerNote": "The model and API key are configured by your administrator."
+    }
+  },
+  "error": {
+    "retry": "Try again",
+    "notFound": {
+      "title": "Folder not found",
+      "hint": "It may have been renamed, moved or deleted"
+    },
+    "load": {
+      "title": "Could not load this listing",
+      "hint": "Check your connection and try again"
     }
   }
 }

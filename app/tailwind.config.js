@@ -1,6 +1,12 @@
 /** @type {import('tailwindcss').Config} */
 // Every value maps onto a CSS variable declared in src/design/tokens.css, so
 // the spec's token table stays the single place where colours are defined.
+//
+// The variables hold whole colours (light-dark() pairs), not channel triplets,
+// so the opacity modifier has nothing to attach to: `bg-bg/90` compiles to a
+// dropped declaration, not a translucent background. Use a solid token, or
+// `bg-[color-mix(in_srgb,var(--c-bg)_90%,transparent)]` when translucency is
+// really needed.
 export default {
   content: ['./index.html', './src/**/*.{vue,ts}'],
   theme: {

@@ -40,7 +40,11 @@ describe('files store', () => {
       'source-design.psd',
       'wireframe.png',
     ]);
-    await expect(files.openPath('Nope')).rejects.toThrow('path not found');
+    // A path that resolves to nothing is a page state, not a rejection: the page shows it and offers a retry.
+    await files.openPath('Nope');
+    expect(files.error).toBe('notFound');
+    expect(files.ordered).toEqual([]);
+    expect(files.loading).toBe(false);
   });
 
   it('orders folders before files and sorts modified dates as instants', async () => {
