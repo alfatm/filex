@@ -29,6 +29,8 @@ const BASE_URL = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:5212';
 
 export default defineConfig({
   testDir: './tests',
+  // The end-user SPA suite has its own server and config (playwright.app.config.ts).
+  testIgnore: 'app/**',
   timeout: 30_000,
   expect: { timeout: 5_000 },
   fullyParallel: false,         // serialize: shared admin user state

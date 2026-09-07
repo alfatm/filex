@@ -1,0 +1,11 @@
+export { default as Button } from './Button.vue';
+export { default as IconButton } from './IconButton.vue';
+export { default as Chip } from './Chip.vue';
+export { default as Avatar } from './Avatar.vue';
+export { default as ProgressBar } from './ProgressBar.vue';
+export { default as Tabs } from './Tabs.vue';
+export { default as Checkbox } from './Checkbox.vue';
+export { default as SidePanel } from './SidePanel.vue';
+export { default as Input } from './Input.vue';
+export { default as Select } from './Select.vue';
+export { default as Radio } from './Radio.vue';

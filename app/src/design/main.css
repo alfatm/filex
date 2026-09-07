@@ -1,0 +1,36 @@
+@import './tokens.css';
+@import './fonts.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    margin: 0;
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--c-text);
+    background: var(--c-bg);
+  }
+  button {
+    font: inherit;
+    color: inherit;
+  }
+}
+
+@layer utilities {
+  /* `truncate` on a line-height-1 box clips descenders (the tail of "g"). `clip` with a
+     clip margin paints them without changing the box; the ellipsis still hides the overflow. */
+  .truncate-safe {
+    overflow: clip;
+    overflow-clip-margin: 0.25em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

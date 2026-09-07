@@ -1,0 +1,58 @@
+<script setup lang="ts">
+import { ref } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { Switch } from '@headlessui/vue';
+import { Copy, Link } from 'lucide-vue-next';
+import type { Node } from '@/data/types';
+import { useFilesStore } from '@/stores/files';
+import { Button, IconButton } from '@/ui';
+import Modal from '@/ui/Modal.vue';
+import { useFileActions } from './useFileActions';
+
+const props = defineProps<{ node: Node }>();
+const emit = defineEmits<{ close: [] }>();
+const { t } = useI18n();
+const files = useFilesStore();
+const actions = useFileActions();
+
+// The URL is held here from the mutation result; the listing refresh keeps the details panel in sync on its own.
+const url = ref(props.node.shareUrl);
+
+async function toggle(on: boolean) {
+  if (on) url.value = await files.createShareLink(props.node.id);
+  else {
+    await files.removeShareLink(props.node.id);
+    url.value = undefined;
+  }
+}
+</script>
+
+<template>
+  <Modal :title="t('modal.share.title', { name: node.name })" :close-label="t('modal.close')" @close="emit('close')">
+    <div class="flex items-center">
+      <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-bg-muted text-text-2">
+        <Link :size="18" />
+      </span>
+      <div class="ml-3 min-w-0 flex-1">
+        <p class="text-15 font-medium leading-none">{{ t('modal.share.linkSharing') }}</p>
+        <p class="mt-1 text-14 leading-none text-text-3">{{ url ? t('modal.share.anyoneCanView') : t('modal.share.off') }}</p>
+      </div>
+      <Switch
+        :model-value="!!url"
+        :aria-label="t('modal.share.linkSharing')"
+        class="relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+        :class="url ? 'bg-primary' : 'bg-border-hover'"
+        @update:model-value="toggle"
+      >
+        <span class="inline-block h-5 w-5 rounded-full bg-white shadow-menu transition" :class="url ? 'translate-x-[22px]' : 'translate-x-0.5'" />
+      </Switch>
+    </div>
+    <div v-if="url" class="mt-4 flex h-11 items-center rounded-md border border-border bg-bg-muted pl-4 pr-1">
+      <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ url }}</span>
+      <IconButton :label="t('panel.copy')" :size="36" class="hover:bg-bg" @click="actions.copyLink(url)"><Copy :size="18" /></IconButton>
+    </div>
+    <template #footer>
+      <Button @click="emit('close')">{{ t('modal.done') }}</Button>
+    </template>
+  </Modal>
+</template>

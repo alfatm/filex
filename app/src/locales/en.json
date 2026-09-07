@@ -1,0 +1,383 @@
+{
+  "app": {
+    "name": "filex"
+  },
+  "common": {
+    "comingSoon": "Coming soon"
+  },
+  "nav": {
+    "menu": "Menu",
+    "home": "Home",
+    "files": "My files",
+    "shared": "Shared with me",
+    "recent": "Recent",
+    "starred": "Starred",
+    "trash": "Trash",
+    "storages": "Storages",
+    "connections": "Connections",
+    "howToConnect": "How to connect",
+    "apiKeys": "API keys",
+    "search": "Search"
+  },
+  "new": {
+    "button": "New",
+    "folder": "Folder",
+    "fileUpload": "File upload",
+    "folderUpload": "Folder upload",
+    "document": "New document"
+  },
+  "quota": {
+    "used": "{used} of {total} used"
+  },
+  "unit": {
+    "b": "B",
+    "kb": "KB",
+    "mb": "MB",
+    "gb": "GB"
+  },
+  "date": {
+    "today": "Today",
+    "yesterday": "Yesterday"
+  },
+  "home": {
+    "storages": "Storages",
+    "recent": "Recent",
+    "starred": "Starred"
+  },
+  "empty": {
+    "shared": {
+      "title": "Nothing shared with you yet",
+      "hint": "Files and folders others share with you will appear here"
+    },
+    "recent": {
+      "title": "No recent files",
+      "hint": "Files you open or edit will appear here"
+    },
+    "starred": {
+      "title": "No starred items",
+      "hint": "Star files and folders to find them quickly"
+    },
+    "trash": {
+      "title": "Trash is empty",
+      "hint": "Items you move to trash will appear here"
+    }
+  },
+  "trash": {
+    "banner": "Items in trash are deleted forever after 30 days",
+    "empty": "Empty trash"
+  },
+  "modal": {
+    "cancel": "Cancel",
+    "close": "Close",
+    "done": "Done",
+    "duplicateName": "An item with this name already exists",
+    "newFolder": {
+      "title": "New folder",
+      "defaultName": "Untitled folder",
+      "create": "Create"
+    },
+    "rename": {
+      "title": "Rename",
+      "confirm": "Rename"
+    },
+    "delete": {
+      "trash": {
+        "title": "Move to trash?",
+        "bodyOne": "“{name}” will be moved to trash. You can restore it within 30 days.",
+        "bodyMany": "{count} item will be moved to trash. You can restore it within 30 days. | {count} items will be moved to trash. You can restore them within 30 days.",
+        "confirm": "Move to trash"
+      },
+      "forever": {
+        "title": "Delete forever?",
+        "bodyOne": "“{name}” will be deleted forever. This cannot be undone.",
+        "bodyMany": "{count} item will be deleted forever. This cannot be undone. | {count} items will be deleted forever. This cannot be undone.",
+        "confirm": "Delete forever"
+      },
+      "emptyTrash": {
+        "title": "Empty trash?",
+        "body": "All items in trash will be deleted forever. This cannot be undone.",
+        "confirm": "Empty trash"
+      }
+    },
+    "share": {
+      "title": "Share “{name}”",
+      "linkSharing": "Link sharing",
+      "anyoneCanView": "Anyone with the link can view",
+      "off": "Only people with access can open"
+    },
+    "move": {
+      "storage": "Storage",
+      "filter": "Filter folders",
+      "noMatch": "No folders match",
+      "titleOne": "Move “{name}” to",
+      "titleMany": "Move {count} item to | Move {count} items to",
+      "destination": "Destination folder",
+      "confirm": "Move"
+    }
+  },
+  "toast": {
+    "close": "Dismiss",
+    "undo": "Undo",
+    "movedToTrashOne": "“{name}” moved to trash",
+    "movedToTrashMany": "{count} item moved to trash | {count} items moved to trash",
+    "restoredOne": "“{name}” restored",
+    "restoredMany": "{count} item restored | {count} items restored",
+    "deletedForeverOne": "“{name}” deleted forever",
+    "deletedForeverMany": "{count} item deleted forever | {count} items deleted forever",
+    "trashEmptied": "Trash emptied",
+    "starredOne": "“{name}” added to starred",
+    "starredMany": "{count} item added to starred | {count} items added to starred",
+    "unstarredOne": "“{name}” removed from starred",
+    "unstarredMany": "{count} item removed from starred | {count} items removed from starred",
+    "movedOne": "“{name}” moved to {folder}",
+    "movedMany": "{count} item moved to {folder} | {count} items moved to {folder}",
+    "linkCopied": "Link copied"
+  },
+  "upload": {
+    "title": "Uploading {done} of {total}",
+    "done": "{count} upload complete | {count} uploads complete",
+    "close": "Close"
+  },
+  "topbar": {
+    "searchPlaceholder": "Search in {storage}…",
+    "advancedSearch": "Advanced search",
+    "apps": "Apps",
+    "settings": "Settings",
+    "help": "Help",
+    "assistant": "AI assistant",
+    "account": "Account"
+  },
+  "files": {
+    "breadcrumbHome": "Home",
+    "siblings": "Sibling folders",
+    "listView": "List view",
+    "gridView": "Grid view",
+    "details": "Details",
+    "folders": "Folders",
+    "files": "Files",
+    "items": "{count} item | {count} items",
+    "more": "More",
+    "emptyState": "Drop files here or use New",
+    "name": "Name",
+    "owner": "Owner",
+    "lastModified": "Last modified",
+    "fileSize": "File size",
+    "selectAll": "Select all",
+    "selectItem": "Select {name}",
+    "emptyHint": "Files you add to this folder will appear here",
+    "sharedBy": "Shared by",
+    "sharedOn": "Shared on",
+    "deleted": "Deleted",
+    "originalPath": "Original location"
+  },
+  "filter": {
+    "type": "Type",
+    "people": "People",
+    "modified": "Modified",
+    "size": "Size"
+  },
+  "sort": {
+    "name": "Name",
+    "modified": "Modified",
+    "size": "Size",
+    "ascending": "Ascending",
+    "descending": "Descending",
+    "by": "Sort by"
+  },
+  "selection": {
+    "count": "{count} selected",
+    "download": "Download",
+    "share": "Share",
+    "move": "Move",
+    "star": "Star",
+    "delete": "Delete",
+    "clear": "Clear selection",
+    "unstar": "Remove from starred",
+    "restore": "Restore",
+    "deleteForever": "Delete forever"
+  },
+  "panel": {
+    "close": "Close",
+    "tabDetails": "Details",
+    "tabActivity": "Activity",
+    "folderMeta": "Folder • {count} item | Folder • {count} items",
+    "fileMeta": "{type} • {size}",
+    "general": "General",
+    "type": "Type",
+    "location": "Location",
+    "size": "Size",
+    "modified": "Modified",
+    "created": "Created",
+    "owner": "Owner",
+    "you": "You",
+    "peopleWithAccess": "People with access",
+    "sharedLink": "Shared link",
+    "notShared": "Not shared",
+    "createLink": "Create link",
+    "copy": "Copy link",
+    "remove": "Remove",
+    "starred": "Starred",
+    "role": {
+      "owner": "Owner",
+      "editor": "Editor",
+      "viewer": "Viewer"
+    },
+    "activity": {
+      "modified": "You modified {name}",
+      "created": "You created {name}"
+    }
+  },
+  "type": {
+    "folder": "Folder",
+    "md": "Markdown",
+    "image": "Image",
+    "ts": "TypeScript",
+    "pdf": "PDF document",
+    "fig": "Figma design",
+    "csv": "Spreadsheet",
+    "mp4": "Video",
+    "other": "File"
+  },
+  "menu": {
+    "open": "Open",
+    "preview": "Preview",
+    "download": "Download",
+    "share": "Share",
+    "rename": "Rename",
+    "moveTo": "Move to",
+    "copyTo": "Copy to",
+    "addToStarred": "Add to starred",
+    "tags": "Tags",
+    "versionHistory": "Version history",
+    "manageAccess": "Manage access",
+    "moveToTrash": "Move to trash",
+    "removeFromStarred": "Remove from starred",
+    "restore": "Restore",
+    "deleteForever": "Delete forever"
+  },
+  "preview": {
+    "download": "Download",
+    "share": "Share",
+    "star": "Add to starred",
+    "unstar": "Remove from starred",
+    "openInNewTab": "Open in new tab",
+    "close": "Close",
+    "previous": "Previous file",
+    "next": "Next file",
+    "zoomIn": "View at actual size",
+    "zoomOut": "Fit to screen",
+    "loading": "Loading preview…",
+    "loadError": "The file could not be loaded.",
+    "noPreview": "No preview available",
+    "pdfFallback": "The PDF viewer did not load.",
+    "counter": "{index} of {count}",
+    "csvTruncated": "Showing the first {count} rows"
+  },
+  "search": {
+    "title": "Advanced search",
+    "subtitle": "Find files by name, content, path, or tags.",
+    "close": "Close",
+    "placeholder": "Search files, text inside files, folders, or tags",
+    "scopeLabel": "Search scope",
+    "scope": {
+      "all": "All",
+      "content": "Content",
+      "paths": "Paths",
+      "tags": "Tags"
+    },
+    "searchIn": "Search in",
+    "searchInHelp": "Look in the folder you are viewing, in every storage, or only in files shared with you.",
+    "in": {
+      "current": "Current folder: {folder}",
+      "all": "All storages",
+      "shared": "Shared files"
+    },
+    "modified": "Modified",
+    "modifiedOptions": {
+      "any": "Any time",
+      "today": "Today",
+      "week": "Last 7 days",
+      "month": "Last 30 days",
+      "year": "Last year"
+    },
+    "fileType": "File type",
+    "typeOptions": {
+      "any": "Any file type",
+      "documents": "Documents",
+      "images": "Images",
+      "videos": "Videos",
+      "code": "Code",
+      "spreadsheets": "Spreadsheets",
+      "design": "Design files"
+    },
+    "tags": "Tags",
+    "tagsPlaceholder": "Add or select tags…",
+    "removeTag": "Remove tag {tag}",
+    "owner": "Owner",
+    "anyOwner": "Any owner",
+    "ownerYou": "You",
+    "sizeRange": "Size range",
+    "sizeOptions": {
+      "any": "Any size",
+      "small": "Small",
+      "medium": "Medium",
+      "large": "Large",
+      "custom": "Custom"
+    },
+    "min": "Min",
+    "max": "Max",
+    "unit": "Unit",
+    "path": "Path",
+    "pathHelp": "Only items whose path starts with this prefix are returned.",
+    "pathHint": "Example: /demo/design/",
+    "contentOptions": "Content search options",
+    "wholePhrase": "Match whole phrase",
+    "caseSensitive": "Case sensitive",
+    "ocr": "Include document OCR",
+    "ocrInfo": "Also searches text recognised in scanned documents and images.",
+    "matching": "{count} matching item | {count} matching items",
+    "viewAll": "View all results →",
+    "updated": "Updated {date}",
+    "reset": "Reset",
+    "cancel": "Cancel",
+    "search": "Search",
+    "resultsTitle": "Search results",
+    "noResults": "No results",
+    "colName": "Name",
+    "colPath": "Path",
+    "colMatch": "Match",
+    "colModified": "Modified",
+    "colSize": "Size",
+    "chipQuery": "“{text}”",
+    "chipTags": "Tags: {tags}",
+    "chipPath": "Path: {path}",
+    "chipNoOcr": "OCR off"
+  },
+  "assistant": {
+    "title": "AI assistant",
+    "online": "Online",
+    "offline": "Offline",
+    "close": "Close",
+    "intro": "Find files by content, filename, or tags. I can also summarize files, answer questions, and help you organize your work.",
+    "mode": {
+      "filename": "Filename",
+      "content": "Content",
+      "tags": "Tags"
+    },
+    "modeLabel": "Search mode",
+    "suggestions": {
+      "contracts": "Find contracts from July",
+      "tag": "Search by tag: design"
+    },
+    "placeholder": "Ask to find files…",
+    "send": "Send",
+    "hint": "",
+    "error": "Something went wrong. Please try again.",
+    "stopped": "Stopped",
+    "more": "More",
+    "menu": {
+      "open": "Open",
+      "showInFolder": "Show in folder"
+    }
+  }
+}

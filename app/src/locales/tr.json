@@ -1,0 +1,383 @@
+{
+  "app": {
+    "name": "filex"
+  },
+  "common": {
+    "comingSoon": "Çok yakında"
+  },
+  "nav": {
+    "menu": "Menü",
+    "home": "Ana sayfa",
+    "files": "Dosyalarım",
+    "shared": "Benimle paylaşılan",
+    "recent": "Son kullanılan",
+    "starred": "Yıldızlı",
+    "trash": "Çöp kutusu",
+    "storages": "Depolar",
+    "connections": "Bağlantılar",
+    "howToConnect": "Nasıl bağlanılır",
+    "apiKeys": "API anahtarları",
+    "search": "Arama"
+  },
+  "new": {
+    "button": "Yeni",
+    "folder": "Klasör",
+    "fileUpload": "Dosya yükle",
+    "folderUpload": "Klasör yükle",
+    "document": "Yeni belge"
+  },
+  "quota": {
+    "used": "{total} alanın {used} kadarı kullanıldı"
+  },
+  "unit": {
+    "b": "B",
+    "kb": "KB",
+    "mb": "MB",
+    "gb": "GB"
+  },
+  "date": {
+    "today": "Bugün",
+    "yesterday": "Dün"
+  },
+  "home": {
+    "storages": "Depolar",
+    "recent": "Son kullanılan",
+    "starred": "Yıldızlı"
+  },
+  "empty": {
+    "shared": {
+      "title": "Henüz sizinle paylaşılan bir şey yok",
+      "hint": "Başkalarının sizinle paylaştığı dosya ve klasörler burada görünür"
+    },
+    "recent": {
+      "title": "Son kullanılan dosya yok",
+      "hint": "Açtığınız veya düzenlediğiniz dosyalar burada görünür"
+    },
+    "starred": {
+      "title": "Yıldızlı öğe yok",
+      "hint": "Hızlıca bulmak için dosya ve klasörleri yıldızlayın"
+    },
+    "trash": {
+      "title": "Çöp kutusu boş",
+      "hint": "Çöp kutusuna taşıdığınız öğeler burada görünür"
+    }
+  },
+  "trash": {
+    "banner": "Çöp kutusundaki öğeler 30 gün sonra kalıcı olarak silinir",
+    "empty": "Çöp kutusunu boşalt"
+  },
+  "modal": {
+    "cancel": "İptal",
+    "close": "Kapat",
+    "done": "Bitti",
+    "duplicateName": "Bu adda bir öğe zaten var",
+    "newFolder": {
+      "title": "Yeni klasör",
+      "defaultName": "Adsız klasör",
+      "create": "Oluştur"
+    },
+    "rename": {
+      "title": "Yeniden adlandır",
+      "confirm": "Yeniden adlandır"
+    },
+    "delete": {
+      "trash": {
+        "title": "Çöp kutusuna taşınsın mı?",
+        "bodyOne": "“{name}” çöp kutusuna taşınacak. 30 gün içinde geri yükleyebilirsiniz.",
+        "bodyMany": "{count} öğe çöp kutusuna taşınacak. 30 gün içinde geri yükleyebilirsiniz.",
+        "confirm": "Çöp kutusuna taşı"
+      },
+      "forever": {
+        "title": "Kalıcı olarak silinsin mi?",
+        "bodyOne": "“{name}” kalıcı olarak silinecek. Bu işlem geri alınamaz.",
+        "bodyMany": "{count} öğe kalıcı olarak silinecek. Bu işlem geri alınamaz.",
+        "confirm": "Kalıcı olarak sil"
+      },
+      "emptyTrash": {
+        "title": "Çöp kutusu boşaltılsın mı?",
+        "body": "Çöp kutusundaki tüm öğeler kalıcı olarak silinecek. Bu işlem geri alınamaz.",
+        "confirm": "Çöp kutusunu boşalt"
+      }
+    },
+    "share": {
+      "title": "“{name}” paylaş",
+      "linkSharing": "Bağlantıyla paylaşım",
+      "anyoneCanView": "Bağlantıya sahip herkes görüntüleyebilir",
+      "off": "Yalnızca erişimi olan kişiler açabilir"
+    },
+    "move": {
+      "storage": "Depolama",
+      "filter": "Klasörleri filtrele",
+      "noMatch": "Eşleşen klasör yok",
+      "titleOne": "“{name}” şuraya taşı",
+      "titleMany": "{count} öğeyi şuraya taşı",
+      "destination": "Hedef klasör",
+      "confirm": "Taşı"
+    }
+  },
+  "toast": {
+    "close": "Kapat",
+    "undo": "Geri al",
+    "movedToTrashOne": "“{name}” çöp kutusuna taşındı",
+    "movedToTrashMany": "{count} öğe çöp kutusuna taşındı",
+    "restoredOne": "“{name}” geri yüklendi",
+    "restoredMany": "{count} öğe geri yüklendi",
+    "deletedForeverOne": "“{name}” kalıcı olarak silindi",
+    "deletedForeverMany": "{count} öğe kalıcı olarak silindi",
+    "trashEmptied": "Çöp kutusu boşaltıldı",
+    "starredOne": "“{name}” yıldızlılara eklendi",
+    "starredMany": "{count} öğe yıldızlılara eklendi",
+    "unstarredOne": "“{name}” yıldızlılardan kaldırıldı",
+    "unstarredMany": "{count} öğe yıldızlılardan kaldırıldı",
+    "movedOne": "“{name}” {folder} klasörüne taşındı",
+    "movedMany": "{count} öğe {folder} klasörüne taşındı",
+    "linkCopied": "Bağlantı kopyalandı"
+  },
+  "upload": {
+    "title": "{total} dosyadan {done} tanesi yükleniyor",
+    "done": "{count} yükleme tamamlandı",
+    "close": "Kapat"
+  },
+  "topbar": {
+    "searchPlaceholder": "{storage} içinde ara…",
+    "advancedSearch": "Gelişmiş arama",
+    "apps": "Uygulamalar",
+    "settings": "Ayarlar",
+    "help": "Yardım",
+    "assistant": "Yapay zekâ asistanı",
+    "account": "Hesap"
+  },
+  "files": {
+    "breadcrumbHome": "Ana sayfa",
+    "siblings": "Kardeş klasörler",
+    "listView": "Liste görünümü",
+    "gridView": "Izgara görünümü",
+    "details": "Ayrıntılar",
+    "folders": "Klasörler",
+    "files": "Dosyalar",
+    "items": "{count} öğe",
+    "more": "Daha fazla",
+    "emptyState": "Dosyaları buraya bırakın veya Yeni'yi kullanın",
+    "name": "Ad",
+    "owner": "Sahip",
+    "lastModified": "Son değişiklik",
+    "fileSize": "Dosya boyutu",
+    "selectAll": "Tümünü seç",
+    "selectItem": "{name} öğesini seç",
+    "emptyHint": "Bu klasöre eklediğiniz dosyalar burada görünür",
+    "sharedBy": "Paylaşan",
+    "sharedOn": "Paylaşım tarihi",
+    "deleted": "Silinme tarihi",
+    "originalPath": "Özgün konum"
+  },
+  "filter": {
+    "type": "Tür",
+    "people": "Kişiler",
+    "modified": "Değiştirilme",
+    "size": "Boyut"
+  },
+  "sort": {
+    "name": "Ad",
+    "modified": "Değiştirilme",
+    "size": "Boyut",
+    "ascending": "Artan",
+    "descending": "Azalan",
+    "by": "Sıralama"
+  },
+  "selection": {
+    "count": "{count} seçildi",
+    "download": "İndir",
+    "share": "Paylaş",
+    "move": "Taşı",
+    "star": "Yıldızla",
+    "delete": "Sil",
+    "clear": "Seçimi kaldır",
+    "unstar": "Yıldızı kaldır",
+    "restore": "Geri yükle",
+    "deleteForever": "Kalıcı olarak sil"
+  },
+  "panel": {
+    "close": "Kapat",
+    "tabDetails": "Ayrıntılar",
+    "tabActivity": "Etkinlik",
+    "folderMeta": "Klasör • {count} öğe",
+    "fileMeta": "{type} • {size}",
+    "general": "Genel",
+    "type": "Tür",
+    "location": "Konum",
+    "size": "Boyut",
+    "modified": "Değiştirilme",
+    "created": "Oluşturulma",
+    "owner": "Sahip",
+    "you": "Siz",
+    "peopleWithAccess": "Erişimi olan kişiler",
+    "sharedLink": "Paylaşım bağlantısı",
+    "notShared": "Paylaşılmadı",
+    "createLink": "Bağlantı oluştur",
+    "copy": "Bağlantıyı kopyala",
+    "remove": "Kaldır",
+    "starred": "Yıldızlı",
+    "role": {
+      "owner": "Sahip",
+      "editor": "Düzenleyici",
+      "viewer": "Görüntüleyici"
+    },
+    "activity": {
+      "modified": "{name} öğesini değiştirdiniz",
+      "created": "{name} öğesini oluşturdunuz"
+    }
+  },
+  "type": {
+    "folder": "Klasör",
+    "md": "Markdown",
+    "image": "Görsel",
+    "ts": "TypeScript",
+    "pdf": "PDF belgesi",
+    "fig": "Figma tasarımı",
+    "csv": "Tablo",
+    "mp4": "Video",
+    "other": "Dosya"
+  },
+  "menu": {
+    "open": "Aç",
+    "preview": "Önizle",
+    "download": "İndir",
+    "share": "Paylaş",
+    "rename": "Yeniden adlandır",
+    "moveTo": "Taşı",
+    "copyTo": "Kopyala",
+    "addToStarred": "Yıldızlılara ekle",
+    "tags": "Etiketler",
+    "versionHistory": "Sürüm geçmişi",
+    "manageAccess": "Erişimi yönet",
+    "moveToTrash": "Çöp kutusuna taşı",
+    "removeFromStarred": "Yıldızlılardan kaldır",
+    "restore": "Geri yükle",
+    "deleteForever": "Kalıcı olarak sil"
+  },
+  "preview": {
+    "download": "İndir",
+    "share": "Paylaş",
+    "star": "Yıldızlılara ekle",
+    "unstar": "Yıldızlılardan çıkar",
+    "openInNewTab": "Yeni sekmede aç",
+    "close": "Kapat",
+    "previous": "Önceki dosya",
+    "next": "Sonraki dosya",
+    "zoomIn": "Gerçek boyut",
+    "zoomOut": "Ekrana sığdır",
+    "loading": "Önizleme yükleniyor…",
+    "loadError": "Dosya yüklenemedi.",
+    "noPreview": "Önizleme yok",
+    "pdfFallback": "PDF görüntüleyici yüklenemedi.",
+    "counter": "{index} / {count}",
+    "csvTruncated": "İlk {count} satır gösteriliyor"
+  },
+  "search": {
+    "title": "Gelişmiş arama",
+    "subtitle": "Dosyaları ada, içeriğe, yola veya etikete göre bulun.",
+    "close": "Kapat",
+    "placeholder": "Dosya, dosya içi metin, klasör veya etiket ara",
+    "scopeLabel": "Arama kapsamı",
+    "scope": {
+      "all": "Tümü",
+      "content": "İçerik",
+      "paths": "Yollar",
+      "tags": "Etiketler"
+    },
+    "searchIn": "Şurada ara",
+    "searchInHelp": "Açık klasörde, tüm depolarda veya yalnızca sizinle paylaşılan dosyalarda arayın.",
+    "in": {
+      "current": "Geçerli klasör: {folder}",
+      "all": "Tüm depolar",
+      "shared": "Paylaşılan dosyalar"
+    },
+    "modified": "Değiştirilme",
+    "modifiedOptions": {
+      "any": "Her zaman",
+      "today": "Bugün",
+      "week": "Son 7 gün",
+      "month": "Son 30 gün",
+      "year": "Son yıl"
+    },
+    "fileType": "Dosya türü",
+    "typeOptions": {
+      "any": "Her dosya türü",
+      "documents": "Belgeler",
+      "images": "Görseller",
+      "videos": "Videolar",
+      "code": "Kod",
+      "spreadsheets": "Tablolar",
+      "design": "Tasarım dosyaları"
+    },
+    "tags": "Etiketler",
+    "tagsPlaceholder": "Etiket ekle veya seç…",
+    "removeTag": "{tag} etiketini kaldır",
+    "owner": "Sahip",
+    "anyOwner": "Herhangi bir sahip",
+    "ownerYou": "Siz",
+    "sizeRange": "Boyut aralığı",
+    "sizeOptions": {
+      "any": "Her boyut",
+      "small": "Küçük",
+      "medium": "Orta",
+      "large": "Büyük",
+      "custom": "Özel"
+    },
+    "min": "Min",
+    "max": "Maks",
+    "unit": "Birim",
+    "path": "Yol",
+    "pathHelp": "Yalnızca yolu bu önekle başlayan öğeler döner.",
+    "pathHint": "Örnek: /demo/design/",
+    "contentOptions": "İçerik arama seçenekleri",
+    "wholePhrase": "Tam ifadeyle eşleştir",
+    "caseSensitive": "Büyük/küçük harfe duyarlı",
+    "ocr": "Belge OCR'sini dahil et",
+    "ocrInfo": "Taranmış belgelerde ve görsellerde tanınan metinde de arar.",
+    "matching": "{count} eşleşen öğe",
+    "viewAll": "Tüm sonuçları gör →",
+    "updated": "Güncellendi: {date}",
+    "reset": "Sıfırla",
+    "cancel": "İptal",
+    "search": "Ara",
+    "resultsTitle": "Arama sonuçları",
+    "noResults": "Sonuç yok",
+    "colName": "Ad",
+    "colPath": "Yol",
+    "colMatch": "Eşleşme",
+    "colModified": "Değiştirilme",
+    "colSize": "Boyut",
+    "chipQuery": "“{text}”",
+    "chipTags": "Etiketler: {tags}",
+    "chipPath": "Yol: {path}",
+    "chipNoOcr": "OCR kapalı"
+  },
+  "assistant": {
+    "title": "Yapay zekâ asistanı",
+    "online": "Çevrimiçi",
+    "offline": "Çevrimdışı",
+    "close": "Kapat",
+    "intro": "Dosyaları içeriğe, dosya adına veya etiketlere göre bulun. Ayrıca dosyaları özetleyebilir, soruları yanıtlayabilir ve işinizi düzenlemenize yardımcı olabilirim.",
+    "mode": {
+      "filename": "Dosya adı",
+      "content": "İçerik",
+      "tags": "Etiketler"
+    },
+    "modeLabel": "Arama modu",
+    "suggestions": {
+      "contracts": "Temmuz sözleşmelerini bul",
+      "tag": "Etikete göre ara: design"
+    },
+    "placeholder": "Dosya bulmamı isteyin…",
+    "send": "Gönder",
+    "hint": "",
+    "error": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
+    "stopped": "Durduruldu",
+    "more": "Daha fazla",
+    "menu": {
+      "open": "Aç",
+      "showInFolder": "Klasörde göster"
+    }
+  }
+}

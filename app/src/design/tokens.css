@@ -1,0 +1,39 @@
+/* Design tokens — see app/docs/DESIGN-SPEC.md §1. */
+:root {
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --c-bg: #ffffff;
+  --c-bg-sidebar: #f7f8fb;
+  --c-bg-muted: #f3f4f6;
+  --c-border: #e5e7eb;
+  --c-border-soft: #eef0f4;
+  --c-border-hover: #d1d5db;
+  --c-text: #1f2937;
+  --c-text-2: #4b5563;
+  --c-text-3: #6b7280;
+  --c-primary: #2f6ceb;
+  --c-primary-hover: #2559c9;
+  --c-primary-soft: #e6ecfa;
+  --c-primary-ring: #8fb0f7;
+  --c-primary-tint: #eef3ff;
+  --c-folder: #f4b400;
+  --c-success: #16a34a;
+  --c-highlight: #fde68a;
+  --c-danger: #dc2626;
+  --c-hover-card: #fafbfc;
+  --c-hover-row: #f9fafb;
+  --c-overlay: rgba(17, 24, 39, 0.45);
+
+  /* File-type tiles (spec §3) */
+  --c-tile-md: #374151;
+  --c-tile-image: #2f6ceb;
+  --c-tile-ts: #2f6ceb;
+  --c-tile-pdf: #dc2626;
+  --c-tile-fig: linear-gradient(135deg, #f24e1e 0%, #a259ff 50%, #1abcfe 100%);
+  --c-tile-csv: #16a34a;
+  --c-tile-mp4: #7c3aed;
+  --c-tile-other: #6b7280;
+
+  --shadow-modal: 0 20px 60px rgba(17, 24, 39, 0.18);
+  --shadow-menu: 0 8px 24px rgba(17, 24, 39, 0.12);
+}

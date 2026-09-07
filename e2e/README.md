@@ -106,6 +106,50 @@ visually. `pnpm test:debug` opens the inspector.
 `helpers/seed.ts`  → `seedLocalStorage`, `dropStorageByName`
 `fixtures/`         → small files used by upload tests
 
+## End-user app suite (`tests/app/`)
+
+A second, separate config — `playwright.app.config.ts` — drives the end-user
+SPA in `app/` (Vue 3, served at `/app/`). It needs no filex binary and no
+login: the app runs on its in-memory mock repository, and Playwright starts
+the Vite dev server itself on port 5176 (`webServer`, reused if one is already
+listening there).
+
+```bash
+cd e2e
+pnpm test:app             # run the suite
+pnpm test:app:ui          # Playwright UI mode
+pnpm test:app:update      # retake the visual baselines
+```
+
+| File | Coverage |
+|------|----------|
+| `tests/app/files-grid.spec.ts`  | sidebar nav, 8 folder + 8 file cards, select "Design", Info toggles the details panel |
+| `tests/app/files-list.spec.ts`  | list toggle, header columns, 16 rows, checkbox / selection bar / Esc, Name sort, keyboard (↑↓ Space Ctrl+A) |
+| `tests/app/search.spec.ts`      | Ctrl+K → Enter opens Advanced search prefilled, live results with `<mark>`, Search → `/search?q=…`, Cancel / Esc |
+| `tests/app/assistant.spec.ts`   | Sparkles opens the panel, suggestion streams an answer, mode chips, Esc / close |
+| `tests/app/i18n.spec.ts`        | `localStorage['filex.app.locale']` = ru / tr renders the sidebar in that language |
+| `tests/app/preview.spec.ts`     | preview modal: image → text (← →), PDF iframe, CSV table, download card, `?download=1` attachment, ⋮ / Enter, Recent order |
+| `tests/app/visual.spec.ts`      | pixel baselines for the four `DESIGN-SPEC.md` reference states |
+
+Visual baselines live in `tests/app/__screenshots__/` with no platform suffix
+(`snapshotPathTemplate`), at 1672×941 @1x, `en-US`, UTC — the same frame
+`app/scripts/shot.mjs` uses. `maxDiffPixelRatio` is 0.002 and nothing is
+masked, so a font, scrollbar or Chromium change shows up as a diff: look at the
+report before running `test:app:update`, and commit a refreshed baseline only
+with the design change that caused it.
+
+The app reaches its reference states through screenshot-only query hooks
+(`?select=Design`, `?view=list|grid`, `?panel=details|assistant`,
+`?modal=search|rename|preview`, `?demo=assistant`); the visual spec is the only place that
+should use them — the functional specs drive the UI the way a user does.
+
+⚠ `baseURL` ends in `/app/`, so specs navigate with `page.goto('files')`, not
+`page.goto('/files')` — a leading slash resolves against the origin and drops
+the prefix.
+
+The admin config ignores `tests/app/**`, and `run.mjs` only lists top-level
+spec files, so neither the harness nor a bare `pnpm test` picks these up.
+
 ## Screenshots (`shots/`)
 
 `shots/capture.mjs` retakes every screenshot the project README shows — in
