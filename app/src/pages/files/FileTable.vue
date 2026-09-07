@@ -133,7 +133,7 @@ function onContextMenu(node: Node, event: MouseEvent) {
           :data-id="node.id"
           role="row"
           :aria-selected="files.isSelected(node.id)"
-          class="cursor-default select-none border-b border-border-soft text-15 leading-none [&>td]:p-0"
+          class="cursor-pointer select-none border-b border-border-soft text-15 leading-none [&>td]:p-0"
           :class="[
             settings.settings.compactList ? 'h-[34px]' : 'h-[42px]',
             files.isSelected(node.id) ? 'bg-primary-soft' : 'hover:bg-hover-row',

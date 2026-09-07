@@ -26,9 +26,9 @@
   "new": {
     "button": "New",
     "folder": "Folder",
-    "fileUpload": "File upload",
-    "folderUpload": "Folder upload",
-    "document": "New document"
+    "file": "File",
+    "fileUpload": "Upload files",
+    "folderUpload": "Upload folder"
   },
   "quota": {
     "used": "{used} of {total} used",
@@ -167,6 +167,8 @@
     "unstarredMany": "{count} item removed from starred | {count} items removed from starred",
     "movedOne": "“{name}” moved to {folder}",
     "movedMany": "{count} item moved to {folder} | {count} items moved to {folder}",
+    "copiedOne": "“{name}” copied to {folder}",
+    "copiedMany": "{count} item copied to {folder} | {count} items copied to {folder}",
     "linkCopied": "Link copied",
     "tagsSaved": "Tags of “{name}” saved"
   },
@@ -299,6 +301,7 @@
     "selectAll": "Select all",
     "clearSelection": "Deselect all",
     "cut": "Cut",
+    "copy": "Copy",
     "paste": "Paste"
   },
   "preview": {

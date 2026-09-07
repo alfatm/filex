@@ -26,9 +26,9 @@
   "new": {
     "button": "Создать",
     "folder": "Папка",
-    "fileUpload": "Загрузить файл",
-    "folderUpload": "Загрузить папку",
-    "document": "Новый документ"
+    "file": "Файл",
+    "fileUpload": "Загрузить файлы",
+    "folderUpload": "Загрузить папку"
   },
   "quota": {
     "used": "Занято {used} из {total}",
@@ -167,6 +167,8 @@
     "unstarredMany": "{count} элемент убран из избранного | {count} элемента убраны из избранного | {count} элементов убрано из избранного",
     "movedOne": "«{name}» перемещён в {folder}",
     "movedMany": "{count} элемент перемещён в {folder} | {count} элемента перемещены в {folder} | {count} элементов перемещено в {folder}",
+    "copiedOne": "«{name}» скопирован в {folder}",
+    "copiedMany": "{count} элемент скопирован в {folder} | {count} элемента скопированы в {folder} | {count} элементов скопировано в {folder}",
     "linkCopied": "Ссылка скопирована",
     "tagsSaved": "Теги «{name}» сохранены"
   },
@@ -299,6 +301,7 @@
     "selectAll": "Выделить всё",
     "clearSelection": "Снять выделение",
     "cut": "Вырезать",
+    "copy": "Копировать",
     "paste": "Вставить"
   },
   "preview": {

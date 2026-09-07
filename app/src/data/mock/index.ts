@@ -57,6 +57,22 @@ function assertNoSibling(parentId: string | null, name: string, exceptId?: strin
   if (nodes.some((n) => n.parentId === parentId && n.id !== exceptId && n.name === name && live(n))) throw new Error(DUPLICATE_NAME);
 }
 
+/**
+ * The name a copy lands under: the server probes the destination and falls back to `<base>-copy<ext>`, then
+ * `-copy-2`, so a paste into the source's own folder duplicates instead of colliding (see ops.uniqueCopyDest).
+ */
+function copyName(parentId: string, name: string): string {
+  const taken = (candidate: string) => nodes.some((n) => n.parentId === parentId && n.name === candidate && live(n));
+  if (!taken(name)) return name;
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  for (let i = 1; ; i++) {
+    const candidate = i === 1 ? `${stem}-copy${ext}` : `${stem}-copy-${i}${ext}`;
+    if (!taken(candidate)) return candidate;
+  }
+}
+
 function newId(parentId: string, name: string): string {
   const base = `${parentId}/${name}`.toLowerCase().replace(/[^a-z0-9/]+/g, '-');
   return nodes.some((n) => n.id === base) ? `${base}-${++seq}` : base;
@@ -299,6 +315,31 @@ export const mockRepository: Repository = {
       node.parentId = target.id;
       bumpItemCount(target.id, 1);
       history.record(id, 'moved', target.name);
+    }
+  },
+  async copy(ids, targetFolderId) {
+    const target = byId(targetFolderId);
+    if (target.kind !== 'folder') throw new Error(`not a folder: ${targetFolderId}`);
+    const now = new Date().toISOString();
+    // Depth-first: a folder is cloned before its children, so each child already has a new parent to attach to.
+    const clone = (node: Node, parentId: string) => {
+      const name = copyName(parentId, node.name);
+      const fresh: Node = { ...node, id: newId(parentId, name), name, parentId, createdAt: now, modifiedAt: now };
+      delete fresh.shareUrl;
+      fresh.shared = false;
+      fresh.starred = false;
+      nodes.push(fresh);
+      bumpItemCount(parentId, 1);
+      for (const child of nodes.filter((n) => n.parentId === node.id && live(n))) clone(child, fresh.id);
+      // The clone's own log starts here; there is no 'copied' kind, and from the new node's side this IS its creation.
+      history.record(fresh.id, 'created', node.name);
+    };
+    for (const id of ids) {
+      const node = byId(id);
+      if (node.id === target.id || descendants(node.id).some((n) => n.id === target.id)) {
+        throw new Error(`cannot copy ${id} into itself`);
+      }
+      clone(node, target.id);
     }
   },
   async createShareLink(id) {

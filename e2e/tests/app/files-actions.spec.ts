@@ -23,9 +23,9 @@ test.describe('File actions', () => {
     await newButton.click();
     await expect(newButton).toHaveAttribute('aria-expanded', 'true');
     const menu = page.getByRole('menu', { name: 'New' });
-    // "New document" is the only entry still waiting for a backend.
-    await expect(menu.getByRole('menuitem', { name: 'Folder upload' })).not.toHaveAttribute('aria-disabled', 'true');
-    await expect(menu.getByRole('menuitem', { name: 'New document' })).toHaveAttribute('aria-disabled', 'true');
+    // "File" is the only entry still waiting for a backend.
+    await expect(menu.getByRole('menuitem', { name: 'Upload folder' })).not.toHaveAttribute('aria-disabled', 'true');
+    await expect(menu.getByRole('menuitem', { name: 'File', exact: true })).toHaveAttribute('aria-disabled', 'true');
     await menu.getByRole('menuitem', { name: 'Folder', exact: true }).click();
 
     const dialog = page.getByRole('dialog');
@@ -172,11 +172,11 @@ test.describe('File actions', () => {
     await expect(dialog).toBeHidden();
   });
 
-  test('New → File upload runs through the tray and lands in the open folder', async ({ page }) => {
+  test('New → Upload files runs through the tray and lands in the open folder', async ({ page }) => {
     await page.goto('files?view=list');
     await page.getByRole('navigation').getByRole('button', { name: 'New' }).click();
     const chooser = page.waitForEvent('filechooser');
-    await page.getByRole('menu', { name: 'New' }).getByRole('menuitem', { name: 'File upload' }).click();
+    await page.getByRole('menu', { name: 'New' }).getByRole('menuitem', { name: 'Upload files' }).click();
     await (await chooser).setFiles({ name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from('hello filex') });
 
     const tray = page.getByRole('region', { name: /^Uploading|upload complete$/ });

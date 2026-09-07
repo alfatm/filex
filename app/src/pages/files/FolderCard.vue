@@ -22,10 +22,10 @@ function onContextMenu(event: MouseEvent) {
 <template>
   <!-- Keyboard: focusing a card moves the page cursor to it, so Enter/Space/arrows go through the page handler. -->
   <div
-    class="relative flex h-[84px] w-[236px] cursor-default select-none items-center rounded-lg border bg-bg pl-5 pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring focus-visible:ring-offset-2"
+    class="relative flex h-[84px] w-[236px] cursor-pointer select-none items-center rounded-lg border bg-bg pl-5 pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring focus-visible:ring-offset-2"
     :class="[
       selected
-        ? 'border-2 border-primary-ring bg-primary-tint pl-[19px] pr-[3px]'
+        ? 'border-primary-ring outline outline-1 outline-primary-ring bg-primary-tint'
         : 'border-border hover:border-border-hover hover:bg-hover-card',
       focused && 'ring-2 ring-primary-ring ring-offset-2',
       drag.overId === node.id && '!border-primary bg-primary-tint ring-2 ring-primary',

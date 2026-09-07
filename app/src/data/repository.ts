@@ -84,6 +84,11 @@ export interface Repository {
   /** Replaces the node's tag list; an empty array clears it. */
   setTags(id: string, tags: string[]): Promise<void>;
   move(ids: string[], targetFolderId: string): Promise<void>;
+  /**
+   * Server-side copy into `targetFolderId`, subtrees included. A name already taken there becomes
+   * `<base>-copy<ext>`, then `-copy-2`, so pasting into the source's own folder duplicates rather than failing.
+   */
+  copy(ids: string[], targetFolderId: string): Promise<void>;
   createShareLink(id: string): Promise<string>;
   removeShareLink(id: string): Promise<void>;
   /** Marks the file as opened now (`openedAt`), which moves it to the top of Recent. */

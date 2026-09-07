@@ -70,6 +70,8 @@ export function useFileActions() {
         return modals.open({ kind: 'move', nodes });
       case 'cut':
         return clipboard.cut(nodes);
+      case 'copy':
+        return clipboard.copy(nodes);
       case 'tags':
         return modals.open({ kind: 'tags', node });
       case 'versionHistory':

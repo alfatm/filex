@@ -26,9 +26,9 @@
   "new": {
     "button": "Yeni",
     "folder": "Klasör",
+    "file": "Dosya",
     "fileUpload": "Dosya yükle",
-    "folderUpload": "Klasör yükle",
-    "document": "Yeni belge"
+    "folderUpload": "Klasör yükle"
   },
   "quota": {
     "used": "{total} alanın {used} kadarı kullanıldı",
@@ -167,6 +167,8 @@
     "unstarredMany": "{count} öğe yıldızlılardan kaldırıldı",
     "movedOne": "“{name}” {folder} klasörüne taşındı",
     "movedMany": "{count} öğe {folder} klasörüne taşındı",
+    "copiedOne": "“{name}” {folder} klasörüne kopyalandı",
+    "copiedMany": "{count} öğe {folder} klasörüne kopyalandı",
     "linkCopied": "Bağlantı kopyalandı",
     "tagsSaved": "“{name}” etiketleri kaydedildi"
   },
@@ -299,6 +301,7 @@
     "selectAll": "Tümünü seç",
     "clearSelection": "Seçimi kaldır",
     "cut": "Kes",
+    "copy": "Kopyala",
     "paste": "Yapıştır"
   },
   "preview": {

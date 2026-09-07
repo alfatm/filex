@@ -37,6 +37,22 @@ test.describe('Pages', () => {
     await expect(page).toHaveURL(/\/app\/files$/);
   });
 
+  // Home's cards were display-only: the click selected nothing, so the panel had no node to describe.
+  test('Home: clicking a recent card opens the details panel with the file\u2019s own location', async ({ page }) => {
+    await page.goto('home');
+    const panel = page.getByRole('complementary', { name: 'Details' });
+    await expect(panel).toBeHidden();
+
+    await page.getByRole('listbox', { name: 'Recent' }).getByRole('option').first().click();
+    await expect(panel).toBeVisible();
+    await expect(panel.getByRole('heading', { name: 'Q3 report.pdf' })).toBeVisible();
+    await expect(panel.getByText('/demo/Shared')).toBeVisible();
+
+    // Bare page surface clears the selection, and the panel goes with it.
+    await page.getByRole('heading', { name: 'Home', level: 1 }).click();
+    await expect(panel).toBeHidden();
+  });
+
   // A row picked on a listing beside the tree describes a node like any other; the panel has to say where that
   // node actually LIVES, which is nowhere near the folder the user last had open.
   test('Recent: selecting a row opens the details panel with the file\u2019s own location', async ({ page }) => {

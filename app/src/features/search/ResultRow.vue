@@ -24,7 +24,7 @@ const folderLabel = computed(() => hitFolderLabel(props.hit, files.storages));
 <template>
   <tr
     tabindex="0"
-    class="h-[42px] cursor-default select-none border-b border-border-soft text-15 leading-none hover:bg-hover-row focus-visible:bg-hover-row focus-visible:outline-none [&>td]:p-0"
+    class="h-[42px] cursor-pointer select-none border-b border-border-soft text-15 leading-none hover:bg-hover-row focus-visible:bg-hover-row focus-visible:outline-none [&>td]:p-0"
     @click="emit('open', hit)"
     @keydown.enter.self="emit('open', hit)"
   >

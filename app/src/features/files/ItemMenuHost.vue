@@ -65,6 +65,6 @@ function onFilesPicked(event: Event) {
     @select="onSelect"
     @close="menu.close()"
   />
-  <!-- Native picker behind the menu's "File upload"; the sidebar's New button has its own. -->
+  <!-- Native picker behind the menu's "Upload files"; the sidebar's New button has its own. -->
   <input ref="fileInput" type="file" multiple class="hidden" tabindex="-1" :aria-label="t('new.fileUpload')" @change="onFilesPicked" />
 </template>

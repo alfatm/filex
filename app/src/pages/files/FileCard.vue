@@ -23,11 +23,13 @@ function onContextMenu(event: MouseEvent) {
 </script>
 
 <template>
-  <!-- Keyboard: focusing a card moves the page cursor to it, so Enter/Space/arrows go through the page handler. -->
+  <!-- Keyboard: focusing a card moves the page cursor to it, so Enter/Space/arrows go through the page handler.
+       Selected draws its second pixel with an outline, not a thicker border: a 2px border comes out of the content
+       box, which shifted the thumbnail and left its top corners on the wrong radius. -->
   <div
-    class="relative h-[174px] w-[236px] cursor-default select-none rounded-lg border bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring focus-visible:ring-offset-2"
+    class="relative h-[174px] w-[236px] cursor-pointer select-none rounded-lg border bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring focus-visible:ring-offset-2"
     :class="[
-      selected ? 'border-2 border-primary-ring bg-primary-tint' : 'border-border hover:border-border-hover hover:bg-hover-card',
+      selected ? 'border-primary-ring outline outline-1 outline-primary-ring bg-primary-tint' : 'border-border hover:border-border-hover hover:bg-hover-card',
       focused && 'ring-2 ring-primary-ring ring-offset-2',
       clipboard.isCut(node.id) && 'opacity-50',
     ]"
@@ -41,10 +43,10 @@ function onContextMenu(event: MouseEvent) {
     @dragstart="onDragStart(node, $event)"
     @dragend="drag.end()"
   >
-    <div class="h-[108px] overflow-hidden rounded-t-[11px]" :class="selected && '-mx-px -mt-px'">
+    <div class="h-[108px] overflow-hidden rounded-t-[11px]">
       <Thumbnail v-if="node.thumbnail" :kind="node.thumbnail" :duration="node.duration" :src="node.assetUrl" />
     </div>
-    <div class="flex h-[66px] items-center pl-[14px] pr-1" :class="selected && '-mx-px'">
+    <div class="flex h-[66px] items-center pl-[14px] pr-1">
       <FileTypeTile :type="node.fileType ?? 'other'" />
       <div class="ml-2.5 min-w-0 flex-1">
         <p class="truncate-safe text-15 font-medium leading-none">{{ node.name }}</p>

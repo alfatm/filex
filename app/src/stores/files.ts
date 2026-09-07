@@ -7,6 +7,7 @@ import type { ListingFilter, Node, Person, Storage, UploadInput, User } from '@/
 import { i18n } from '@/i18n';
 import { subjectMessage } from '@/i18n/subject';
 import { useToastStore } from './toast';
+import { useUndoStore } from '@/features/files/undoStore';
 import { useViewStore } from './view';
 
 /** Flat listings that reuse the table, selection and sort of the folder view. */
@@ -16,6 +17,7 @@ type Listing = { kind: 'folder'; folderId: string } | { kind: ListingKind };
 export const useFilesStore = defineStore('files', () => {
   const view = useViewStore();
   const toast = useToastStore();
+  const undo = useUndoStore();
   const t = i18n.global.t;
 
   const storages = ref<Storage[]>([]);
@@ -211,6 +213,8 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   async function mutate<T>(action: () => Promise<T>): Promise<T> {
+    // The record always describes the LAST action: anything that can be taken back re-arms it once it succeeds.
+    undo.clear();
     const result = await action();
     revision.value++;
     await refresh();
@@ -225,6 +229,8 @@ export const useFilesStore = defineStore('files', () => {
     if (!parentId) throw new Error('storage not loaded');
     const node = await mutate(() => repository.createFolder(parentId, name));
     if (folder.value?.id === parentId) selection.select(node.id);
+    // Undo trashes the folder, so putting it back is a restore rather than a second create with a new id.
+    undo.record({ undo: () => trash([node]), redo: () => restore([node]) });
     return node;
   }
 
@@ -233,7 +239,12 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   async function rename(id: string, name: string) {
+    const before = items.value.find((n) => n.id === id);
     await mutate(() => repository.rename(id, name));
+    // An id is a path, so the renamed node answers to a new one; the refresh above lists it under the new name.
+    const after = items.value.find((n) => n.name === name && n.parentId === before?.parentId);
+    // Renaming back restores the original id (an id is a path), which is what the redo then renames again.
+    if (before && after) undo.record({ undo: () => rename(after.id, before.name), redo: () => rename(before.id, name) });
   }
 
   async function restore(nodes: Node[]) {
@@ -244,7 +255,9 @@ export const useFilesStore = defineStore('files', () => {
   /** Moves to trash and offers Undo in a toast (spec §7). */
   async function trash(nodes: Node[]) {
     await mutate(() => repository.moveToTrash(nodes.map((n) => n.id)));
-    toast.push(subjectMessage(t, 'toast.movedToTrash', nodes), { label: t('toast.undo'), run: () => void restore(nodes) });
+    undo.record({ undo: () => restore(nodes), redo: () => trash(nodes) });
+    // The toast button and Ctrl+Z are the same step, so pressing both only restores once.
+    toast.push(subjectMessage(t, 'toast.movedToTrash', nodes), { label: t('toast.undo'), run: () => void undo.undo() });
   }
 
   // Permanent deletion invalidates any pending Undo: restoring a node that is gone would throw.
@@ -262,6 +275,7 @@ export const useFilesStore = defineStore('files', () => {
 
   async function setStarred(nodes: Node[], starred: boolean) {
     await mutate(() => repository.setStarred(nodes.map((n) => n.id), starred));
+    undo.record({ undo: () => setStarred(nodes, !starred), redo: () => setStarred(nodes, starred) });
     toast.push(subjectMessage(t, starred ? 'toast.starred' : 'toast.unstarred', nodes));
   }
 
@@ -273,6 +287,36 @@ export const useFilesStore = defineStore('files', () => {
   async function move(nodes: Node[], target: Node) {
     await mutate(() => repository.move(nodes.map((n) => n.id), target.id));
     toast.push(subjectMessage(t, 'toast.moved', nodes, { folder: target.name }));
+    // Where each node came from, by name: undo re-resolves the ids in the target, because a moved node's path —
+    // and with it its id — has changed.
+    const origins = new Map<string, string[]>();
+    for (const node of nodes) {
+      if (node.parentId) origins.set(node.parentId, [...(origins.get(node.parentId) ?? []), node.name]);
+    }
+    // After the undo the nodes are back under their own ids, so the redo is simply the same move again.
+    if (origins.size) undo.record({ undo: () => moveBack(target.id, origins), redo: () => move(nodes, target) });
+  }
+
+  async function moveBack(fromFolderId: string, origins: Map<string, string[]>) {
+    const landed = await repository.listFolder(fromFolderId);
+    await mutate(async () => {
+      for (const [parentId, names] of origins) {
+        const ids = landed.filter((n) => names.includes(n.name)).map((n) => n.id);
+        if (ids.length) await repository.move(ids, parentId);
+      }
+    });
+  }
+
+  /**
+   * Paste of a copy. filex names the copies itself (`<base>-copy<ext>` when the name is taken), so what landed is
+   * whatever the open folder gained — which is also what undo has to take away.
+   */
+  async function copyInto(nodes: Node[], target: Node) {
+    const before = new Set(items.value.map((n) => n.id));
+    await mutate(() => repository.copy(nodes.map((n) => n.id), target.id));
+    toast.push(subjectMessage(t, 'toast.copied', nodes, { folder: target.name }));
+    const created = items.value.filter((n) => !before.has(n.id));
+    if (created.length) undo.record({ undo: () => trash(created), redo: () => restore(created) });
   }
 
   async function createShareLink(id: string) {
@@ -327,6 +371,7 @@ export const useFilesStore = defineStore('files', () => {
     setStarred,
     setTags,
     move,
+    copyInto,
     createShareLink,
     removeShareLink,
     select: selection.select,

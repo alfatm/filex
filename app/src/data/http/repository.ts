@@ -16,6 +16,7 @@ import {
   type WireFileNode,
   type WireIndex,
   type WireNode,
+  type WireOp,
   type WireQuota,
   type WireStorage,
   type WireTrashEntry,
@@ -34,6 +35,17 @@ import {
  */
 
 const MANAGER = '/api/files/manager';
+
+/**
+ * Copy is the one verb the manager has no synchronous form of: it runs through filex's ops queue, so the call
+ * submits a job and then polls until the row is finished. `POLL_STEP_MS` doubles up to `POLL_MAX_MS` — a copy of a
+ * single file is done on the first check, and a large subtree stops being asked about ten times a second.
+ */
+const OPS = '/api/files/ops';
+const POLL_STEP_MS = 150;
+const POLL_MAX_MS = 2000;
+/** A job still running after this long is left to finish server-side; the listing refresh will show it landing. */
+const POLL_GIVE_UP_MS = 60_000;
 
 /** How many rows the metadata listings return; filex caps starred at 500 and recent at 200. */
 const STARRED_LIMIT = 500;
@@ -120,6 +132,12 @@ export class HttpRepository implements Repository {
   private readonly ids = new Map<string, number>();
   /** `<node path>|<person id>` → the grant row's id, which is what PATCH and DELETE address. */
   private readonly grants = new Map<string, number>();
+  /**
+   * Numeric ids of the nodes this session put in the trash. `ids` has to forget the path — it is free again, and a
+   * new node may take it — but `restore` addresses the trashed row by number, and Undo restores without ever
+   * listing the trash first.
+   */
+  private readonly trashed = new Map<string, number>();
   private storages: Storage[] | null = null;
   private user: User | null = null;
 
@@ -392,12 +410,21 @@ export class HttpRepository implements Repository {
       query: { q: 'delete' },
       body: { path: parentPath(ids[0]) ?? ids[0], items: ids.map((path) => ({ path })) },
     });
-    for (const id of ids) this.ids.delete(id);
+    for (const id of ids) {
+      const numeric = this.ids.get(id);
+      if (numeric !== undefined) this.trashed.set(id, numeric);
+      this.ids.delete(id);
+    }
   }
 
   async restore(ids: string[]): Promise<void> {
     for (const id of ids) {
-      await request(`${MANAGER}/restore`, { method: 'POST', body: { node_id: this.nodeId(id) } });
+      // Either the trash listing named this row, or this session trashed it and kept its number.
+      const numeric = this.trashed.get(id) ?? this.ids.get(id);
+      if (numeric === undefined) throw new Error(`no node id known for ${id}`);
+      await request(`${MANAGER}/restore`, { method: 'POST', body: { node_id: numeric } });
+      this.trashed.delete(id);
+      this.ids.set(id, numeric);
     }
   }
 
@@ -428,6 +455,31 @@ export class HttpRepository implements Repository {
       body: { path: targetFolderId, items: ids.map((path) => ({ path })) },
     }).catch(asRepositoryError);
     for (const id of ids) this.ids.delete(id);
+  }
+
+  /**
+   * filex names the copy itself (`<base>-copy<ext>` when the name is taken), so nothing is returned: the caller
+   * re-reads the folder and sees what landed.
+   */
+  async copy(ids: string[], targetFolderId: string): Promise<void> {
+    if (!ids.length) return;
+    const { op } = await request<{ op: WireOp }>('/api/files/copy', {
+      method: 'POST',
+      body: { source: ids, target: targetFolderId },
+    }).catch(asRepositoryError);
+    await this.awaitOp(op);
+  }
+
+  /** Polls one queued op to its end. A failed job throws so the store's error path owns it, as a 4xx would. */
+  private async awaitOp(op: WireOp): Promise<void> {
+    const deadline = Date.now() + POLL_GIVE_UP_MS;
+    let current = op;
+    for (let wait = POLL_STEP_MS; current.status === 'pending' || current.status === 'running'; wait = Math.min(wait * 2, POLL_MAX_MS)) {
+      if (Date.now() > deadline) return;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      current = await request<WireOp>(`${OPS}/${op.id}`);
+    }
+    if (current.status !== 'ok') throw new Error(current.error || `${current.kind} ${current.status}`);
   }
 
   async createShareLink(id: string): Promise<string> {

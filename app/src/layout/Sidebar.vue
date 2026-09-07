@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { RouterLink, useRoute } from 'vue-router';
 import {
   Cable,
+  ChevronDown,
   Clock,
   FilePlus,
   Folder,
@@ -28,6 +29,7 @@ import { Button, IconButton, ProgressBar } from '@/ui';
 import FloatingMenu, { type FloatingMenuEntry } from '@/ui/FloatingMenu.vue';
 
 const { t } = useI18n();
+const baseUrl = import.meta.env.BASE_URL;
 const { formatSize } = useFormat();
 const route = useRoute();
 const files = useFilesStore();
@@ -49,11 +51,12 @@ const connections = [
   { id: 'apiKeys', icon: KeyRound, label: 'nav.apiKeys' },
 ] as const;
 
+// Creating comes first, bringing something in second; the divider is the line between the two.
 const newItems = computed<FloatingMenuEntry[]>(() => [
   { id: 'folder', label: t('new.folder'), icon: FolderPlus },
-  { id: 'fileUpload', label: t('new.fileUpload'), icon: Upload },
+  { id: 'file', label: t('new.file'), icon: FilePlus, disabled: true, hint: t('common.comingSoon') },
+  { id: 'fileUpload', label: t('new.fileUpload'), icon: Upload, dividerBefore: true },
   { id: 'folderUpload', label: t('new.folderUpload'), icon: FolderUp },
-  { id: 'document', label: t('new.document'), icon: FilePlus, dividerBefore: true, disabled: true, hint: t('common.comingSoon') },
 ]);
 
 const newMenu = ref<{ x: number; y: number } | null>(null);
@@ -106,28 +109,38 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
         <MenuIcon :size="22" :stroke-width="1.75" />
       </IconButton>
       <template v-if="!view.sidebarCollapsed">
-        <span class="ml-6 flex h-8 w-8 items-center justify-center rounded bg-primary text-white">
-          <Folder :size="18" fill="currentColor" :stroke-width="0" />
-        </span>
+        <img :src="`${baseUrl}logo.svg`" alt="" class="ml-6 h-8 w-8" />
         <span class="ml-4 text-22 font-semibold leading-none">{{ t('app.name') }}</span>
       </template>
     </div>
 
-    <!-- Same left edge, icon column and label column as the nav rows below, so the sidebar reads as one column. -->
+    <!-- Same left edge (x 14) as the active nav pill below; the button's own icon and label are centred inside it. -->
     <div class="mt-[10px]" :class="view.sidebarCollapsed ? '' : 'pl-[14px]'">
       <Button
         :size="view.sidebarCollapsed ? 'md' : 'lg'"
-        :class="view.sidebarCollapsed ? '!h-11 !w-11 !rounded-full !px-0' : 'w-[136px] !justify-start gap-[26px] !pl-[10px] !pr-4'"
+        :class="view.sidebarCollapsed ? '!h-11 !w-11 !rounded-full !px-0' : 'w-[180px] !gap-0 !px-0'"
         aria-haspopup="menu"
         :aria-expanded="!!newMenu"
         :aria-label="view.sidebarCollapsed ? t('new.button') : undefined"
         @click="openNewMenu"
       >
-        <Plus :size="20" />
-        <span v-if="!view.sidebarCollapsed">{{ t('new.button') }}</span>
+        <Plus v-if="view.sidebarCollapsed" :size="20" />
+        <template v-else>
+          <!-- The ref centres icon and label inside the button rather than aligning them to the nav columns below. -->
+          <span class="flex flex-1 items-center justify-center gap-[26px] font-semibold">
+            <Plus :size="20" />
+            {{ t('new.button') }}
+          </span>
+          <!-- One control, not two: the divider says a menu is behind the button, and both halves open the same one.
+               It is a short centred rule in the ref, not a full-height edge. -->
+          <span class="h-7 w-px bg-white/25" />
+          <span class="flex w-11 items-center justify-center">
+            <ChevronDown :size="18" />
+          </span>
+        </template>
       </Button>
       <FloatingMenu v-if="newMenu" :items="newItems" :x="newMenu.x" :y="newMenu.y" :label="t('new.button')" @select="onNewSelect" @close="newMenu = null" />
-      <!-- Native pickers behind the "File upload" and "Folder upload" entries; the second one hands us a flat
+      <!-- Native pickers behind the "Upload files" and "Upload folder" entries; the second one hands us a flat
            list whose files carry `webkitRelativePath`, which the upload store turns back into folders. -->
       <input ref="fileInput" type="file" multiple class="hidden" tabindex="-1" :aria-label="t('new.fileUpload')" @change="onFilesPicked" />
       <input ref="folderInput" type="file" webkitdirectory multiple class="hidden" tabindex="-1" :aria-label="t('new.folderUpload')" @change="onFilesPicked" />

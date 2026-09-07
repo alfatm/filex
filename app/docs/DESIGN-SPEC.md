@@ -39,7 +39,7 @@ native controls and scrollbars the matching look. Dark values: bg `#15171c`,
 sidebar `#1a1d23`, muted `#23272f`, border `#2e333c` / soft `#262a32` / hover
 `#3d444f`, text `#e6e8ec` / `#b4bac4` / `#888f9b`, primary `#5b8cff` (hover
 `#7ba3ff`, soft `#22304d`, ring `#4a76d8`, tint `#1c2740`), success `#34d399`,
-danger `#f87171`, highlight `#6b5a17`, hover card/row `#1b1e25`, overlay
+danger `#f87171`, highlight `#6b5a17`, hover card/row `#1f232a`, overlay
 `rgba(0,0,0,.62)`. The folder yellow and the figma gradient stay as they are.
 
 Type scale (px / weight): 22/600 logo, 20/600 panel & modal titles, 18/600
@@ -64,11 +64,12 @@ open); §3/§4 are authoritative where an earlier draft said "padding 28 32".
 **Sidebar** (w 280, bg `--c-bg-sidebar`, border-right 1px):
 - Row 1 (h 72): burger icon 22px at x 40 center (collapses the sidebar, see §7b); logo mark 32×32 radius 8
   primary with white folder glyph at x 84; word "filex" 22/600 at x 132.
-- **New** button: x 14, y 82, w 136, h 52, radius 12, primary bg, white
-  `Plus` 20px + "New" 18/500. Left edge, icon (x 24) and label (x 70) sit in
-  the same columns as the nav rows below — the ref draws it at x 22 with the
-  content centred, which reads as misaligned against the list. Opens a dropdown
-  (Folder, File upload, Folder upload, divider, New document).
+- **New** button: x 14, y 82, w 180, h 52, radius 12, primary bg, white
+  `Plus` 20px + "New" 18/600, the two centred in the button as the ref draws
+  them (not aligned to the nav columns below). A 44px `ChevronDown` cell closes
+  the right end behind a 1×28 white/25 rule, centred rather than full height; it
+  is an affordance, not a second action — both halves open the same dropdown
+  (Folder, File — disabled until a backend, divider, Upload files, Upload folder).
 - Nav list starts y 156, item h 40, gap 1, padding-left 24 (icon), text at x 70,
   icon 20px. Active item: bg `--c-primary-soft`, radius 10, extends x 14..260.
   Items: Home, My files, Shared with me, Recent, Starred, Trash.
@@ -116,8 +117,11 @@ Content column x 309..1297 when the details panel is open (panel x 1322..1640).
   Content: `Folder` filled icon 36×30 `--c-folder`, name 16/500 at x+80, meta
   "12 items" 14 `--c-text-3` below (line gap 4), `MoreVertical` 20 gray at right
   (x+212). Shared folder shows a small people glyph inside the folder icon.
-  Selected card: border 2px `--c-primary-ring`, bg `--c-primary-tint`.
-  Hover: bg `#fafbfc`, border `#d1d5db`.
+  Selected card: `--c-primary-ring` edge 2px wide, bg `--c-primary-tint`. The
+  edge is a 1px border plus a 1px outline, not a 2px border: a border comes
+  out of the content box, which shifts the thumbnail and rounds its top
+  corners at the wrong radius. Outline changes no layout.
+  Hover: bg `--c-hover-card`, border `#d1d5db`; cursor `pointer`.
 - Section title "Files" 17/600 at y 484; file card w 236 h 174 radius 12 border
   1px overflow hidden: thumbnail area h 108 (image cover / dark code block /
   document page mock / video with centered 44px play circle and duration badge
@@ -161,13 +165,17 @@ Details panel closed; content x 309..1651.
   owner 15, date 15 "Jul 8, 2026, 11:24 AM", size 15 ("—" for folders),
   `MoreVertical` 20 at x 1618.
 - Selected: bg `--c-primary-soft`, checkbox filled primary with white check.
-  Hover: bg `#f9fafb`. Column widths: name flex, owner 160, modified 236, size
+  Hover: bg `--c-hover-row`; cursor `pointer`. Column widths: name flex, owner 160, modified 236, size
   160, menu 60 (the 48 of the ref plus the 12px the table extends past the ⋮:
   a 48 column would widen the flex name column and push Owner off x 1035).
 - Right of filter chips: sort control pill h 40 border 1px: "Name" 15 +
   `ArrowUp` 16 + divider + `ChevronDown` 16 (x 1502..1650).
 - Keyboard: ↑↓ move focus, Space toggles, Enter opens, Delete → trash, F2 rename,
-  Ctrl/Cmd+A select all, Esc clears.
+  Ctrl/Cmd+A select all, Esc clears, Ctrl/Cmd+X/C/V cut / copy / paste,
+  Ctrl/Cmd+Z takes back the last action and Ctrl/Cmd+Shift+Z puts it back,
+  bare `R` refreshes the listing.
+  Refresh is a bare letter because Ctrl+R and F5 both belong to the browser and
+  stay with it; the letter is free while the listing has no type-ahead.
 
 ## 5. Advanced search modal (ref 3)
 
@@ -302,7 +310,20 @@ query params. Nothing is narrowed after the fact in the client.
   two steps: cut rows stay in place at 50% opacity until they land. Paste
   targets the open folder, so it is disabled on the flat listings, and it
   silently skips a node that is already there or that would swallow its own
-  parent. Copying is a separate feature and shares nothing with the clipboard.
+  parent. **Copy and paste** (Ctrl/Cmd+C) holds the same clipboard in the other
+  mode: copied rows are not dimmed, pasting into their own folder duplicates
+  them, and the server names the duplicate (`logo.svg` → `logo-copy.svg`, then
+  `-copy-2`). Copy runs through filex's ops queue, the one verb with no
+  synchronous form, so the repository submits the job and polls it to its end.
+- **Undo / redo** (Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z, plus the trash toast's
+  button — one record, so the toast and the shortcut cannot both fire) take the
+  last action back and put it again: trash, move, rename, paste, star, new
+  folder. Depth is one step in each direction. A longer history would have to
+  address nodes that later actions may have renamed or moved, and since an id is
+  a path, a stale step would not fail loudly — it would act on whatever now
+  answers to that path. Replaying a step is not itself a new action, and any
+  real action drops the forward step. Deleting for good and emptying the trash
+  disarm both.
 - **Folder upload** takes the flat list the directory picker returns and
   rebuilds the tree from `webkitRelativePath`, reusing folders that already
   exist; the folders appear at once, the files as their transfers finish.

@@ -165,6 +165,28 @@ describe('mock repository mutations', () => {
     expect((await repo.getPath(file.id)).map((n) => n.id)).toEqual(['demo']);
   });
 
+  it('copies a folder with its subtree, and names a copy that would collide', async () => {
+    const reports = await repo.createFolder('demo', 'Reports');
+    await repo.uploadFile(reports.id, { name: 'summary.pdf', size: 10 });
+
+    // Into another folder: the copy keeps its own name, and the subtree comes along.
+    await repo.copy([reports.id], 'design');
+    const landed = (await repo.listFolder('design')).find((n) => n.name === 'Reports')!;
+    expect(landed.id).not.toBe(reports.id);
+    expect(names(await repo.listFolder(landed.id))).toEqual(['summary.pdf']);
+    // A copy is a new node: it inherits neither the star nor the share link of its original.
+    expect(landed.starred).toBe(false);
+    expect(landed.shared).toBe(false);
+
+    // Into its own folder: the name is taken, so the server-side suffix decides, twice over.
+    await repo.copy([reports.id], 'demo');
+    await repo.copy([reports.id], 'demo');
+    const here = names(await repo.listFolder('demo'));
+    expect(here).toContain('Reports');
+    expect(here).toContain('Reports-copy');
+    expect(here).toContain('Reports-copy-2');
+  });
+
   it('rejects name collisions among live siblings for createFolder and rename', async () => {
     await expect(repo.createFolder('demo', 'Design')).rejects.toThrow(DUPLICATE_NAME);
     await expect(repo.rename('code', 'Design')).rejects.toThrow(DUPLICATE_NAME);

@@ -25,8 +25,9 @@
   --c-success: light-dark(#16a34a, #34d399);
   --c-highlight: light-dark(#fde68a, #6b5a17);
   --c-danger: light-dark(#dc2626, #f87171);
-  --c-hover-card: light-dark(#fafbfc, #1b1e25);
-  --c-hover-row: light-dark(#f9fafb, #1b1e25);
+  /* One step off the page, not the reference's half-step: at 2% the hover was invisible on most screens. */
+  --c-hover-card: light-dark(#f3f4f6, #1f232a);
+  --c-hover-row: light-dark(#f3f4f6, #1f232a);
   --c-overlay: light-dark(rgba(17, 24, 39, 0.45), rgba(0, 0, 0, 0.62));
 
   /* File-type tiles (spec §3) */

@@ -99,6 +99,14 @@ export interface WireTrashEntry {
 }
 
 /** One row of `/api/files/storages`. */
+/** A row of filex's ops queue (`internal/ops.Op`); only the fields the app polls for are named. */
+export interface WireOp {
+  id: number;
+  kind: string;
+  status: 'pending' | 'running' | 'ok' | 'failed' | 'partial';
+  error?: string;
+}
+
 export interface WireStorage {
   name: string;
   read_only: boolean;

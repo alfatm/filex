@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-/** Cut and paste is a move in two steps; copying is a separate feature and is not in the clipboard. */
+/** Cut and paste is a move in two steps; copy and paste is a duplicate in two steps. */
 test.describe('Cut and paste', () => {
   test('the keyboard cuts a selection and pastes it into the folder that is open', async ({ page }) => {
     await page.goto('files?view=list');
@@ -53,5 +53,63 @@ test.describe('Cut and paste', () => {
     // Nothing moved and nothing threw: the clipboard is simply emptied.
     await expect(page.getByRole('heading', { name: 'Design', level: 1 })).toBeVisible();
     await expect(page.getByRole('grid').locator('tbody tr')).toHaveCount(8);
+  });
+
+  test('Ctrl+C then Ctrl+V duplicates in place, and the copy is named after the original', async ({ page }) => {
+    await page.goto('files/Design?view=list');
+    const rows = page.getByRole('grid').locator('tbody tr');
+    await rows.filter({ hasText: 'logo.svg' }).click();
+    await page.keyboard.press('ControlOrMeta+c');
+    // A copied row is not dimmed: the original is staying exactly where it is.
+    await expect(rows.filter({ hasText: 'logo.svg' })).not.toHaveClass(/opacity-50/);
+
+    await page.keyboard.press('ControlOrMeta+v');
+    await expect(page.getByText('“logo.svg” copied to Design')).toBeVisible();
+    await expect(rows.filter({ hasText: 'logo.svg', hasNotText: 'copy' })).toHaveCount(1);
+    await expect(rows.filter({ hasText: 'logo-copy.svg' })).toHaveCount(1);
+  });
+
+  test('Ctrl+Z takes back the paste and the trash, Ctrl+Shift+Z puts them back', async ({ page }) => {
+    await page.goto('files/Design?view=list');
+    const rows = page.getByRole('grid').locator('tbody tr');
+
+    // Paste, then undo it: the copy goes to the trash it came from nowhere into.
+    await rows.filter({ hasText: 'logo.svg' }).click();
+    await page.keyboard.press('ControlOrMeta+c');
+    await page.keyboard.press('ControlOrMeta+v');
+    await expect(rows.filter({ hasText: 'logo-copy.svg' })).toHaveCount(1);
+    await page.getByRole('grid').click();
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(rows.filter({ hasText: 'logo-copy.svg' })).toHaveCount(0);
+
+    // Trash, then undo it. The row comes back where it was.
+    await rows.filter({ hasText: 'logo.svg' }).click();
+    await page.keyboard.press('Delete');
+    await page.getByRole('dialog').getByRole('button', { name: 'Move to trash' }).click();
+    await expect(rows.filter({ hasText: 'logo.svg' })).toHaveCount(0);
+    await page.getByRole('grid').click();
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(rows.filter({ hasText: 'logo.svg' })).toHaveCount(1);
+
+    // Ctrl+Shift+Z puts that same step back.
+    await page.keyboard.press('ControlOrMeta+Shift+z');
+    await expect(rows.filter({ hasText: 'logo.svg' })).toHaveCount(0);
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(rows.filter({ hasText: 'logo.svg' })).toHaveCount(1);
+
+    // Only one step is kept: a second Ctrl+Z is a no-op, not a jump further back to the paste.
+    await page.keyboard.press('ControlOrMeta+z');
+    await expect(rows.filter({ hasText: 'logo-copy.svg' })).toHaveCount(0);
+    await expect(rows.filter({ hasText: 'logo.svg' })).toHaveCount(1);
+  });
+
+  test('the bare R key refreshes the listing without reloading the page', async ({ page }) => {
+    await page.goto('files/Design?view=list');
+    await page.evaluate(() => ((window as unknown as { __kept: boolean }).__kept = true));
+    await page.getByRole('grid').click();
+    await page.keyboard.press('r');
+    await expect(page.getByRole('grid').locator('tbody tr').first()).toBeVisible();
+    // A page reload would have wiped this; the listing refreshed in place.
+    expect(await page.evaluate(() => (window as unknown as { __kept?: boolean }).__kept)).toBe(true);
   });
 });

@@ -120,4 +120,45 @@ describe('HttpRepository', () => {
     vi.stubGlobal('fetch', async () => ({ ok: false, status: 409, text: async () => '{"error":"exists"}' }) as Response);
     await expect(new HttpRepository().createFolder('main://Docs', 'Reports')).rejects.toThrow('duplicateName');
   });
+
+  it('restores a node it trashed itself, without a trash listing to name its number', async () => {
+    routes = [
+      ['q=index', index(row({ id: 7, path: 'main://Docs', basename: 'Docs' }))],
+      ['/star/list', { nodes: [] }],
+      ['q=delete', {}],
+      ['/manager/restore', {}],
+    ];
+    const repo = new HttpRepository();
+    // The listing is what teaches the repository that main://Docs is node 7.
+    await repo.listFolder('main://');
+    await repo.moveToTrash(['main://Docs']);
+    await repo.restore(['main://Docs']);
+
+    // Undo restores by number: dropping the path from the live map must not lose it.
+    const restore = calls.find((c) => c.url.includes('/manager/restore'));
+    expect(restore?.body).toEqual({ node_id: 7 });
+  });
+
+  it('copies through the ops queue and waits for the job to finish', async () => {
+    let polled = 0;
+    routes = [
+      ['/api/files/ops/', { id: 3, kind: 'copy', status: 'ok' }],
+      ['/api/files/copy', { op: { id: 3, kind: 'copy', status: 'pending' } }],
+    ];
+    const repo = new HttpRepository();
+    await repo.copy(['main://Docs/a.txt'], 'main://Backup');
+    polled = calls.filter((c) => c.url.includes('/api/files/ops/3')).length;
+
+    expect(calls.find((c) => c.url.includes('/api/files/copy'))?.body).toEqual({ source: ['main://Docs/a.txt'], target: 'main://Backup' });
+    // Submitted, then polled until the row was no longer pending.
+    expect(polled).toBe(1);
+  });
+
+  it('surfaces a failed copy job as an error rather than a silent no-op', async () => {
+    routes = [
+      ['/api/files/ops/', { id: 4, kind: 'copy', status: 'failed', error: 'destination is read-only' }],
+      ['/api/files/copy', { op: { id: 4, kind: 'copy', status: 'running' } }],
+    ];
+    await expect(new HttpRepository().copy(['main://a.txt'], 'main://ro')).rejects.toThrow('destination is read-only');
+  });
 });
