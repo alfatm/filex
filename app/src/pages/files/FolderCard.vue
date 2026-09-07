@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import { MoreVertical } from 'lucide-vue-next';
+import { MoreVertical, Star } from 'lucide-vue-next';
 import type { Node } from '@/data/types';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
 import { IconButton } from '@/ui';
@@ -18,7 +18,7 @@ function onContextMenu(event: MouseEvent) {
 <template>
   <!-- Keyboard: focusing a card moves the page cursor to it, so Enter/Space/arrows go through the page handler. -->
   <div
-    class="flex h-[84px] w-[236px] cursor-default select-none items-center rounded-lg border bg-bg pl-5 pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring focus-visible:ring-offset-2"
+    class="relative flex h-[84px] w-[236px] cursor-default select-none items-center rounded-lg border bg-bg pl-5 pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring focus-visible:ring-offset-2"
     :class="[
       selected
         ? 'border-2 border-primary-ring bg-primary-tint pl-[19px] pr-[3px]'
@@ -40,5 +40,7 @@ function onContextMenu(event: MouseEvent) {
     <IconButton :label="t('files.more')" :size="32" class="text-text-3" data-menu-button @click.stop="itemMenu.openFor(node, $event.currentTarget as HTMLElement)" @dblclick.stop>
       <MoreVertical :size="20" />
     </IconButton>
+    <!-- Last in DOM so the card's accessible name still starts with the folder name. -->
+    <Star v-if="node.starred" :size="14" fill="currentColor" class="absolute right-2.5 top-2 text-folder" role="img" :aria-label="t('panel.starred')" />
   </div>
 </template>

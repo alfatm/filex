@@ -27,6 +27,8 @@ export function russianPlural(choice: number): number {
   return 2;
 }
 
+export const LOCALES: readonly Locale[] = SUPPORTED;
+
 export const i18n = createI18n({
   legacy: false,
   locale: initialLocale(),
@@ -34,3 +36,13 @@ export const i18n = createI18n({
   messages: { en, ru, tr },
   pluralRules: { ru: russianPlural },
 });
+
+/** The settings modal's language picker: switches immediately and remembers the choice. */
+export function setLocale(value: Locale) {
+  i18n.global.locale.value = value;
+  try {
+    localStorage.setItem(STORAGE_KEY, value);
+  } catch {
+    // storage unavailable — the choice lasts for this session only
+  }
+}

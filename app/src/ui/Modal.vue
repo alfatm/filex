@@ -15,7 +15,7 @@ const emit = defineEmits<{ close: [] }>();
 
 <template>
   <Dialog open :initial-focus="initialFocus ?? undefined" class="relative z-40" @close="emit('close')">
-    <div class="fixed inset-0" style="background: rgba(17, 24, 39, 0.45)" aria-hidden="true" />
+    <div class="fixed inset-0 bg-overlay" aria-hidden="true" />
     <div class="fixed inset-0 flex items-center justify-center overflow-y-auto">
       <DialogPanel class="rounded-2xl bg-bg p-[26px] shadow-modal" :style="{ width: `${width}px` }">
         <div class="flex items-start">

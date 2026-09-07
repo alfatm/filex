@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { ArrowDown, ArrowUp, MoreVertical } from 'lucide-vue-next';
+import { ArrowDown, ArrowUp, MoreVertical, Star } from 'lucide-vue-next';
 import { useFormat } from '@/composables/useFormat';
 import type { Node } from '@/data/types';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
+import { useSettingsStore } from '@/features/settings/settingsStore';
 import HitIcon from '@/features/search/HitIcon.vue';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore, type SortKey } from '@/stores/view';
@@ -28,6 +29,7 @@ const { formatDateTime, formatSize } = useFormat();
 const files = useFilesStore();
 const view = useViewStore();
 const itemMenu = useItemMenuStore();
+const settings = useSettingsStore();
 
 // Spec §4: name flex, owner 160, modified 236, size 160; 12px outer padding. The menu column is the spec's 48 plus
 // the 12px the table extends past the ⋮ (icon at x 1618, table edge 1651): a narrower column would widen the flex
@@ -127,8 +129,12 @@ function onContextMenu(node: Node, event: MouseEvent) {
           :data-id="node.id"
           role="row"
           :aria-selected="files.isSelected(node.id)"
-          class="h-[42px] cursor-default select-none border-b border-border-soft text-15 leading-none [&>td]:p-0"
-          :class="[files.isSelected(node.id) ? 'bg-primary-soft' : 'hover:bg-hover-row', files.cursorId === node.id && 'cursor-row']"
+          class="cursor-default select-none border-b border-border-soft text-15 leading-none [&>td]:p-0"
+          :class="[
+            settings.settings.compactList ? 'h-[34px]' : 'h-[42px]',
+            files.isSelected(node.id) ? 'bg-primary-soft' : 'hover:bg-hover-row',
+            files.cursorId === node.id && 'cursor-row',
+          ]"
           @click="files.selectFromEvent(node.id, $event)"
           @dblclick="emit('open', node)"
           @contextmenu.prevent="onContextMenu(node, $event)"
@@ -145,6 +151,7 @@ function onContextMenu(node: Node, event: MouseEvent) {
             <div class="flex items-center">
               <HitIcon :node="node" />
               <span class="ml-5 min-w-[96px] truncate pr-2 text-16 font-medium text-text">{{ node.name }}</span>
+              <Star v-if="node.starred" :size="14" fill="currentColor" class="mr-2 shrink-0 text-folder" role="img" :aria-label="t('panel.starred')" />
               <span v-if="node.kind === 'folder'" class="shrink-0 text-text-3">
                 {{ t('files.items', node.itemCount ?? 0) }}
               </span>

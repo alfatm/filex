@@ -201,7 +201,6 @@ onBeforeUnmount(() => {
           <Send :size="22" />
         </button>
       </form>
-      <p class="mt-2 text-13 leading-none text-text-3">{{ t('assistant.hint') }}</p>
     </div>
   </SidePanel>
 </template>

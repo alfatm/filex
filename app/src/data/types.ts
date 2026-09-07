@@ -67,6 +67,9 @@ export interface User {
   id: string;
   name: string;
   initial: string;
+  email: string;
+  /** Shown as a badge in the settings modal; the backend's own role names map onto it. */
+  role: 'owner' | 'admin' | 'member';
 }
 
 // The allowed-value lists double as the URL-parsing whitelists in features/search/searchStore.ts.

@@ -145,7 +145,8 @@
     "settings": "Ayarlar",
     "help": "Yardım",
     "assistant": "Yapay zekâ asistanı",
-    "account": "Hesap"
+    "account": "Hesap",
+    "signOut": "Oturumu kapat"
   },
   "files": {
     "breadcrumbHome": "Ana sayfa",
@@ -371,13 +372,97 @@
     },
     "placeholder": "Dosya bulmamı isteyin…",
     "send": "Gönder",
-    "hint": "",
     "error": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
     "stopped": "Durduruldu",
     "more": "Daha fazla",
     "menu": {
       "open": "Aç",
       "showInFolder": "Klasörde göster"
+    }
+  },
+  "settings": {
+    "title": "Kullanıcı ayarları",
+    "subtitle": "Profilinizi, tercihlerinizi ve güvenliğinizi yönetin.",
+    "cancel": "İptal",
+    "save": "Değişiklikleri kaydet",
+    "saved": "Ayarlar kaydedildi",
+    "nav": {
+      "profile": "Profil",
+      "preferences": "Tercihler",
+      "notifications": "Bildirimler",
+      "security": "Güvenlik",
+      "assistant": "AI asistan"
+    },
+    "roles": {
+      "owner": "Sahip",
+      "admin": "Yönetici",
+      "member": "Üye"
+    },
+    "languages": {
+      "en": "English (US)",
+      "ru": "Русский",
+      "tr": "Türkçe"
+    },
+    "theme": {
+      "light": "Açık",
+      "system": "Sistem",
+      "dark": "Koyu"
+    },
+    "conflict": {
+      "ask": "Bana sor",
+      "replace": "Dosyayı değiştir",
+      "keepBoth": "İkisini de sakla",
+      "skip": "Yüklemeyi atla"
+    },
+    "profile": {
+      "hint": "Kişisel bilgileriniz ve filex'te nasıl göründüğünüz.",
+      "changePhoto": "Fotoğrafı değiştir",
+      "removePhoto": "Kaldır",
+      "fullName": "Tam ad",
+      "displayName": "Görünen ad",
+      "email": "E-posta",
+      "jobTitle": "Unvan"
+    },
+    "prefs": {
+      "hint": "filex deneyiminizi özelleştirin.",
+      "language": "Dil",
+      "timeZone": "Saat dilimi",
+      "theme": "Tema",
+      "compact": "Sıkışık dosya listesi",
+      "compactHint": "Daha az yerde daha çok dosya"
+    },
+    "storage": {
+      "title": "Depolama ve yüklemeler",
+      "hint": "Yükleme ayarlarınızı ve varsayılan konumları yönetin.",
+      "defaultFolder": "Varsayılan yükleme klasörü",
+      "autoPreview": "Önizlemeyi aç",
+      "autoPreviewHint": "Yüklemeden sonra önizlemeyi otomatik aç",
+      "conflict": "Ad çakışmasında"
+    },
+    "notify": {
+      "hint": "filex'in size neleri bildireceğini seçin.",
+      "notifyShared": "Benimle paylaşılanlar",
+      "notifySharedHint": "Biri sizinle bir dosya veya klasör paylaştığında",
+      "notifyComments": "Yorumlar",
+      "notifyCommentsHint": "Biri dosyanıza yorum yaptığında",
+      "notifyUploads": "Tamamlanan yüklemeler",
+      "notifyUploadsHint": "Büyük bir yükleme arka planda bittiğinde"
+    },
+    "security": {
+      "hint": "Hesabınızı güvende tutun.",
+      "password": "Parola",
+      "passwordHint": "Parolanızı değiştirin",
+      "twoFactor": "İki adımlı doğrulama",
+      "twoFactorHint": "İkinci giriş adımı ekleyin",
+      "sessions": "Etkin oturumlar",
+      "sessionsHint": "Oturum açmış cihazlar",
+      "manage": "Güvenliği yönet"
+    },
+    "assistant": {
+      "hint": "AI asistanın sizin için nasıl davranacağı.",
+      "enabled": "AI asistanı etkinleştir",
+      "defaultMode": "Varsayılan arama modu",
+      "providerNote": "Model ve API anahtarı yöneticiniz tarafından yapılandırılır."
     }
   }
 }

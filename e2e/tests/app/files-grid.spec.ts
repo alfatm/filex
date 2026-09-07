@@ -50,6 +50,18 @@ test.describe('My files — grid view', () => {
     await expect(page.getByRole('group', { name: 'Folders' }).getByRole('option')).toHaveCount(FOLDER_COUNT);
   });
 
+  test('starred items carry a star badge in both views', async ({ page }) => {
+    const folders = page.getByRole('group', { name: 'Folders' });
+    await expect(folders.getByRole('option', { name: /^Photos\b/ }).getByRole('img', { name: 'Starred' })).toBeVisible();
+    await expect(folders.getByRole('option', { name: /^Code\b/ }).getByRole('img', { name: 'Starred' })).toHaveCount(0);
+    await expect(page.getByRole('group', { name: 'Files' }).getByRole('option', { name: /mountains\.jpg/ }).getByRole('img', { name: 'Starred' })).toBeVisible();
+
+    await page.getByRole('radio', { name: 'List view' }).click();
+    const rows = page.getByRole('grid').locator('tbody tr');
+    await expect(rows.filter({ has: page.getByText('Photos', { exact: true }) }).getByRole('img', { name: 'Starred' })).toBeVisible();
+    await expect(rows.filter({ has: page.getByText('Code', { exact: true }) }).getByRole('img', { name: 'Starred' })).toHaveCount(0);
+  });
+
   test('selecting Design and toggling Info opens the details panel', async ({ page }) => {
     const design = page.getByRole('group', { name: 'Folders' }).getByRole('option', { name: /^Design\b/ });
     await design.click();

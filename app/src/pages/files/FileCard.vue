@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import { MoreVertical } from 'lucide-vue-next';
+import { MoreVertical, Star } from 'lucide-vue-next';
 import type { Node } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
@@ -21,7 +21,7 @@ function onContextMenu(event: MouseEvent) {
 <template>
   <!-- Keyboard: focusing a card moves the page cursor to it, so Enter/Space/arrows go through the page handler. -->
   <div
-    class="h-[174px] w-[236px] cursor-default select-none rounded-lg border bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring focus-visible:ring-offset-2"
+    class="relative h-[174px] w-[236px] cursor-default select-none rounded-lg border bg-bg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring focus-visible:ring-offset-2"
     :class="[
       selected ? 'border-2 border-primary-ring bg-primary-tint' : 'border-border hover:border-border-hover hover:bg-hover-card',
       focused && 'ring-2 ring-primary-ring ring-offset-2',
@@ -48,5 +48,14 @@ function onContextMenu(event: MouseEvent) {
         <MoreVertical :size="20" />
       </IconButton>
     </div>
+    <!-- Starred badge, last in DOM so the card's accessible name still starts with the file name; the disc keeps it readable on any thumbnail. -->
+    <span
+      v-if="node.starred"
+      class="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-bg/90 text-folder shadow-sm"
+      role="img"
+      :aria-label="t('panel.starred')"
+    >
+      <Star :size="14" fill="currentColor" />
+    </span>
   </div>
 </template>

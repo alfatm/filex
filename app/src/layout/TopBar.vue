@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
-import { ChevronDown, HelpCircle, LayoutGrid, Search, Settings, SlidersHorizontal, Sparkles } from 'lucide-vue-next';
+import { ChevronDown, HelpCircle, LayoutGrid, LogOut, Search, Settings, SlidersHorizontal, Sparkles, UserRound } from 'lucide-vue-next';
 import { emptyQuery, toUrlQuery, useSearchStore } from '@/features/search/searchStore';
 import { joinPath, segments } from '@/lib/path';
+import { useSettingsStore } from '@/features/settings/settingsStore';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
 import { Avatar, IconButton } from '@/ui';
+import FloatingMenu, { anchorBelow, type FloatingMenuEntry } from '@/ui/FloatingMenu.vue';
 
 // Loaded on the first open, so the modal stays out of the initial bundle.
 const AdvancedSearchModal = defineAsyncComponent(() => import('@/features/search/AdvancedSearchModal.vue'));
@@ -18,6 +20,21 @@ const router = useRouter();
 const files = useFilesStore();
 const search = useSearchStore();
 const view = useViewStore();
+const settings = useSettingsStore();
+
+const accountMenu = ref<{ x: number; y: number } | null>(null);
+const ACCOUNT_MENU_WIDTH = 208;
+
+/** Signing out needs the session endpoint, so only the settings entry acts for now. */
+const accountItems = computed<FloatingMenuEntry[]>(() => [
+  { id: 'settings', label: t('settings.title'), icon: UserRound },
+  { id: 'signOut', label: t('topbar.signOut'), icon: LogOut, dividerBefore: true, disabled: true, hint: t('common.comingSoon') },
+]);
+
+function onAccountSelect(id: string) {
+  accountMenu.value = null;
+  if (id === 'settings') settings.open = true;
+}
 
 const input = ref<HTMLInputElement>();
 const text = ref('');
@@ -99,18 +116,29 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
         <Sparkles :size="22" :stroke-width="1.75" />
       </IconButton>
       <IconButton :label="t('topbar.apps')" :disabled-hint="t('common.comingSoon')"><LayoutGrid :size="22" :stroke-width="1.75" /></IconButton>
-      <IconButton :label="t('topbar.settings')" :disabled-hint="t('common.comingSoon')"><Settings :size="22" :stroke-width="1.75" /></IconButton>
+      <IconButton :label="t('topbar.settings')" @click="settings.open = true"><Settings :size="22" :stroke-width="1.75" /></IconButton>
       <IconButton :label="t('topbar.help')" :disabled-hint="t('common.comingSoon')"><HelpCircle :size="22" :stroke-width="1.75" /></IconButton>
       <button
         type="button"
-        class="ml-2 flex cursor-default items-center gap-1 rounded-full"
+        class="ml-2 flex items-center gap-1 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
         :aria-label="t('topbar.account')"
-        aria-disabled="true"
-        :title="t('common.comingSoon')"
+        aria-haspopup="menu"
+        :aria-expanded="!!accountMenu"
+        @click="accountMenu = anchorBelow($event.currentTarget as HTMLElement, ACCOUNT_MENU_WIDTH)"
       >
         <Avatar :initial="files.user?.initial ?? ''" />
         <ChevronDown :size="16" class="text-text-2" />
       </button>
+      <FloatingMenu
+        v-if="accountMenu"
+        :items="accountItems"
+        :x="accountMenu.x"
+        :y="accountMenu.y"
+        :width="ACCOUNT_MENU_WIDTH"
+        :label="t('topbar.account')"
+        @select="onAccountSelect"
+        @close="accountMenu = null"
+      />
     </div>
 
     <AdvancedSearchModal v-if="search.open" />

@@ -145,7 +145,8 @@
     "settings": "Settings",
     "help": "Help",
     "assistant": "AI assistant",
-    "account": "Account"
+    "account": "Account",
+    "signOut": "Sign out"
   },
   "files": {
     "breadcrumbHome": "Home",
@@ -371,13 +372,97 @@
     },
     "placeholder": "Ask to find files…",
     "send": "Send",
-    "hint": "",
     "error": "Something went wrong. Please try again.",
     "stopped": "Stopped",
     "more": "More",
     "menu": {
       "open": "Open",
       "showInFolder": "Show in folder"
+    }
+  },
+  "settings": {
+    "title": "User settings",
+    "subtitle": "Manage your profile, preferences, and security.",
+    "cancel": "Cancel",
+    "save": "Save changes",
+    "saved": "Settings saved",
+    "nav": {
+      "profile": "Profile",
+      "preferences": "Preferences",
+      "notifications": "Notifications",
+      "security": "Security",
+      "assistant": "AI assistant"
+    },
+    "roles": {
+      "owner": "Owner",
+      "admin": "Admin",
+      "member": "Member"
+    },
+    "languages": {
+      "en": "English (US)",
+      "ru": "Русский",
+      "tr": "Türkçe"
+    },
+    "theme": {
+      "light": "Light",
+      "system": "System",
+      "dark": "Dark"
+    },
+    "conflict": {
+      "ask": "Ask me what to do",
+      "replace": "Replace the file",
+      "keepBoth": "Keep both files",
+      "skip": "Skip the upload"
+    },
+    "profile": {
+      "hint": "Your personal information and how you appear in filex.",
+      "changePhoto": "Change photo",
+      "removePhoto": "Remove",
+      "fullName": "Full name",
+      "displayName": "Display name",
+      "email": "Email",
+      "jobTitle": "Job title"
+    },
+    "prefs": {
+      "hint": "Customize your filex experience.",
+      "language": "Language",
+      "timeZone": "Time zone",
+      "theme": "Theme",
+      "compact": "Use compact file list",
+      "compactHint": "Show more files in less space"
+    },
+    "storage": {
+      "title": "Storage & uploads",
+      "hint": "Manage your upload settings and default locations.",
+      "defaultFolder": "Default upload folder",
+      "autoPreview": "Auto-open preview",
+      "autoPreviewHint": "Automatically open preview after upload",
+      "conflict": "Upload conflict behavior"
+    },
+    "notify": {
+      "hint": "Choose what filex tells you about.",
+      "notifyShared": "Shared with me",
+      "notifySharedHint": "Someone shares a file or folder with you",
+      "notifyComments": "Comments",
+      "notifyCommentsHint": "Someone comments on a file you own",
+      "notifyUploads": "Finished uploads",
+      "notifyUploadsHint": "A large upload finishes in the background"
+    },
+    "security": {
+      "hint": "Keep your account safe and secure.",
+      "password": "Password",
+      "passwordHint": "Change your password",
+      "twoFactor": "Two-factor authentication",
+      "twoFactorHint": "Add a second sign-in step",
+      "sessions": "Active sessions",
+      "sessionsHint": "Devices signed in",
+      "manage": "Manage security"
+    },
+    "assistant": {
+      "hint": "How the AI assistant behaves for you.",
+      "enabled": "Enable AI assistant",
+      "defaultMode": "Default search mode",
+      "providerNote": "The model and API key are configured by your administrator."
     }
   }
 }

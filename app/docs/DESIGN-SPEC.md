@@ -31,6 +31,17 @@ may be tuned by overlay comparison.
 | shadow-modal | `0 20px 60px rgba(17,24,39,.18)` | |
 | shadow-menu | `0 8px 24px rgba(17,24,39,.12)` | dropdowns |
 
+Both themes live in one place: every token is a `light-dark(<light>, <dark>)`
+pair in `tokens.css`, and `color-scheme` picks the side. The root declares
+`color-scheme: light dark` (follow the OS); the settings modal stamps
+`data-theme="light"` / `"dark"` on `<html>` to override it, which also gives
+native controls and scrollbars the matching look. Dark values: bg `#15171c`,
+sidebar `#1a1d23`, muted `#23272f`, border `#2e333c` / soft `#262a32` / hover
+`#3d444f`, text `#e6e8ec` / `#b4bac4` / `#888f9b`, primary `#5b8cff` (hover
+`#7ba3ff`, soft `#22304d`, ring `#4a76d8`, tint `#1c2740`), success `#34d399`,
+danger `#f87171`, highlight `#6b5a17`, hover card/row `#1b1e25`, overlay
+`rgba(0,0,0,.62)`. The folder yellow and the figma gradient stay as they are.
+
 Type scale (px / weight): 22/600 logo, 20/600 panel & modal titles, 18/600
 breadcrumb current, 17/600 section titles ("Folders", "24 matching items"),
 16/500 nav items and item names, 16/600 side-panel headings, 15/400 body,
@@ -242,7 +253,40 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
 - **Toasts** bottom-left, radius 12, shadow-menu.
 - **Upload tray** bottom-right card w 360 with per-file progress.
 
-## 8. Mock data (matches the refs)
+## 8. User settings modal (ref 5)
+
+Opened by the topbar gear or by Account → User settings; hosted by the shell,
+so it is reachable from every page. Panel 808 wide, max height 850, radius 16,
+padding 20. Header: 44 avatar, title 20/600 "User settings", subtitle 14 in
+`--c-text-3`, close X top right. Body below it: nav 142 wide (5 items, h 40,
+icon 18 + 15px label, active on `--c-primary-soft` in primary), then the
+content box (`--c-border`, radius 12, padding 14) which is the only scrolling
+area. Footer above the panel edge: 1px separator, Cancel (outline) and Save
+changes (primary), both h 44.
+
+The content is one column of cards (radius 12, border, padding 16, 16/600
+heading + 13 caption): Profile full width, then a two-column grid
+(`1fr` / 236) with Preferences, Storage & uploads and Notifications on the
+left, Security and AI assistant on the right. The nav scrolls to a card and
+highlights whichever card has passed the top edge.
+
+Controls: Profile — 62 avatar with a camera badge, name + role pill + email,
+Change photo / Remove, then Full name, Display name, Email (read-only, muted)
+and Job title in a 2×2 grid. Preferences — Language and Time zone selects,
+Theme as a 3-segment control (Light / System / Dark, h 36), "Use compact file
+list" checkbox with a caption. Storage & uploads — default upload folder
+select, an auto-open-preview switch (44×24), upload conflict select.
+Notifications — three switches with captions. Security — three 52-high rows
+(icon, title 13/500, caption 12, chevron) and a Manage security button.
+AI assistant — enable switch, default search mode select, a note that the
+provider is set by the administrator.
+
+Editing works on a copy: Cancel drops it, Save changes commits everything at
+once. Theme, language and the compact list take effect immediately; the
+profile fields, notification switches, photo buttons and every Security row
+are mocks until the backend grows the endpoints (see BACKEND-GAP.md).
+
+## 9. Mock data (matches the refs)
 
 Storage "demo", 12.4 GB of 100 GB. Folders: Code 12, Design 8, Documents 24,
 Photos 56, example 3, Archive 17, Resources 9, Shared 5 (shared). Starred:

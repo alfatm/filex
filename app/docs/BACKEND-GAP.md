@@ -26,6 +26,18 @@ Decide each row before writing the HTTP repository (stage 7).
 | `createShareLink`, `removeShareLink` | `POST /share` → share id + url; `DELETE /share/{id}`; many shares per node | ⚠️ | node carries share list; UI shows first link, "Manage" for the rest |
 | `listFolders` (Move picker) | none | ⚠️ | lazy tree via `listFolder` |
 
+## User settings modal
+
+| What the modal writes | filex today | Status | Decision needed |
+|---|---|---|---|
+| profile: full name, display name, job title | `GET /api/auth/me`; no self-update | ❌ | needs `POST /api/auth/profile`; until then the fields are local mocks |
+| account email + role badge | `/api/auth/me` carries them | ⚠️ | map onto the app's `User` (`email`, `role`) |
+| avatar upload / removal | none | ❌ | needs an avatar endpoint and storage; the two buttons are inert |
+| password, 2FA, active sessions | `POST /api/auth/password`, `/totp/*`; no session list | ⚠️ | the rows are inert: wiring them means reusing the admin flows and adding a sessions endpoint |
+| notification switches | `GET/POST /api/notifications/settings` | ⚠️ | map the three app-level switches onto the server's setting names |
+| theme, language, compact list, time zone, upload prefs | none | ✅ | client-only on purpose (localStorage `filex.app.settings`); revisit only if prefs must follow the user across devices |
+| assistant enable + default mode | none | ❌ | belongs with the assistant endpoint row above; the provider and key stay admin-side |
+
 ## Model gaps
 
 - **Owner**: nodes have no owner. Decision from the product owner: "You" for

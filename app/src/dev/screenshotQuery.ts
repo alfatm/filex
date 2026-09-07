@@ -4,6 +4,7 @@ import { repository } from '@/data';
 import { useAssistantStore } from '@/features/assistant/assistantStore';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
 import { useModalsStore } from '@/features/files/modalsStore';
+import { THEMES, useSettingsStore, type Theme } from '@/features/settings/settingsStore';
 import { previewList } from '@/features/files/preview';
 import { emptyQuery, useSearchStore } from '@/features/search/searchStore';
 import { joinPath, segments } from '@/lib/path';
@@ -20,6 +21,8 @@ import { useViewStore } from '@/stores/view';
  *   ?select=<name>             selects the node with that name once the folder is listed (files route)
  *   ?panel=details|assistant|none   the only open right panel (both are independent; details is open by default)
  *   ?modal=search              opens Advanced search with the reference form (tags, path) and "24 matching items"
+ *   ?modal=settings            opens the user settings modal
+ *   ?theme=light|dark|system   applies a theme without going through the settings modal
  *   ?modal=rename              opens Rename for the selected node
  *   ?modal=preview             opens the preview of the selected file
  *   ?menu=item                 opens the ⋮ menu of the selected node
@@ -48,6 +51,7 @@ export function installScreenshotQuery() {
   const itemMenu = useItemMenuStore();
   const search = useSearchStore();
   const assistant = useAssistantStore();
+  const settings = useSettingsStore();
 
   let assistantSeeded = false;
   let searchPatched = false;
@@ -73,6 +77,9 @@ export function installScreenshotQuery() {
       view.assistantOpen = panel === 'assistant';
       view.detailsOpen = false;
     }
+    const theme = first(query.theme);
+    if (THEMES.includes(theme as Theme)) settings.settings.theme = theme as Theme;
+    if (first(query.modal) === 'settings') settings.open = true;
     if (first(query.modal) === 'search') {
       patchSearchTotal();
       search.assign({ ...emptyQuery(), ...REF_SEARCH });
