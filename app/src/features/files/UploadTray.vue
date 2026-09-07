@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import { Check, X } from 'lucide-vue-next';
+import { AlertCircle, Check, X } from 'lucide-vue-next';
 import { useFormat } from '@/composables/useFormat';
 import { IconButton, ProgressBar } from '@/ui';
 import { useUploadStore } from './uploadStore';
@@ -19,7 +19,10 @@ const uploads = useUploadStore();
   >
     <header class="flex h-12 items-center border-b border-border pl-4 pr-1">
       <span class="flex-1 text-15 font-medium leading-none" aria-live="polite">
-        {{ uploads.doneCount === uploads.items.length ? t('upload.done', uploads.items.length) : t('upload.title', { done: uploads.doneCount, total: uploads.items.length }) }}
+        <!-- A failure outranks the count: "3 of 3" over a row that never arrived would be a lie. -->
+        <template v-if="uploads.failedCount">{{ t('upload.failed', uploads.failedCount) }}</template>
+        <template v-else-if="uploads.doneCount === uploads.items.length">{{ t('upload.done', uploads.items.length) }}</template>
+        <template v-else>{{ t('upload.title', { done: uploads.doneCount, total: uploads.items.length }) }}</template>
       </span>
       <IconButton :label="t('upload.close')" :size="36" class="text-text-3" @click="uploads.clear()"><X :size="18" /></IconButton>
     </header>
@@ -32,7 +35,16 @@ const uploads = useUploadStore();
           </div>
           <ProgressBar class="mt-2" :value="item.progress" :max="100" :label="item.name" />
         </div>
-        <span class="ml-3 flex h-6 w-6 shrink-0 items-center justify-center rounded-full" :class="item.done ? 'bg-success text-white' : 'text-transparent'">
+        <!-- A stalled bar says nothing; the row has to say the transfer is over and did not work. -->
+        <span
+          v-if="item.failed"
+          class="ml-3 flex h-6 w-6 shrink-0 items-center justify-center text-danger"
+          role="img"
+          :aria-label="t('upload.failedItem')"
+        >
+          <AlertCircle :size="18" />
+        </span>
+        <span v-else class="ml-3 flex h-6 w-6 shrink-0 items-center justify-center rounded-full" :class="item.done ? 'bg-success text-white' : 'text-transparent'">
           <Check :size="14" :stroke-width="3" />
         </span>
       </li>

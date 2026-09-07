@@ -38,7 +38,14 @@ export default defineConfig({
   timeout: 30_000,
   expect: {
     timeout: 5_000,
-    toHaveScreenshot: { maxDiffPixelRatio: 0.002, animations: 'disabled', caret: 'hide' },
+    // 50 pixels, not a ratio. 0.002 of this 1672×941 frame is 3147 px, and Playwright counts only pixels that
+    // differ perceptibly (pixelmatch, threshold 0.2), so real design changes score far below that: enabling two
+    // greyed menu entries and swapping one icon measures 234 px — thirteen times under the old ceiling, which is
+    // why it passed against a stale baseline in silence, as a 44px button and a new sidebar logo had before it.
+    // Comparison is bit-exact on a pinned viewport, scale, locale, timezone and disabled animations (six
+    // consecutive runs at maxDiffPixels: 0 found nothing), so this allowance is headroom for a font or Chromium
+    // update, not for the app's own pixels.
+    toHaveScreenshot: { maxDiffPixels: 50, animations: 'disabled', caret: 'hide' },
   },
   fullyParallel: true,
   forbidOnly: !!process.env.CI,

@@ -13,6 +13,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/acl"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/e2e"
+	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/ops"
 )
 
@@ -49,6 +50,27 @@ type errsString string
 
 func (e errsString) Error() string { return string(e) }
 
+// refuseReadOnlySource answers (having written the response) when a verb that
+// takes bytes AWAY is aimed at a read-only storage. Copy only reads its source,
+// so it passes; move and delete are refused, exactly as the synchronous
+// `?q=move|delete` handlers refuse them.
+//
+// ⚠ Without this the queue WAS the way around the flag: the same delete the
+// manager answered 403 for went through here as a 202 and emptied a read-only
+// depo into its trash. The destination side was already guarded; the source
+// side never was, because the per-verb wrappers only ever looked up a storage
+// to name it, not to ask what it allows.
+func refuseReadOnlySource(w http.ResponseWriter, kind string, st *model.Storage) bool {
+	if kind == ops.OpCopy || st == nil || !st.ReadOnly {
+		return false
+	}
+	writeJSON(w, http.StatusForbidden, map[string]string{
+		"error": "source storage is read-only: " + st.Name,
+		"hint":  "clear the read-only flag on " + st.Name + " to move or delete what it holds",
+	})
+	return true
+}
+
 // opsRequest is the body of POST /api/files/ops.
 type opsRequest struct {
 	Kind      string `json:"kind"` // copy, move, delete
@@ -69,6 +91,14 @@ func (o *Ops) Submit(w http.ResponseWriter, r *http.Request) {
 	var req opsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
+		return
+	}
+	source, err := o.Store.GetStorage(r.Context(), req.StorageID)
+	if err != nil || source == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unknown storage"})
+		return
+	}
+	if refuseReadOnlySource(w, req.Kind, source) {
 		return
 	}
 	// RBAC: require ≥editor on each source (and, for copy/move, the dest).
@@ -162,9 +192,13 @@ func (o *Ops) submitPerVerb(w http.ResponseWriter, r *http.Request, kind string)
 		return
 	}
 
-	storageID, sources, err := o.resolveBatch(r.Context(), req.Source)
+	source, sources, err := o.resolveBatch(r.Context(), req.Source)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	storageID := source.ID
+	if refuseReadOnlySource(w, kind, source) {
 		return
 	}
 
@@ -286,8 +320,8 @@ func adapterOf(p string) string {
 // resolveBatch splits adapter prefixes off each path, ensures all
 // sources live in the same storage, and returns the resolved storage
 // id + bare relative paths.
-func (o *Ops) resolveBatch(ctx context.Context, sources []string) (int64, []string, error) {
-	var storageID int64
+func (o *Ops) resolveBatch(ctx context.Context, sources []string) (*model.Storage, []string, error) {
+	var found *model.Storage
 	out := make([]string, 0, len(sources))
 	for i, s := range sources {
 		adapter, rel := splitAdapterPath(s)
@@ -296,26 +330,26 @@ func (o *Ops) resolveBatch(ctx context.Context, sources []string) (int64, []stri
 			// the prefix still work.
 			storages, err := o.Store.ListEnabledStorages(ctx)
 			if err != nil || len(storages) == 0 {
-				return 0, nil, errNoStorages
+				return nil, nil, errNoStorages
 			}
 			adapter = storages[0].Name
 		}
 		st, err := o.Store.GetStorageByName(ctx, adapter)
 		if err != nil || st == nil {
-			return 0, nil, errUnknownAdapter(adapter)
+			return nil, nil, errUnknownAdapter(adapter)
 		}
 		if i == 0 {
-			storageID = st.ID
-		} else if st.ID != storageID {
-			return 0, nil, errMixedAdapters
+			found = st
+		} else if st.ID != found.ID {
+			return nil, nil, errMixedAdapters
 		}
 		rel = strings.Trim(path.Clean("/"+rel), "/")
 		if rel == "" || pathHasDotDot(rel) {
-			return 0, nil, errBadPath
+			return nil, nil, errBadPath
 		}
 		out = append(out, rel)
 	}
-	return storageID, out, nil
+	return found, out, nil
 }
 
 // SubmitCopy / SubmitMove / SubmitDelete are the per-verb endpoints.

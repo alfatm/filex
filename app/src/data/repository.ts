@@ -1,6 +1,7 @@
 import type {
   ActivityEvent,
   AssistantEvent,
+  AuthMethods,
   AssistantMode,
   Capabilities,
   ListingFilter,
@@ -11,6 +12,7 @@ import type {
   SearchResult,
   Storage,
   UploadInput,
+  UploadOptions,
   User,
   Version,
 } from './types';
@@ -20,6 +22,13 @@ export const DUPLICATE_NAME = 'duplicateName';
 
 /** `changePassword` rejects with this when the current password does not match. */
 export const WRONG_PASSWORD = 'wrongPassword';
+
+/**
+ * `move` and `moveToTrash` reject with this when the server took the work but has not finished it yet: the job is
+ * queued and running, so it is neither a success to report nor a failure to undo. Only the HTTP repository can
+ * raise it — the mock does its work in memory and is always done.
+ */
+export const OPERATION_PENDING = 'operationPending';
 
 /** filex refuses anything shorter, so the form says so before a request goes out. */
 export const MIN_PASSWORD_LENGTH = 8;
@@ -51,6 +60,15 @@ export interface Repository {
   /** Saves the account fields the settings modal owns and answers with the account as it now stands. */
   updateProfile(patch: ProfilePatch): Promise<User>;
   /** Rejects with `WRONG_PASSWORD` when `currentPassword` is not the account's. */
+  /**
+   * Where to point the browser to get `nodes` as one archive, or null when the server cannot zip. A URL builder
+   * rather than a request: the download has to be a navigation, so the browser owns the save dialog, the progress
+   * and the disk write instead of the page holding the whole archive in memory.
+   */
+  archiveUrl(nodes: Node[]): string | null;
+
+  /** How this account signs in, and what it may change here: the Security card asks before it offers anything. */
+  authMethods(): Promise<AuthMethods>;
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
   /** Feature snapshot for this user; read once at start-up. */
   capabilities(): Promise<Capabilities>;
@@ -74,7 +92,11 @@ export interface Repository {
 
   // Mutations. Ids are validated; unknown ids throw. Name collisions reject with `DUPLICATE_NAME`.
   createFolder(parentId: string, name: string): Promise<Node>;
-  uploadFile(parentId: string, file: UploadInput): Promise<Node>;
+  /**
+   * Uploads one file and resolves once the server holds every byte AND has written them to the storage.
+   * `onProgress` fires per accepted chunk, so a caller can draw a bar that means something.
+   */
+  uploadFile(parentId: string, file: UploadInput, options?: UploadOptions): Promise<Node>;
   rename(id: string, name: string): Promise<Node>;
   moveToTrash(ids: string[]): Promise<void>;
   restore(ids: string[]): Promise<void>;

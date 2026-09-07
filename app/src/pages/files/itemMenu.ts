@@ -2,6 +2,7 @@ import type { Composer } from 'vue-i18n';
 import {
   CheckSquare,
   Copy,
+  CopyPlus,
   Download,
   ExternalLink,
   Eye,
@@ -49,7 +50,7 @@ export function itemMenuEntries(t: Composer['t'], node: Node, can: Capabilities)
     { id: 'moveTo', label: t('menu.moveTo'), icon: FolderInput, ...gate(can.move) },
     { id: 'cut', label: t('menu.cut'), icon: Scissors, ...gate(can.move) },
     { id: 'copy', label: t('menu.copy'), icon: Copy, ...gate(can.copy) },
-    { id: 'copyTo', label: t('menu.copyTo'), icon: Copy, ...gate(can.copy) },
+    { id: 'copyTo', label: t('menu.copyTo'), icon: CopyPlus, ...gate(can.copy) },
     node.starred
       ? { id: 'removeFromStarred', label: t('menu.removeFromStarred'), icon: StarOff }
       : { id: 'addToStarred', label: t('menu.addToStarred'), icon: Star },

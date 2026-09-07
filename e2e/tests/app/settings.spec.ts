@@ -26,6 +26,42 @@ test.describe('User settings', () => {
     await expect(page.getByRole('dialog').getByRole('heading', { name: 'User settings' })).toBeVisible();
   });
 
+  test('Security names the sign-in method and changes the password on its own', async ({ page }) => {
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const dialog = page.getByRole('dialog');
+    // The realm comes from the server, and it is what decides whether a password form is offered at all.
+    await expect(dialog.getByText('Local account · two-factor off')).toBeVisible();
+
+    await dialog.getByRole('button', { name: 'Password Change your password' }).click();
+    const current = dialog.getByRole('textbox', { name: 'Current password' });
+    await expect(dialog.getByText('Your other sessions will be signed out.')).toBeVisible();
+
+    // Too short is caught before the server is bothered.
+    await current.fill('demo');
+    await dialog.getByRole('textbox', { name: 'New password', exact: true }).fill('short');
+    await dialog.getByRole('textbox', { name: 'Repeat new password' }).fill('short');
+    await dialog.getByRole('button', { name: 'Change password' }).click();
+    await expect(dialog.getByRole('alert')).toHaveText('Use at least 8 characters.');
+
+    // A typo in the repeat never leaves the browser either.
+    await dialog.getByRole('textbox', { name: 'New password', exact: true }).fill('longenough1');
+    await dialog.getByRole('textbox', { name: 'Repeat new password' }).fill('longenough2');
+    await dialog.getByRole('button', { name: 'Change password' }).click();
+    await expect(dialog.getByRole('alert')).toHaveText('The two new passwords do not match.');
+
+    // The wrong current password is the server's answer, and it lands on the form rather than in a toast.
+    await current.fill('not-it');
+    await dialog.getByRole('textbox', { name: 'Repeat new password' }).fill('longenough1');
+    await dialog.getByRole('button', { name: 'Change password' }).click();
+    await expect(dialog.getByRole('alert')).toHaveText('That is not your current password.');
+
+    // The change does not wait for "Save changes": it is not part of the draft that Cancel throws away.
+    await current.fill('demo');
+    await dialog.getByRole('button', { name: 'Change password' }).click();
+    await expect(page.getByText('Password changed')).toBeVisible();
+    await expect(dialog.getByRole('textbox', { name: 'Current password' })).toBeHidden();
+  });
+
   test('the theme applies on save and is discarded on cancel', async ({ page }) => {
     const html = page.locator('html');
     await expect(html).not.toHaveAttribute('data-theme', /.*/);

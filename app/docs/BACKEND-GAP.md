@@ -17,16 +17,17 @@ Decide each row before writing the HTTP repository (stage 7).
 | `listRecent` | `GET /manager/recent` fed by `POST /manager/recent` on open | ⚠️ | UI must call `recordOpen(id)` on open/preview |
 | `listStarred`, `setStarred` | `GET /manager/star/list`, `POST /manager/star` per node | ✅ | loop per id |
 | `listShared` | `GET /manager/shared-with-me` | ✅ | |
-| `listTrash` | `GET /manager/trash` flat, paged, per storage, `ttl_days` | ⚠️ | collapse subtree rows client-side or add `top_level_only`; banner shows `ttl_days` |
+| `listTrash` | `GET /manager/trash` paged, per storage, `ttl_days`, and `top_level_only=1` for one row per deletion | ✅ | **added to the backend**: the flat listing showed a deleted folder AND every file inside it, each offering a Restore only the folder's own restore performs. The app passes the flag; banner shows `ttl_days` |
 | `restore` | `POST /manager/restore {node_id}` | ✅ | loop per id |
 | `deleteForever`, `emptyTrash` | admin only (`/api/admin/trash/*`) | ❌ | either user endpoints, or hide behind capabilities |
 | `createFolder`, `rename` | `POST /manager action=newfolder|rename` path-based, 409 on conflict | ⚠️ | map 409 → `DUPLICATE_NAME` |
-| `moveToTrash`, `move` | two paths: synchronous `POST /manager?q=delete\|move`, or the ops queue (`POST /api/files/move` + `GET /ops/{id}`) | ⚠️ | the repository uses the synchronous pair. A large subtree wants the queue, which means polling ops and refreshing on completion |
-| `uploadFile` | `POST /manager?q=upload` (whole-body multipart), or the staged resumable path (`/upload/begin`, `/upload/{id}`, `/commit`) | ⚠️ | the repository uses the whole-body form: no progress, no resume, one request per file. Real progress means the staged path and a repository signature carrying `onProgress` / `signal`. Folder upload already rebuilds the tree client-side with `createFolder` before the transfers; over HTTP that is one round trip per new folder unless the server grows a bulk create |
+| `moveToTrash`, `move` | the ops queue (`POST /api/files/move\|delete` + `GET /ops/{id}`) | ✅ | **the repository now uses the queue**, as copy already did. The synchronous `?q=move\|delete` held one request open for the whole subtree, which is what a proxy cuts at sixty seconds and reports as a failure for work that was going to succeed; a submit answers in milliseconds and each poll is its own short request. The queued delete is the identical soft delete (`trash.Put` + retag), so nothing about the trash changes. A job still running when the app stops waiting raises `OPERATION_PENDING`: the listing refreshes, the toast says it is still running, and no Undo is armed for half a move |
+| `copy` | `POST /api/files/copy` + the ops queue; the handler refuses a copy whose source and target sit on different adapters | ⚠️ | cross-storage copy is out of scope for now (product decision): the destination picker keeps the other storages listed and greyed rather than pretending they are not there |
+| `uploadFile` | the staged resumable path (`/upload/begin`, `PUT /upload/{id}`, `/commit`) | ⚠️ | **the repository uses the staged path**: 1 MiB chunks, real progress per accepted chunk, and the commit's op awaited so a finished row means the storage has the file. Still open: resuming after a page reload needs the session ids persisted, and there is no cancel — `GET /upload/{id}` would answer the offset either way. Folder upload still rebuilds the tree with `createFolder`, one round trip per new folder |
 | `createShareLink`, `removeShareLink` | `POST /share` → share id + url; `DELETE /share/{id}`; many shares per node | ⚠️ | node carries share list; UI shows first link, "Manage" for the rest |
 | `listFolders` (Move picker) | none | ⚠️ | lazy tree via `listFolder` |
 | `listFolder`/`listRecent`/… with a `ListingFilter` | listings take no filter | ❌ | needs `mime_group`, `mtime`, `size` and `owner` params on the listing endpoints — the same four the search row asks for; without them the filter chips cannot stay server-side |
-| download of a folder or a selection | single-file `GET /read` only | ❌ | needs a zip endpoint; today the selection bar downloads files one by one and stays inert when a folder is selected |
+| download of a folder or a selection | `GET /api/files/download/zip?path=…&path=…`, streamed | ✅ | **added to the backend**: a zip built on the fly from any mix of files and folders. A GET, because the download has to be a navigation for the browser to own the save dialog and the disk write |
 | `listFilterPeople` (People chip options) | none | ❌ | needs "people I share with" (permission tables); today derived from the owners present in the mock |
 
 ## User settings modal
@@ -36,8 +37,8 @@ Decide each row before writing the HTTP repository (stage 7).
 | profile: full name, display name, job title | `PATCH /api/auth/profile` takes `display_name`, `email`, `username`, `locale`, `timezone`, `avatar_url` | ⚠️ | wireable as it stands — the earlier claim here that there was no self-update was wrong. "Job title" has no column: add one or drop the field |
 | account email + role badge | `/api/auth/me` carries them | ⚠️ | map onto the app's `User` (`email`, `role`) |
 | avatar upload / removal | `avatar_url` on the profile PATCH — a small `data:image/…` URI, `""` removes it | ⚠️ | wireable as it stands; downscale before encoding (the admin profile page uses 160px) because the avatar rides inside every presence frame |
-| password, 2FA | `POST /api/auth/password`, `/api/auth/totp/{enroll,verify,disable}` | ⚠️ | wireable as it stands |
-| active sessions | none | ❌ | there is no session-listing endpoint; the row stays inert until one exists |
+| password, 2FA | `POST /api/auth/password`; TOTP under `/api/auth/totp/*` | ✅ | **the password change is wired**, gated on the realm's `change_password`. 2FA is deliberately NOT rebuilt here: the second factor belongs to the auth provider, and the app only reports its state |
+| active sessions | none | ❌ | there is no session-listing endpoint; the row stays inert until one exists. Note the password change revokes every OTHER session, which the form says out loud |
 | notification switches | `GET/POST /api/notifications/settings` | ⚠️ | map the three app-level switches onto the server's setting names |
 | theme, language, compact list, time zone, upload prefs | none | ✅ | client-only on purpose (localStorage `filex.app.settings`); revisit only if prefs must follow the user across devices |
 | assistant enable + default mode | none | ❌ | belongs with the assistant endpoint row above; the provider and key stay admin-side |
@@ -70,6 +71,11 @@ is accepted behaviour, not a gap.
 |---|---|
 | `GET /api/files/storages` → `{storages:[{name, read_only}]}` | the drive list was only reachable as a side effect of listing a folder, so a client could not draw its drive switcher before picking a drive. Same RBAC filter as `?q=index`; a root-confined caller sees only its own drive |
 | `/api/files/search` results carry `storage` (the name) | a hit held a path with no way to address it — the identical dead-row bug the starred and recently-opened listings were already fixed for |
+| `GET /api/files/download/zip` | the single-file `/read` was all there was, so the selection bar downloaded a selection one file at a time and went inert the moment a folder was in it. Streams `archive/zip` straight to the response; roots are stat'ed and authorised before the first byte, because after that the status is 200 whatever happens |
+| `GET /api/auth/methods` | an ordinary user could not find out how they sign in: `/api/auth/me` carries a numeric `provider_id` and nothing else, and `/api/admin/auth-providers` is supertenant-only because it holds issuers and bind credentials. This one is scoped to the caller and carries a name and two flags — realm, whether it allows a password change, and their own TOTP state |
+| read-only is checked on the ops queue's SOURCE | the flag meant two different things depending on which door the request came through: `?q=move\|delete` refused a read-only storage from the start, the queue never asked. So the same delete answered 403 in one place and 202 in the other — and the 202 was the one that emptied the depo into its trash. Copy is deliberately still allowed: it only reads its source |
+| a move INTO A STORAGE ROOT no longer soft-deletes the node | `applyDBMove` stripped the leading slash before taking `path.Dir`, so a destination at the root came out as `"."` — a directory in no index — and the miss fell into the branch that flags the row deleted. The bytes arrived; the folder left every listing and appeared in the trash as a row whose bytes were never in `.filex-trash`, so Restore could not undo it either. Both callers shared the helper, so the synchronous move was breaking the same way |
+| `GET /api/files/manager/trash?top_level_only=1` | the trash listing is flat by construction: a deleted folder drags its cached descendants in as rows of their own, so the user saw the folder and every file inside it, each offering a Restore only the folder's own restore performs. Collapsing them client-side would mean guessing parentage from path prefixes; the server knows it. Opt-in, so the admin trash screen and the purge scan still see every row |
 
 ### Still applied client-side
 
@@ -99,14 +105,14 @@ is accepted behaviour, not a gap.
 app maps those field for field: `upload`, `move`, `copy`, `delete`, `mkdir`,
 `search`, `versions`, `ocr`. Six more are the app's own axes and filex does not
 report them, so `HttpRepository.capabilities` decides them from whether an
-endpoint exists at all: `tags` and `permissions` on, `assistant`, `activity`,
-`deleteForever` (admin-only there) and `folderDownload` off. Reporting them
+endpoint exists at all: `tags`, `permissions` and `folderDownload` on,
+`assistant`, `activity` and `deleteForever` (admin-only there) off. Reporting them
 from the server would remove the last hard-coded feature assumptions in the
 client.
 
 | Repository method | filex today | Status | Decision needed |
 |---|---|---|---|
-| `capabilities` | `GET /api/files/capabilities` | ✅ | report the six app-level axes so they stop being hard-coded |
+| `capabilities` | `GET /api/files/capabilities` | ✅ | report the six app-level axes so they stop being hard-coded. `folderDownload` is now decided by the HTTP repository from the fact that the zip endpoint exists |
 | `setTags` | `POST /api/files/manager/tags {node_id, tags}` replaces the list; `GET …/tags?node_id` reads it | ✅ | the server lower-cases and drops tags over 64 chars, so the UI should show what came back rather than what was typed |
 
 ## Model gaps

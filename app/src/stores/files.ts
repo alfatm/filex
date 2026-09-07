@@ -3,7 +3,8 @@ import { computed, ref, watch } from 'vue';
 import { useSelection } from '@/composables/useSelection';
 import { emptyFilter, isFiltered } from '@/features/files/filters';
 import { repository } from '@/data';
-import type { ListingFilter, Node, Person, Storage, UploadInput, User } from '@/data/types';
+import { OPERATION_PENDING } from '@/data/repository';
+import type { ListingFilter, Node, Person, Storage, UploadInput, UploadOptions, User } from '@/data/types';
 import { i18n } from '@/i18n';
 import { subjectMessage } from '@/i18n/subject';
 import { useToastStore } from './toast';
@@ -215,10 +216,31 @@ export const useFilesStore = defineStore('files', () => {
   async function mutate<T>(action: () => Promise<T>): Promise<T> {
     // The record always describes the LAST action: anything that can be taken back re-arms it once it succeeds.
     undo.clear();
-    const result = await action();
-    revision.value++;
-    await refresh();
-    return result;
+    try {
+      return await action();
+    } finally {
+      // Also after a throw. A batch that failed halfway still changed the folder, and a queued job that outlived
+      // the wait is changing it right now — leaving the old listing on screen would be the one wrong answer.
+      revision.value++;
+      await refresh();
+    }
+  }
+
+  /**
+   * Runs one of the queued verbs (move, trash, copy) and reports what became of it. The server can take the work
+   * and still be busy with it when the repository stops waiting; that is not a failure, so it gets a plain message
+   * instead of one — and `landed` is skipped, because neither the "moved" toast nor an Undo may be offered for a
+   * job whose second half has not happened yet.
+   */
+  async function queued(action: () => Promise<void>, landed: () => void): Promise<void> {
+    try {
+      await action();
+    } catch (e) {
+      if (!(e instanceof Error) || e.message !== OPERATION_PENDING) throw e;
+      toast.push(t('toast.stillRunning'));
+      return;
+    }
+    landed();
   }
 
   /** Where "New" and uploads land: the open folder, else the storage root. */
@@ -234,8 +256,8 @@ export const useFilesStore = defineStore('files', () => {
     return node;
   }
 
-  async function addUploaded(parentId: string, file: UploadInput) {
-    return mutate(() => repository.uploadFile(parentId, file));
+  async function addUploaded(parentId: string, file: UploadInput, options?: UploadOptions) {
+    return mutate(() => repository.uploadFile(parentId, file, options));
   }
 
   async function rename(id: string, name: string) {
@@ -254,10 +276,11 @@ export const useFilesStore = defineStore('files', () => {
 
   /** Moves to trash and offers Undo in a toast (spec §7). */
   async function trash(nodes: Node[]) {
-    await mutate(() => repository.moveToTrash(nodes.map((n) => n.id)));
-    undo.record({ undo: () => restore(nodes), redo: () => trash(nodes) });
-    // The toast button and Ctrl+Z are the same step, so pressing both only restores once.
-    toast.push(subjectMessage(t, 'toast.movedToTrash', nodes), { label: t('toast.undo'), run: () => void undo.undo() });
+    await queued(() => mutate(() => repository.moveToTrash(nodes.map((n) => n.id))), () => {
+      undo.record({ undo: () => restore(nodes), redo: () => trash(nodes) });
+      // The toast button and Ctrl+Z are the same step, so pressing both only restores once.
+      toast.push(subjectMessage(t, 'toast.movedToTrash', nodes), { label: t('toast.undo'), run: () => void undo.undo() });
+    });
   }
 
   // Permanent deletion invalidates any pending Undo: restoring a node that is gone would throw.
@@ -285,16 +308,17 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   async function move(nodes: Node[], target: Node) {
-    await mutate(() => repository.move(nodes.map((n) => n.id), target.id));
-    toast.push(subjectMessage(t, 'toast.moved', nodes, { folder: target.name }));
-    // Where each node came from, by name: undo re-resolves the ids in the target, because a moved node's path —
-    // and with it its id — has changed.
-    const origins = new Map<string, string[]>();
-    for (const node of nodes) {
-      if (node.parentId) origins.set(node.parentId, [...(origins.get(node.parentId) ?? []), node.name]);
-    }
-    // After the undo the nodes are back under their own ids, so the redo is simply the same move again.
-    if (origins.size) undo.record({ undo: () => moveBack(target.id, origins), redo: () => move(nodes, target) });
+    await queued(() => mutate(() => repository.move(nodes.map((n) => n.id), target.id)), () => {
+      toast.push(subjectMessage(t, 'toast.moved', nodes, { folder: target.name }));
+      // Where each node came from, by name: undo re-resolves the ids in the target, because a moved node's path —
+      // and with it its id — has changed.
+      const origins = new Map<string, string[]>();
+      for (const node of nodes) {
+        if (node.parentId) origins.set(node.parentId, [...(origins.get(node.parentId) ?? []), node.name]);
+      }
+      // After the undo the nodes are back under their own ids, so the redo is simply the same move again.
+      if (origins.size) undo.record({ undo: () => moveBack(target.id, origins), redo: () => move(nodes, target) });
+    });
   }
 
   async function moveBack(fromFolderId: string, origins: Map<string, string[]>) {
@@ -313,10 +337,11 @@ export const useFilesStore = defineStore('files', () => {
    */
   async function copyInto(nodes: Node[], target: Node) {
     const before = new Set(items.value.map((n) => n.id));
-    await mutate(() => repository.copy(nodes.map((n) => n.id), target.id));
-    toast.push(subjectMessage(t, 'toast.copied', nodes, { folder: target.name }));
-    const created = items.value.filter((n) => !before.has(n.id));
-    if (created.length) undo.record({ undo: () => trash(created), redo: () => restore(created) });
+    await queued(() => mutate(() => repository.copy(nodes.map((n) => n.id), target.id)), () => {
+      toast.push(subjectMessage(t, 'toast.copied', nodes, { folder: target.name }));
+      const created = items.value.filter((n) => !before.has(n.id));
+      if (created.length) undo.record({ undo: () => trash(created), redo: () => restore(created) });
+    });
   }
 
   async function createShareLink(id: string) {

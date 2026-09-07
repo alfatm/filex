@@ -222,7 +222,11 @@ func (h *Trash) List(w http.ResponseWriter, r *http.Request) {
 			offset = n
 		}
 	}
-	entries, total, err := h.Service.List(r.Context(), storagePtr, limit, offset)
+	// `top_level_only=1`: one row per thing the user deleted, without the files
+	// that came along inside a deleted folder. Opt-in — the admin trash screen
+	// and the purge tooling still want every row.
+	topLevelOnly := q.Get("top_level_only") == "1" || q.Get("top_level_only") == "true"
+	entries, total, err := h.Service.List(r.Context(), storagePtr, topLevelOnly, limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

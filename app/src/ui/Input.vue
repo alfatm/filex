@@ -7,7 +7,7 @@ withDefaults(
     icon?: Component;
     height?: number;
     width?: number;
-    type?: 'text' | 'search' | 'number';
+    type?: 'text' | 'search' | 'number' | 'password';
     label?: string;
   }>(),
   { placeholder: '', icon: undefined, height: 40, width: undefined, type: 'text', label: undefined },

@@ -242,9 +242,11 @@ the trash); a name already taken becomes `name-copy`. Full behaviour:
 [Moving files between storages](STORAGE.md#moving-files-between-storages).
 
 **Refusals** are at submit time, not in the worker: `400` unknown target adapter
-· `403` read-only target storage (with a `hint`) · `403` no editor permission on
-the source, or on the target folder **in the destination's storage** · `400`
-mixed-adapter *sources* (one batch, one source storage).
+· `403` read-only target storage (with a `hint`) · `403` read-only SOURCE storage
+for move and delete, which take bytes away from it (copy only reads, so it is
+allowed) · `403` no editor permission on the source, or on the target folder
+**in the destination's storage** · `400` mixed-adapter *sources* (one batch, one
+source storage).
 
 ⚠ Before v0.27.0 the destination's `<adapter>://` prefix was dropped and the
 remaining relative path applied to the SOURCE storage, so a cross-storage paste
@@ -269,10 +271,22 @@ The unified form behind the three per-verb endpoints:
 ```
 
 ### `POST /api/files/delete` ![user](https://img.shields.io/badge/-user-blue)
+Same shape and same queued answer as move and copy — one verb, one queue.
 ```json
-{ "paths": ["/storage1/a.txt", "/storage1/sub/"] }
+{ "source": ["alpha://a.txt", "alpha://klasor"] }
 ```
-Returns `200 + { deleted: ["..."], failed: [{ path: "...", error: "..." }] }`.
+**Response 202** `{ "op": { "id": 14, "kind": "delete", … } }`; poll
+`GET /api/files/ops/{id}`.
+
+**This is the move to trash, not a purge.** The worker runs the same `trash.Put`
+the synchronous `?q=delete` runs: the bytes are renamed into `.filex-trash/` and
+the row keeps its id, so `POST /api/files/manager/restore` can put it back.
+A driver that can neither move nor copy has nothing to preserve with, and only
+there is the delete a real one. Purging is the admin's `/api/admin/trash/*`.
+
+**Refusals** are the same submit-time ones as move, minus the destination:
+`403` read-only source storage · `403` no editor permission on a source ·
+`400` mixed-adapter sources · `400` a source that names a storage root.
 
 ### `GET /api/files/manager/shared-with-me` ![user](https://img.shields.io/badge/-user-blue)
 
@@ -411,6 +425,31 @@ Cancels the upload and discards staged chunks.
 
 Server-side zip handling. Limited to `FILEX_LIMITS_MAX_ARCHIVE_BYTES`
 (default 1 GiB).
+
+### `GET /api/files/download/zip` ![user](https://img.shields.io/badge/-user-blue)
+
+Streams any mix of files and folders as one archive — what a browser's
+"Download" does with a folder or a multi-selection.
+
+```
+GET /api/files/download/zip?path=main://Design&path=main://notes.md&name=stuff.zip
+```
+
+| Param | Meaning |
+|---|---|
+| `path` | repeated, once per selected file or folder; folders are walked recursively |
+| `name` | optional archive filename; defaults to `<basename>.zip` for a single path, `files.zip` for several |
+
+A GET with the paths in the query string, not a POST with a body, because the
+download has to be a navigation for the browser to own its save dialog, its
+progress and its disk write. At most 500 paths.
+
+Each root is resolved, confinement-checked, authorised (≥viewer) and stat'ed
+**before** the first byte, since the status line is 200 from the moment a zip
+header is written. Members inside a subtree the caller may not see are skipped,
+the way a folder listing skips them. A read error deep inside a folder can only
+end the stream, leaving a short file — there is no way to change the status by
+then.
 
 ### `POST /api/files/archive/list` ![user](https://img.shields.io/badge/-user-blue)
 **Request**

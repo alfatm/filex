@@ -2658,7 +2658,7 @@ func (s *Store) RestoreNode(ctx context.Context, id int64) error {
 }
 
 // ListTrashed returns paginated soft-deleted rows (storage filter optional).
-func (s *Store) ListTrashed(ctx context.Context, storageID *int64, limit, offset int) ([]*model.Node, int, error) {
+func (s *Store) ListTrashed(ctx context.Context, storageID *int64, topLevelOnly bool, limit, offset int) ([]*model.Node, int, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
@@ -2670,6 +2670,14 @@ func (s *Store) ListTrashed(ctx context.Context, storageID *int64, limit, offset
 	if storageID != nil {
 		where += ` AND storage_id = $1`
 		args = append(args, *storageID)
+	}
+	// A node dragged into the trash with its folder is not a trash entry of
+	// its own: it comes back when the folder does. "Top level" is therefore
+	// "my parent is not trashed too" rather than "I have no parent" — a node
+	// the sync poller soft-deleted because it vanished from the storage keeps
+	// its live parent, and still belongs in the listing.
+	if topLevelOnly {
+		where += ` AND NOT EXISTS (SELECT 1 FROM nodes p WHERE p.id = nodes.parent_id AND p.deleted_at IS NOT NULL)`
 	}
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes `+where, args...).Scan(&total); err != nil {

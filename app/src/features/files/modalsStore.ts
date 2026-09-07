@@ -9,7 +9,8 @@ export type ActiveModal =
   | { kind: 'newFolder' }
   | { kind: 'rename'; node: Node }
   | { kind: 'share'; node: Node }
-  | { kind: 'move'; nodes: Node[] }
+  /** The destination picker; the kind is also the verb it runs (spec §7). */
+  | { kind: 'move' | 'copy'; nodes: Node[] }
   | { kind: 'tags'; node: Node }
   | { kind: 'versions'; node: Node }
   | { kind: 'access'; node: Node }

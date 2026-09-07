@@ -1,7 +1,7 @@
-import { DUPLICATE_NAME, WRONG_PASSWORD, type Repository } from '../repository';
+import { DUPLICATE_NAME, OPERATION_PENDING, WRONG_PASSWORD, type Repository } from '../repository';
 import { matchesFilter } from '../listingFilter';
-import { noCapabilities, type ActivityEvent, type AssistantEvent, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type Quota, type SearchHit, type SearchQuery, type SearchResult, type Storage, type UploadInput, type User, type Version } from '../types';
-import { HttpError, request, upload } from './client';
+import { noCapabilities, type ActivityEvent, type AssistantEvent, type AuthMethods, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type Quota, type SearchHit, type SearchQuery, type SearchResult, type Storage, type UploadInput, type UploadOptions, type User, type Version } from '../types';
+import { HttpError, putChunk, request } from './client';
 import {
   fromFileNode,
   fromModelNode,
@@ -19,7 +19,11 @@ import {
   type WireOp,
   type WireQuota,
   type WireStorage,
+  type WireAuthMethods,
   type WireTrashEntry,
+  type WireUploadBegin,
+  type WireUploadCommit,
+  type WireUploadPut,
 } from './map';
 
 /**
@@ -37,15 +41,36 @@ import {
 const MANAGER = '/api/files/manager';
 
 /**
- * Copy is the one verb the manager has no synchronous form of: it runs through filex's ops queue, so the call
- * submits a job and then polls until the row is finished. `POLL_STEP_MS` doubles up to `POLL_MAX_MS` — a copy of a
- * single file is done on the first check, and a large subtree stops being asked about ten times a second.
+ * Copy, move and the move to trash all run through filex's ops queue: the call submits a job and then polls the row
+ * until it is finished. The manager also has synchronous forms of move and delete, and this used to use them — but a
+ * subtree big enough to take minutes held one request open for all of it, which is what proxies cut at sixty seconds
+ * and report as a failure for work that was in fact going to succeed. A submit answers in milliseconds and every
+ * poll after it is its own short request, so nothing in between has a reason to time out.
+ *
+ * `POLL_STEP_MS` doubles up to `POLL_MAX_MS` — a single file is done on the first check, and a large subtree stops
+ * being asked about ten times a second.
  */
 const OPS = '/api/files/ops';
 const POLL_STEP_MS = 150;
 const POLL_MAX_MS = 2000;
-/** A job still running after this long is left to finish server-side; the listing refresh will show it landing. */
+/**
+ * How long to keep waiting before handing the job back to the server. The worker is restart-safe and carries on
+ * either way, so this is not a cancellation — it is the point at which the app stops pretending the user is still
+ * waiting for an answer.
+ */
 const POLL_GIVE_UP_MS = 60_000;
+
+/**
+ * Staged uploads (docs/UPLOADS.md): `begin` opens a session, each `PUT` carries one chunk and answers with the
+ * offset the server now holds, `commit` turns the staging area into a node. The chunk size the server hands back
+ * is binding; this is only what to ask for, and what to fall back on if it says nothing.
+ *
+ * 1 MiB rather than the server's 8 MiB default, because the chunk is also the resolution of the progress bar and
+ * the unit a failure costs: at 8 MiB most documents would be one chunk, and their bar would only ever read 0 or
+ * 100. The extra round trips are cheap next to the bytes they carry.
+ */
+const UPLOAD = '/api/files/upload';
+const CHUNK_BYTES = 1024 * 1024;
 
 /** How many rows the metadata listings return; filex caps starred at 500 and recent at 200. */
 const STARRED_LIMIT = 500;
@@ -248,6 +273,19 @@ export class HttpRepository implements Repository {
   }
 
   /** filex checks the old password itself and answers 401 when it is wrong; every other status is a real failure. */
+  archiveUrl(nodes: Node[]): string | null {
+    if (!nodes.length) return null;
+    const query = new URLSearchParams(nodes.map((node) => ['path', node.id]));
+    // One thing selected is named after it; a mixed selection has no name of its own and the server picks one.
+    if (nodes.length === 1) query.set('name', `${nodes[0].name}.zip`);
+    return `/api/files/download/zip?${query.toString()}`;
+  }
+
+  async authMethods(): Promise<AuthMethods> {
+    const wire = await request<WireAuthMethods>('/api/auth/methods');
+    return { provider: wire.provider, changePassword: wire.change_password, totpEnabled: wire.totp_enabled };
+  }
+
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
     try {
       await request('/api/auth/password', { method: 'POST', body: { old_password: currentPassword, new_password: newPassword } });
@@ -276,6 +314,9 @@ export class HttpRepository implements Repository {
       ocr: wire.ocr ?? false,
       tags: true,
       permissions: true,
+      // Not reported by /capabilities — filex answers for the storage DRIVERS, and zipping a subtree is filex's
+      // own work, not the driver's. The endpoint exists (`GET /api/files/download/zip`), so the answer is yes.
+      folderDownload: true,
     };
   }
 
@@ -369,7 +410,11 @@ export class HttpRepository implements Repository {
   }
 
   async listTrash(filter?: ListingFilter): Promise<Node[]> {
-    const { entries } = await request<{ entries: WireTrashEntry[] }>(`${MANAGER}/trash`, { query: { limit: TRASH_LIMIT } });
+    // `top_level_only`: one row per thing the user deleted. Without it a deleted folder arrives together with every
+    // file it contained, each offering a Restore that only the folder's own restore actually performs.
+    const { entries } = await request<{ entries: WireTrashEntry[] }>(`${MANAGER}/trash`, {
+      query: { limit: TRASH_LIMIT, top_level_only: 1 },
+    });
     const trashed = entries.map((entry) => {
       const node = fromTrashEntry(entry);
       this.remember(node.id, entry.id);
@@ -385,12 +430,34 @@ export class HttpRepository implements Repository {
     return this.getNode(childPath(parentId, name));
   }
 
-  async uploadFile(parentId: string, file: UploadInput): Promise<Node> {
-    if (!file.blob) throw new Error('upload without bytes');
-    const form = new FormData();
-    form.set('path', parentId);
-    form.append('file[]', file.blob, file.name);
-    await upload(MANAGER, { q: 'upload' }, form).catch(asRepositoryError);
+  /**
+   * The staged path, not the one-shot multipart POST. Three things come with it: the server accepts the file a
+   * chunk at a time, so progress is a fact rather than a timer; a chunk that fails is the only thing retried; and
+   * `commit` answers before the bytes reach the storage driver, so the transfer is a queued op like copy is —
+   * waiting for it is what makes a finished row in the tray mean the file is really there.
+   */
+  async uploadFile(parentId: string, file: UploadInput, options?: UploadOptions): Promise<Node> {
+    const blob = file.blob;
+    if (!blob) throw new Error('upload without bytes');
+    const session = await request<WireUploadBegin>(`${UPLOAD}/begin`, {
+      method: 'POST',
+      body: { path: parentId, name: file.name, size: blob.size, mime: blob.type || undefined, chunk_size: CHUNK_BYTES },
+    }).catch(asRepositoryError);
+
+    const chunk = session.chunk_size ?? session.chunkSize ?? CHUNK_BYTES;
+    // `begin` answers with the offset it already holds, which is 0 for a fresh session and more for a resumed one.
+    let sent = session.offset ?? 0;
+    options?.onProgress?.(sent, blob.size);
+    while (sent < blob.size) {
+      const end = Math.min(sent + chunk, blob.size);
+      // The server's offset wins over the arithmetic: a short chunk is refused and leaves the offset where it was.
+      const accepted = await putChunk<WireUploadPut>(`${UPLOAD}/${session.id}`, `bytes ${sent}-${end - 1}/${blob.size}`, blob.slice(sent, end));
+      sent = accepted.offset ?? end;
+      options?.onProgress?.(sent, blob.size);
+    }
+
+    const commit = await request<WireUploadCommit>(`${UPLOAD}/${session.id}/commit`, { method: 'POST' }).catch(asRepositoryError);
+    await this.awaitOpId(commit.op_id ?? commit.opId);
     return this.getNode(childPath(parentId, file.name));
   }
 
@@ -402,14 +469,14 @@ export class HttpRepository implements Repository {
     return this.getNode(childPath(parent, name));
   }
 
-  /** filex's delete IS the move to trash: the bytes are renamed into `.filex-trash/` and the row keeps its id. */
+  /**
+   * filex's delete IS the move to trash: the bytes are renamed into `.filex-trash/` and the row keeps its id, which
+   * is what makes Restore possible. The queued worker performs the identical soft delete as the synchronous handler
+   * — the same `trash.Put`, the same retag — so nothing about what lands in the trash changes with the route here.
+   */
   async moveToTrash(ids: string[]): Promise<void> {
     if (!ids.length) return;
-    await request(MANAGER, {
-      method: 'POST',
-      query: { q: 'delete' },
-      body: { path: parentPath(ids[0]) ?? ids[0], items: ids.map((path) => ({ path })) },
-    });
+    await this.submitOp('delete', { source: ids });
     for (const id of ids) {
       const numeric = this.ids.get(id);
       if (numeric !== undefined) this.trashed.set(id, numeric);
@@ -449,11 +516,8 @@ export class HttpRepository implements Repository {
 
   async move(ids: string[], targetFolderId: string): Promise<void> {
     if (!ids.length) return;
-    await request(MANAGER, {
-      method: 'POST',
-      query: { q: 'move' },
-      body: { path: targetFolderId, items: ids.map((path) => ({ path })) },
-    }).catch(asRepositoryError);
+    await this.submitOp('move', { source: ids, target: targetFolderId });
+    // Every moved node now answers to a different address, so the numbers remembered against the old ones are stale.
     for (const id of ids) this.ids.delete(id);
   }
 
@@ -463,23 +527,35 @@ export class HttpRepository implements Repository {
    */
   async copy(ids: string[], targetFolderId: string): Promise<void> {
     if (!ids.length) return;
-    const { op } = await request<{ op: WireOp }>('/api/files/copy', {
-      method: 'POST',
-      body: { source: ids, target: targetFolderId },
-    }).catch(asRepositoryError);
+    await this.submitOp('copy', { source: ids, target: targetFolderId });
+  }
+
+  /** Queues one job on `POST /api/files/{verb}` and waits for it. The submit's own 4xx is still a 4xx. */
+  private async submitOp(verb: 'copy' | 'move' | 'delete', body: Record<string, unknown>): Promise<void> {
+    const { op } = await request<{ op: WireOp }>(`/api/files/${verb}`, { method: 'POST', body }).catch(asRepositoryError);
     await this.awaitOp(op);
   }
 
-  /** Polls one queued op to its end. A failed job throws so the store's error path owns it, as a 4xx would. */
+  /**
+   * Polls one queued op to its end. A failed job throws so the store's error path owns it, as a 4xx would; a job
+   * still running when the wait runs out raises OPERATION_PENDING, which says something different — nothing went
+   * wrong, the answer is simply not in yet, and the caller must neither claim success nor offer to undo half a move.
+   */
   private async awaitOp(op: WireOp): Promise<void> {
     const deadline = Date.now() + POLL_GIVE_UP_MS;
     let current = op;
     for (let wait = POLL_STEP_MS; current.status === 'pending' || current.status === 'running'; wait = Math.min(wait * 2, POLL_MAX_MS)) {
-      if (Date.now() > deadline) return;
+      if (Date.now() > deadline) throw new Error(OPERATION_PENDING);
       await new Promise((resolve) => setTimeout(resolve, wait));
       current = await request<WireOp>(`${OPS}/${op.id}`);
     }
     if (current.status !== 'ok') throw new Error(current.error || `${current.kind} ${current.status}`);
+  }
+
+  /** The same wait, for a verb that answers with an op id instead of the op: the first poll fetches the row. */
+  private async awaitOpId(id: number | undefined): Promise<void> {
+    if (id === undefined) return;
+    await this.awaitOp({ id, kind: 'upload-commit', status: 'pending' });
   }
 
   async createShareLink(id: string): Promise<string> {

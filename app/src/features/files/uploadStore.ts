@@ -7,20 +7,19 @@ export interface UploadItem {
   id: number;
   name: string;
   size: number;
-  /** 0..100 */
+  /** 0..100, from the byte count the server has accepted — not from a clock. */
   progress: number;
   done: boolean;
+  /** Set when the transfer failed; the row stays in the tray saying so instead of hanging at its last percent. */
+  failed?: boolean;
 }
-
-/** Fake transfer: every file completes in ~1.5 s, then it is added to the target folder in the repository. */
-export const UPLOAD_MS = 1500;
-const TICK_MS = 100;
 
 export const useUploadStore = defineStore('uploads', () => {
   const files = useFilesStore();
   const items = ref<UploadItem[]>([]);
   const open = computed(() => items.value.length > 0);
   const doneCount = computed(() => items.value.filter((i) => i.done).length);
+  const failedCount = computed(() => items.value.filter((i) => i.failed).length);
   let seq = 0;
 
   /**
@@ -36,7 +35,7 @@ export const useUploadStore = defineStore('uploads', () => {
       const parts = file.webkitRelativePath ? file.webkitRelativePath.split('/').slice(0, -1) : [];
       const parentId = await folderFor(root, parts, chain);
       createdFolder ||= parts.length > 0;
-      transfer(file, parentId);
+      void transfer(file, parentId);
     }
     // The tree is there long before the first file finishes; show it right away.
     if (createdFolder) await files.refresh();
@@ -62,25 +61,38 @@ export const useUploadStore = defineStore('uploads', () => {
     return parentId;
   }
 
-  /** The fake transfer: a row that fills up, then the node itself. */
-  function transfer(file: File, parentId: string) {
+  /**
+   * One transfer, one row. The bar follows what the repository reports — bytes the server has accepted — and the
+   * row is only ticked done once the upload resolves, which for a real server means the storage has the file, not
+   * merely that filex staged it.
+   */
+  async function transfer(file: File, parentId: string) {
     const item: UploadItem = { id: ++seq, name: file.name, size: file.size, progress: 0, done: false };
     items.value.push(item);
-    const timer = setInterval(() => {
-      const current = items.value.find((i) => i.id === item.id);
-      if (!current) return clearInterval(timer);
-      current.progress = Math.min(100, current.progress + (100 * TICK_MS) / UPLOAD_MS);
-      if (current.progress < 100) return;
-      clearInterval(timer);
-      current.done = true;
-      void files.addUploaded(parentId, { name: file.name, size: file.size, blob: file });
-    }, TICK_MS);
+    const live = () => items.value.find((i) => i.id === item.id);
+    try {
+      await files.addUploaded(parentId, { name: file.name, size: file.size, blob: file }, {
+        onProgress: (sent, total) => {
+          const row = live();
+          if (row) row.progress = total ? Math.min(100, (100 * sent) / total) : 100;
+        },
+      });
+      const row = live();
+      if (row) {
+        row.progress = 100;
+        row.done = true;
+      }
+    } catch {
+      // The store's own error banner is for the listing; a failed transfer belongs to its row in the tray.
+      const row = live();
+      if (row) row.failed = true;
+    }
   }
 
-  /** Closing the tray drops the finished rows only: an in-flight upload keeps running and stays visible. */
+  /** Closing the tray drops the rows that are over — finished or failed; an in-flight upload keeps running. */
   function clear() {
-    items.value = items.value.filter((i) => !i.done);
+    items.value = items.value.filter((i) => !i.done && !i.failed);
   }
 
-  return { items, open, doneCount, start, clear };
+  return { items, open, doneCount, failedCount, start, clear };
 });

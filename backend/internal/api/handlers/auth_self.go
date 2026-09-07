@@ -4,6 +4,7 @@
 // authenticated session and act on the principal in the request context.
 //
 //	GET    /api/auth/me              — current user
+//	GET    /api/auth/methods         — how this user signs in, and what they may change
 //	PATCH  /api/auth/profile         — update email/username/locale/timezone
 //	POST   /api/auth/password        — change password (requires old)
 //	POST   /api/auth/totp/enroll     — start TOTP enrollment
@@ -28,6 +29,7 @@ import (
 	authlocal "github.com/brf-tech/filex/backend/internal/auth/drivers/local"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/identity"
+	"github.com/brf-tech/filex/backend/internal/model"
 )
 
 // AuthSelf wraps the self-service profile/password/TOTP routes.
@@ -50,6 +52,64 @@ func (h *AuthSelf) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user": u})
+}
+
+// authMethods is what a signed-in user may know about their own sign-in: the
+// realm they belong to, whether that realm lets them change a password here,
+// and whether their filex second factor is on. Deliberately not the admin
+// answer — /api/admin/auth-providers carries issuers, client ids and bind
+// credentials and is supertenant-only. Nothing here is configuration.
+type authMethods struct {
+	// Provider is the realm's auth type ("local", "oidc", …), which is also
+	// the driver name, so the UI can name the sign-in method.
+	Provider string `json:"provider"`
+	// ChangePassword is the driver's own capability. False for OIDC: the
+	// password lives at the identity provider, and a form here would be a lie.
+	ChangePassword bool `json:"change_password"`
+	// TOTPEnabled is filex's own second factor. It only means anything on a
+	// local realm; an OIDC user's second step belongs to their provider.
+	TOTPEnabled bool `json:"totp_enabled"`
+}
+
+// Methods answers `GET /api/auth/methods` for the caller.
+func (h *AuthSelf) Methods(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFrom(r.Context())
+	if u == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
+		return
+	}
+	out := authMethods{Provider: h.realmOf(r, u), TOTPEnabled: u.TOTPEnabled}
+	if driver, err := auth.Get(out.Provider); err == nil {
+		out.ChangePassword = driver.Capabilities().ChangePassword
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// realmOf names the auth type this user signs in with.
+//
+// The password hash comes FIRST, ahead of the tenant row, because the tenant
+// row lies on the common install: `providers.auth_type` defaults to 'oidc'
+// (migration 00014) and the seeded `default` tenant is inserted without one,
+// so every single-tenant server claims OIDC while its admin signs in with a
+// password. The hash is the honest answer to the question the caller is really
+// asking — whether POST /api/auth/password can work for this account — since
+// that endpoint does nothing but compare against this hash.
+//
+// Without a hash the tenant's auth_type is the best evidence there is, and an
+// install predating the provider backfill has neither.
+func (h *AuthSelf) realmOf(r *http.Request, u *model.User) string {
+	if u.PasswordHash != "" {
+		return model.AuthTypeLocal
+	}
+	if u.ProviderID != nil && h.Store != nil {
+		if p, err := h.Store.GetProvider(r.Context(), *u.ProviderID); err == nil && p.AuthType != "" {
+			return p.AuthType
+		}
+	}
+	if enabled := auth.Enabled(); len(enabled) > 0 {
+		return enabled[0].Name()
+	}
+	return ""
 }
 
 type profileReq struct {

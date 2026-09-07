@@ -645,6 +645,9 @@ func BuildRouter(d *Deps) http.Handler {
 		// re-mounting an already-mounted path (the public /api/auth Route
 		// above owns it). We declare each leaf path inline instead.
 		r.Get("/api/auth/me", authSelf.Me)
+		// What the caller may change about their own sign-in; the admin
+		// auth-provider surface stays supertenant-only.
+		r.Get("/api/auth/methods", authSelf.Methods)
 		r.Patch("/api/auth/profile", authSelf.UpdateProfile)
 		r.Post("/api/auth/password", authSelf.ChangePassword)
 		r.Post("/api/auth/totp/enroll", authSelf.TotpEnroll)
@@ -780,6 +783,11 @@ func BuildRouter(d *Deps) http.Handler {
 			r.Get("/upload/{id}", suh.Status)
 			r.Post("/upload/{id}/commit", suh.Commit)
 			r.Delete("/upload/{id}", suh.Abort)
+
+			// A folder or a selection as one archive, streamed. The single-file
+			// download stays where it is (`?q=preview&download=1`): it can be
+			// ranged and resumed, and a zip of one file would help nobody.
+			r.Get("/download/zip", ah.DownloadZip)
 
 			r.Post("/archive/list", ah.List)
 			r.Post("/archive/extract", ah.Extract)

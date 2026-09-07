@@ -2,9 +2,10 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Dialog, DialogPanel, DialogTitle } from '@headlessui/vue';
-import { Bell, Camera, ChevronRight, Folder, KeyRound, Monitor, Settings2, ShieldCheck, Smartphone, Sparkles, UserRound, X } from 'lucide-vue-next';
+import { Bell, Camera, ChevronRight, Folder, KeyRound, Monitor, Settings2, ShieldCheck, Sparkles, UserRound, X } from 'lucide-vue-next';
 import { repository } from '@/data';
-import type { Node } from '@/data/types';
+import { MIN_PASSWORD_LENGTH, WRONG_PASSWORD } from '@/data/repository';
+import type { AuthMethods, Node } from '@/data/types';
 import { useToastStore } from '@/stores/toast';
 import { LOCALES, setLocale, type Locale } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
@@ -23,18 +24,12 @@ const SECTIONS = [
 ] as const;
 type SectionId = (typeof SECTIONS)[number]['id'];
 
-/** Inert rows of the Security card (spec: password, 2FA and sessions live behind endpoints the app cannot call yet). */
-const SECURITY_ROWS = [
-  { id: 'password', icon: KeyRound },
-  { id: 'twoFactor', icon: Smartphone },
-  { id: 'sessions', icon: Monitor },
-] as const;
 
 /** The picture is stored inline on the account, so it is downscaled to a thumbnail before it is ever sent. */
 const AVATAR_PX = 160;
 const AVATAR_QUALITY = 0.85;
 
-const { t, locale } = useI18n();
+const { t, te, locale } = useI18n();
 const files = useFilesStore();
 const store = useSettingsStore();
 const toast = useToastStore();
@@ -50,6 +45,30 @@ const folders = ref<Node[]>([]);
 const avatarUrl = ref('');
 const photoInput = ref<HTMLInputElement>();
 const saving = ref(false);
+
+/**
+ * The Security card asks the server how this account signs in before it offers anything: a password form on an
+ * OIDC realm could only ever fail, and the second factor belongs to whatever provider the realm names.
+ */
+const auth = ref<AuthMethods | null>(null);
+const passwordOpen = ref(false);
+const passwordBusy = ref(false);
+const passwordError = ref('');
+const currentPassword = ref('');
+const newPassword = ref('');
+const repeatPassword = ref('');
+
+const providerLabel = computed(() => {
+  const key = `settings.security.provider.${auth.value?.provider ?? ''}`;
+  return te(key) ? t(key) : t('settings.security.provider.unknown');
+});
+
+/** The second factor in one clause: filex's own TOTP on a local realm, otherwise the provider's business. */
+const secondFactorLabel = computed(() => {
+  if (!auth.value) return '';
+  if (auth.value.provider !== 'local') return t('settings.security.twoFactorProvider');
+  return auth.value.totpEnabled ? t('settings.security.twoFactorOn') : t('settings.security.twoFactorOff');
+});
 const panel = ref<{ $el: HTMLElement } | null>(null);
 const panelEl = computed(() => panel.value?.$el ?? undefined);
 
@@ -84,7 +103,40 @@ const displayName = computed(() => draft.value.displayName || files.user?.name |
 
 onMounted(async () => {
   if (files.storage) folders.value = await repository.listFolders(files.storage.id);
+  auth.value = await repository.authMethods();
 });
+
+function openPassword() {
+  passwordOpen.value = true;
+  passwordError.value = '';
+  currentPassword.value = newPassword.value = repeatPassword.value = '';
+}
+
+/**
+ * The one control in this modal that does not wait for "Save changes": a password is not part of the draft the
+ * Cancel button throws away, and it takes the server's answer — wrong current password, too short — on the spot.
+ */
+async function submitPassword() {
+  if (newPassword.value.length < MIN_PASSWORD_LENGTH) {
+    passwordError.value = t('settings.security.tooShort', { min: MIN_PASSWORD_LENGTH });
+    return;
+  }
+  if (newPassword.value !== repeatPassword.value) {
+    passwordError.value = t('settings.security.mismatch');
+    return;
+  }
+  passwordBusy.value = true;
+  passwordError.value = '';
+  try {
+    await repository.changePassword(currentPassword.value, newPassword.value);
+    passwordOpen.value = false;
+    toast.push(t('settings.security.passwordSaved'));
+  } catch (error) {
+    passwordError.value = error instanceof Error && error.message === WRONG_PASSWORD ? t('settings.security.wrongPassword') : t('settings.saveFailed');
+  } finally {
+    passwordBusy.value = false;
+  }
+}
 
 // Prefill the profile form from the account once, so empty mock fields still show the real name.
 watch(
@@ -328,13 +380,60 @@ const LABEL = 'block text-13 leading-none text-text-3';
                   <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.security') }}</h3>
                   <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.security.hint') }}</p>
                   <ul class="mt-4 flex flex-col gap-2">
-                    <li v-for="row in SECURITY_ROWS" :key="row.id">
-                      <!-- Inert until the app can call /api/auth/*: same look, "coming soon" on hover. -->
-                      <div class="flex h-[52px] w-full cursor-default items-center rounded-md border border-border px-2.5" :title="t('common.comingSoon')">
-                        <component :is="row.icon" :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
+                    <!-- How this account signs in. Read-only on purpose: the realm and its second step are the
+                         auth provider's, and this app is not where either is configured. -->
+                    <li>
+                      <div class="flex h-[52px] w-full items-center rounded-md border border-border px-2.5">
+                        <ShieldCheck :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
                         <div class="ml-2.5 min-w-0 flex-1">
-                          <p class="truncate-safe text-13 font-medium leading-none">{{ t(`settings.security.${row.id}`) }}</p>
-                          <p class="mt-1.5 truncate-safe text-12 leading-none text-text-3">{{ t(`settings.security.${row.id}Hint`) }}</p>
+                          <p class="truncate-safe text-13 font-medium leading-none">{{ t('settings.security.signIn') }}</p>
+                          <p class="mt-1.5 truncate-safe text-12 leading-none text-text-3">{{ providerLabel }} · {{ secondFactorLabel }}</p>
+                        </div>
+                      </div>
+                    </li>
+                    <li>
+                      <!-- Offered only where the realm allows it; an OIDC account's password lives elsewhere. -->
+                      <form v-if="passwordOpen" class="rounded-md border border-border p-2.5" @submit.prevent="submitPassword">
+                        <div class="flex flex-col gap-2">
+                          <Input v-model="currentPassword" type="password" :label="t('settings.security.currentPassword')" :placeholder="t('settings.security.currentPassword')" />
+                          <Input v-model="newPassword" type="password" :label="t('settings.security.newPassword')" :placeholder="t('settings.security.newPassword')" />
+                          <Input v-model="repeatPassword" type="password" :label="t('settings.security.repeatPassword')" :placeholder="t('settings.security.repeatPassword')" />
+                        </div>
+                        <p v-if="passwordError" class="mt-2 text-12 leading-none text-danger" role="alert">{{ passwordError }}</p>
+                        <p v-else class="mt-2 text-12 leading-none text-text-3">{{ t('settings.security.otherSessions') }}</p>
+                        <div class="mt-2.5 flex gap-2">
+                          <Button type="submit" :disabled="passwordBusy">{{ t('settings.security.submit') }}</Button>
+                          <Button variant="outline" type="button" @click="passwordOpen = false">{{ t('settings.cancel') }}</Button>
+                        </div>
+                      </form>
+                      <button
+                        v-else-if="auth?.changePassword"
+                        type="button"
+                        class="flex h-[52px] w-full items-center rounded-md border border-border px-2.5 text-left hover:bg-hover-row"
+                        @click="openPassword"
+                      >
+                        <KeyRound :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
+                        <div class="ml-2.5 min-w-0 flex-1">
+                          <p class="truncate-safe text-13 font-medium leading-none">{{ t('settings.security.password') }}</p>
+                          <p class="mt-1.5 truncate-safe text-12 leading-none text-text-3">{{ t('settings.security.passwordHint') }}</p>
+                        </div>
+                        <ChevronRight :size="16" class="shrink-0 text-text-3" />
+                      </button>
+                      <div v-else class="flex h-[52px] w-full cursor-default items-center rounded-md border border-border px-2.5">
+                        <KeyRound :size="18" :stroke-width="1.75" class="shrink-0 text-text-3" />
+                        <div class="ml-2.5 min-w-0 flex-1">
+                          <p class="truncate-safe text-13 font-medium leading-none text-text-3">{{ t('settings.security.password') }}</p>
+                          <p class="mt-1.5 truncate-safe text-12 leading-none text-text-3">{{ t('settings.security.passwordProvider') }}</p>
+                        </div>
+                      </div>
+                    </li>
+                    <li>
+                      <!-- Inert: filex has no session-listing endpoint (BACKEND-GAP.md). -->
+                      <div class="flex h-[52px] w-full cursor-default items-center rounded-md border border-border px-2.5" :title="t('common.comingSoon')">
+                        <Monitor :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
+                        <div class="ml-2.5 min-w-0 flex-1">
+                          <p class="truncate-safe text-13 font-medium leading-none">{{ t('settings.security.sessions') }}</p>
+                          <p class="mt-1.5 truncate-safe text-12 leading-none text-text-3">{{ t('settings.security.sessionsHint') }}</p>
                         </div>
                         <ChevronRight :size="16" class="shrink-0 text-text-3" />
                       </div>

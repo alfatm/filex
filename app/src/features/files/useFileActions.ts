@@ -34,18 +34,26 @@ export function useFileActions() {
     modals.open({ kind: 'preview', ...previewList(siblings, node) });
   }
 
+  /** A real anchor click, so the browser owns the save dialog, the progress and the disk write. */
+  function save(url: string, name: string) {
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = name;
+    anchor.click();
+  }
+
   /**
-   * A real anchor click per file, so the browser saves them (a second file makes Chrome ask once for the site).
-   * Folders are skipped: zipping a subtree needs an endpoint the backend does not have yet.
+   * One file goes down as itself; anything else — a folder, or several things at once — goes down as one archive,
+   * which is also the only way a folder can go down at all. A server that cannot zip (the demo's mock) falls back
+   * to a click per file, and a folder in that selection is simply skipped, as it always was.
    */
   function download(nodes: Node[]) {
+    const single = nodes.length === 1 && nodes[0].kind === 'file';
+    const archive = single ? null : repository.archiveUrl(nodes);
+    if (archive) return save(archive, nodes.length === 1 ? `${nodes[0].name}.zip` : 'files.zip');
     for (const node of nodes) {
       const url = node.kind === 'file' ? downloadUrl(node) : null;
-      if (!url) continue;
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = node.name;
-      anchor.click();
+      if (url) save(url, node.name);
     }
   }
 
@@ -72,6 +80,8 @@ export function useFileActions() {
         return clipboard.cut(nodes);
       case 'copy':
         return clipboard.copy(nodes);
+      case 'copyTo':
+        return modals.open({ kind: 'copy', nodes });
       case 'tags':
         return modals.open({ kind: 'tags', node });
       case 'versionHistory':

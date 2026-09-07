@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import AccessModal from './AccessModal.vue';
 import DeleteModal from './DeleteModal.vue';
-import MoveModal from './MoveModal.vue';
+import DestinationModal from './DestinationModal.vue';
 import NewFolderModal from './NewFolderModal.vue';
 import PreviewModal from './PreviewModal.vue';
 import RenameModal from './RenameModal.vue';
@@ -18,7 +18,12 @@ const modals = useModalsStore();
     <NewFolderModal v-if="modals.active.kind === 'newFolder'" @close="modals.close()" />
     <RenameModal v-else-if="modals.active.kind === 'rename'" :key="modals.active.node.id" :node="modals.active.node" @close="modals.close()" />
     <ShareModal v-else-if="modals.active.kind === 'share'" :node="modals.active.node" @close="modals.close()" />
-    <MoveModal v-else-if="modals.active.kind === 'move'" :nodes="modals.active.nodes" @close="modals.close()" />
+    <DestinationModal
+      v-else-if="modals.active.kind === 'move' || modals.active.kind === 'copy'"
+      :mode="modals.active.kind"
+      :nodes="modals.active.nodes"
+      @close="modals.close()"
+    />
     <TagsModal v-else-if="modals.active.kind === 'tags'" :key="modals.active.node.id" :node="modals.active.node" @close="modals.close()" />
     <VersionsModal v-else-if="modals.active.kind === 'versions'" :key="modals.active.node.id" :node="modals.active.node" @close="modals.close()" />
     <AccessModal v-else-if="modals.active.kind === 'access'" :key="modals.active.node.id" :node="modals.active.node" @close="modals.close()" />

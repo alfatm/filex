@@ -1,5 +1,5 @@
 import { segments } from '@/lib/path';
-import { DUPLICATE_NAME, MIN_PASSWORD_LENGTH, type Repository } from '../repository';
+import { DUPLICATE_NAME, MIN_PASSWORD_LENGTH, WRONG_PASSWORD, type Repository } from '../repository';
 import type { ListingFilter, Node, User } from '../types';
 import { fileTypeOf, filterPeople, indexedOnly, live, nodes, storages, TYPE_THUMBNAILS, user } from './dataset';
 import * as history from './history';
@@ -78,6 +78,32 @@ function newId(parentId: string, name: string): string {
   return nodes.some((n) => n.id === base) ? `${base}-${++seq}` : base;
 }
 
+/**
+ * The demo has no network, so a transfer would finish before the tray could draw it. This plays the same shape a
+ * staged upload has — a chunk accepted, an offset reported — over MOCK_UPLOAD_MS, so the bar means the same thing
+ * in the demo as it does against a server: bytes the far side has taken.
+ */
+export const MOCK_UPLOAD_MS = 1500;
+
+/** The demo account's current password: what the Security card's form accepts, and what a wrong one is measured against. */
+export const MOCK_PASSWORD = 'demo';
+const MOCK_UPLOAD_STEPS = 15;
+
+function fakeTransfer(size: number, onProgress?: (sent: number, total: number) => void): Promise<void> {
+  if (!onProgress) return Promise.resolve();
+  return new Promise((resolve) => {
+    let step = 0;
+    onProgress(0, size);
+    const timer = setInterval(() => {
+      step += 1;
+      onProgress(Math.round((size * step) / MOCK_UPLOAD_STEPS), size);
+      if (step < MOCK_UPLOAD_STEPS) return;
+      clearInterval(timer);
+      resolve();
+    }, MOCK_UPLOAD_MS / MOCK_UPLOAD_STEPS);
+  });
+}
+
 export const mockRepository: Repository = {
   async listStorages() {
     return storages;
@@ -152,15 +178,27 @@ export const mockRepository: Repository = {
     return { ...user };
   },
   /** No credential to check against; the demo account accepts any change but still enforces the length rule. */
-  async changePassword(_current, next) {
+  archiveUrl() {
+    // Zipping is the server's work, and the demo has no server; the capability says so and the UI stays honest.
+    return null;
+  },
+  async authMethods() {
+    // The demo signs in the way a single-drive filex install does.
+    return { provider: 'local', changePassword: true, totpEnabled: false };
+  },
+  async changePassword(current, next) {
     if (next.length < MIN_PASSWORD_LENGTH) throw new Error('passwordTooShort');
+    // Without a password to be wrong about, the form's error path would be unreachable in the demo and untestable.
+    if (current !== MOCK_PASSWORD) throw new Error(WRONG_PASSWORD);
   },
   async capabilities() {
     // What this mock actually implements. Zipping a folder is the one thing it cannot do.
+    // `copy` went true when the mock grew a real one; while it was false the menu greyed Copy and Copy to
+    // even though Ctrl+C already worked, which is the kind of split the capability flags exist to prevent.
     return {
       upload: true,
       move: true,
-      copy: false,
+      copy: true,
       delete: true,
       mkdir: true,
       search: true,
@@ -222,8 +260,9 @@ export const mockRepository: Repository = {
     bumpItemCount(parent.id, 1);
     return { ...node };
   },
-  async uploadFile(parentId, file) {
+  async uploadFile(parentId, file, options) {
     const parent = byId(parentId);
+    await fakeTransfer(file.size, options?.onProgress);
     const now = new Date().toISOString();
     const fileType = fileTypeOf(file.name);
     const thumbnail = TYPE_THUMBNAILS[fileType];

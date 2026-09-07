@@ -107,6 +107,35 @@ export interface WireOp {
   error?: string;
 }
 
+/**
+ * The staged upload's three answers. filex sends every id and size in both snake_case and camelCase (docs/UPLOADS.md),
+ * so both spellings are optional and the reader takes whichever came.
+ */
+export interface WireUploadBegin {
+  id: string;
+  chunk_size?: number;
+  chunkSize?: number;
+  /** Bytes the server already holds: 0 for a fresh session. */
+  offset?: number;
+}
+
+export interface WireUploadPut {
+  /** Authoritative resume point — a refused chunk leaves it where it was. */
+  offset?: number;
+}
+
+export interface WireUploadCommit {
+  op_id?: number;
+  opId?: number;
+}
+
+/** `GET /api/auth/methods` — a name and two flags, never any provider configuration. */
+export interface WireAuthMethods {
+  provider: string;
+  change_password: boolean;
+  totp_enabled: boolean;
+}
+
 export interface WireStorage {
   name: string;
   read_only: boolean;

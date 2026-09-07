@@ -952,7 +952,16 @@ func (h *Manager) applyDBMove(ctx context.Context, storageID int64, srcRel, dstR
 		return
 	}
 
-	parentID, err := h.lookupDirID(ctx, storageID, path.Dir(strings.TrimPrefix(dstClean, "/")))
+	// ⚠ path.Dir of the SLASHED path. Stripping the leading slash first turned
+	// "/Alpha" into "Alpha", whose Dir is "." — a directory that is in no index,
+	// so every move INTO A STORAGE ROOT fell into the soft-delete below: the
+	// bytes arrived at the root and the row was flagged deleted, which took the
+	// folder out of every listing and put a phantom row in the trash that
+	// Restore could not undo (its bytes were never in `.filex-trash`). Measured
+	// 2026-09-07 on a queued move; the synchronous `?q=move` shares this helper
+	// and was breaking in exactly the same way. "/Alpha" has Dir "/", which
+	// lookupDirID reads as the root — the same reading ensureDirChain relies on.
+	parentID, err := h.lookupDirID(ctx, storageID, path.Dir(dstClean))
 	if err != nil {
 		// Soft-delete the stale row so a future index lists the new
 		// path under whichever parent the sync finds.

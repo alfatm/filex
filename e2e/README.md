@@ -133,10 +133,23 @@ pnpm test:app:update      # retake the visual baselines
 
 Visual baselines live in `tests/app/__screenshots__/` with no platform suffix
 (`snapshotPathTemplate`), at 1672×941 @1x, `en-US`, UTC — the same frame
-`app/scripts/shot.mjs` uses. `maxDiffPixelRatio` is 0.002 and nothing is
-masked, so a font, scrollbar or Chromium change shows up as a diff: look at the
-report before running `test:app:update`, and commit a refreshed baseline only
-with the design change that caused it.
+`app/scripts/shot.mjs` uses. The tolerance is `maxDiffPixels: 50` and nothing
+is masked, so a font, scrollbar or Chromium change shows up as a diff: look at
+the report before running `test:app:update`, and commit a refreshed baseline
+only with the design change that caused it.
+
+Two traps this tolerance used to hide. It was a ratio, 0.002 — 3147 px of this
+frame — while Playwright counts only pixels that differ perceptibly, so real
+design changes land far below it: enabling two greyed menu entries and swapping
+an icon measures 234 px, thirteen times under that ceiling. A 44px button, the
+sidebar logo and a whole extra menu row each passed against a stale baseline in
+silence. And `--update-snapshots` defaults to `changed`, which rewrites nothing
+a passing comparison never flagged, so the stale baseline survived the refresh
+too. Comparison itself is bit-exact here (the viewport, scale, locale, timezone
+and animations are all pinned), so a diff in the hundreds of pixels is a real
+change, not noise. Note that update mode takes a single shot instead of waiting
+for two identical ones, so `--update-snapshots=all` can capture a transient
+frame: check what it wrote before committing it.
 
 The app reaches its reference states through screenshot-only query hooks
 (`?select=Design`, `?view=list|grid`, `?panel=details|assistant`,

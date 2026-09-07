@@ -1,11 +1,13 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { nextTick } from 'vue';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { repository } from '@/data';
 import { resetMock } from '@/data/mock';
 import { useFilesStore } from './files';
 import { useToastStore } from './toast';
 import { useViewStore } from './view';
+import { useUndoStore } from '@/features/files/undoStore';
+import { OPERATION_PENDING } from '@/data/repository';
 
 async function setup() {
   resetMock();
@@ -133,6 +135,27 @@ describe('files store', () => {
     await files.emptyTrash();
     expect(toast.toasts.every((t) => !t.action)).toBe(true);
     expect(toast.toasts.at(-1)?.text).toBe('Trash emptied');
+  });
+
+  it('a queued job the server has not finished says so, refreshes, and arms no Undo', async () => {
+    const files = await setup();
+    const toast = useToastStore();
+    const undo = useUndoStore();
+    const design = files.ordered.find((n) => n.name === 'Design')!;
+    // What the HTTP repository raises when it stops waiting on the ops queue: taken, running, not finished.
+    const spy = vi.spyOn(repository, 'moveToTrash').mockRejectedValue(new Error(OPERATION_PENDING));
+    try {
+      await files.trash([design]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(toast.toasts.map((t) => t.text)).toEqual(['Still running on the server — the list will show it when it finishes']);
+    // No Undo: half a move is not a step that can be taken back.
+    expect(toast.toasts[0].action).toBeUndefined();
+    expect(undo.canUndo).toBe(false);
+    // The listing was read again anyway — the folder is changing under the user right now.
+    expect(files.revision).toBe(1);
   });
 
   it('trash listing sorts its date column by deletedAt', async () => {

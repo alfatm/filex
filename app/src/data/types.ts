@@ -116,6 +116,28 @@ export interface UploadInput {
   blob?: Blob;
 }
 
+/**
+ * How a transfer reports itself while it runs: `sent` is the byte count the SERVER has accepted, out of `total`.
+ * The staged upload path knows that number after every chunk; the mock plays the same steps so the tray has
+ * something to draw without a network.
+ */
+export interface UploadOptions {
+  onProgress?: (sent: number, total: number) => void;
+}
+
+/**
+ * How the signed-in account authenticates. filex's second factor and the password both belong to the auth
+ * provider, not to this app: an OIDC realm answers `changePassword: false`, and its second step is configured
+ * wherever the identity provider lives.
+ */
+export interface AuthMethods {
+  /** The realm's auth type, which is also its driver name: "local", "oidc", "proxyheader". */
+  provider: string;
+  changePassword: boolean;
+  /** filex's own TOTP. Only meaningful on a local realm. */
+  totpEnabled: boolean;
+}
+
 export interface Quota {
   usedBytes: number;
   totalBytes: number;

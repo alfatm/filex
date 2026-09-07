@@ -10,7 +10,8 @@ import { useFilesStore } from '@/stores/files';
 import { Button, Input, Select } from '@/ui';
 import Modal from '@/ui/Modal.vue';
 
-const props = defineProps<{ nodes: Node[] }>();
+/** One picker, two verbs: `move` takes the nodes there, `copy` leaves them and puts a duplicate there. */
+const props = defineProps<{ nodes: Node[]; mode: 'move' | 'copy' }>();
 const emit = defineEmits<{ close: [] }>();
 const { t } = useI18n();
 const files = useFilesStore();
@@ -23,8 +24,15 @@ interface Row {
   location?: string;
 }
 
-const storageId = ref(files.storage?.id ?? '');
-const storageOptions = computed(() => files.storages.map((s) => ({ value: s.id, label: s.name })));
+const copying = computed(() => props.mode === 'copy');
+/** The drive the nodes live on. A copy cannot leave it, so it is also the only destination drive offered. */
+const source = files.storage?.id ?? '';
+const storageId = ref(source);
+// A copy across drives spans two adapters, which the server refuses. The other drives stay listed and greyed:
+// the answer the UI owes here is "not to there", not "there is nowhere else".
+const storageOptions = computed(() =>
+  files.storages.map((s) => ({ value: s.id, label: s.name, disabled: copying.value && s.id !== source })),
+);
 const folders = ref<Node[]>([]);
 const filter = ref('');
 const targetId = ref<string | null>(null);
@@ -33,13 +41,15 @@ const INDENT = 22;
 const moving = computed(() => new Set(props.nodes.map((n) => n.id)));
 const parents = computed(() => new Set(props.nodes.map((n) => n.parentId)));
 
-// Depth-first from the root; a moved folder and everything inside it cannot be a target, nor can the current parent.
+// Depth-first from the root; a folder and everything inside it cannot be its own destination. The folder the nodes
+// already sit in is a target for a copy — that duplicates them where they are — but not for a move, which has
+// nothing to do there.
 const tree = computed<Row[]>(() => {
   const out: Row[] = [];
   const walk = (parentId: string | null, depth: number, blocked: boolean) => {
     for (const node of folders.value.filter((n) => n.parentId === parentId)) {
       const inside = blocked || moving.value.has(node.id);
-      out.push({ node, depth, disabled: inside || parents.value.has(node.id) });
+      out.push({ node, depth, disabled: inside || (!copying.value && parents.value.has(node.id)) });
       walk(node.id, depth + 1, inside);
     }
   };
@@ -80,18 +90,24 @@ watch(
 
 async function submit() {
   if (!target.value) return;
-  await files.move(props.nodes, target.value);
+  if (copying.value) await files.copyInto(props.nodes, target.value);
+  else await files.move(props.nodes, target.value);
   emit('close');
 }
 </script>
 
 <template>
-  <Modal :title="subjectMessage(t, 'modal.move.title', nodes)" :close-label="t('modal.cancel')" @close="emit('close')">
+  <Modal
+    :title="subjectMessage(t, copying ? 'modal.destination.copyTitle' : 'modal.destination.moveTitle', nodes)"
+    :close-label="t('modal.cancel')"
+    @close="emit('close')"
+  >
     <div class="flex gap-3">
-      <Select v-model="storageId" :options="storageOptions" :icon="HardDrive" :width="200" :label="t('modal.move.storage')" />
-      <Input v-model="filter" type="search" :icon="Search" class="flex-1" :placeholder="t('modal.move.filter')" :label="t('modal.move.filter')" />
+      <Select v-model="storageId" :options="storageOptions" :icon="HardDrive" :width="200" :label="t('modal.destination.storage')" />
+      <Input v-model="filter" type="search" :icon="Search" class="flex-1" :placeholder="t('modal.destination.filter')" :label="t('modal.destination.filter')" />
     </div>
-    <ul role="listbox" :aria-label="t('modal.move.destination')" class="mt-3 max-h-[320px] overflow-y-auto rounded-md border border-border py-1">
+    <p v-if="copying && storageOptions.length > 1" class="mt-2 text-13 text-text-3">{{ t('modal.destination.crossDrive') }}</p>
+    <ul role="listbox" :aria-label="t('modal.destination.folder')" class="mt-3 max-h-[320px] overflow-y-auto rounded-md border border-border py-1">
       <li v-for="row in rows" :key="row.node.id">
         <button
           type="button"
@@ -109,11 +125,11 @@ async function submit() {
           <span v-if="row.location" class="ml-3 truncate text-13 text-text-3">{{ row.location }}</span>
         </button>
       </li>
-      <li v-if="!rows.length" class="px-3 py-6 text-center text-15 text-text-3">{{ t('modal.move.noMatch') }}</li>
+      <li v-if="!rows.length" class="px-3 py-6 text-center text-15 text-text-3">{{ t('modal.destination.noMatch') }}</li>
     </ul>
     <template #footer>
       <Button variant="outline" @click="emit('close')">{{ t('modal.cancel') }}</Button>
-      <Button :disabled="!target" class="disabled:opacity-50" @click="submit">{{ t('modal.move.confirm') }}</Button>
+      <Button :disabled="!target" class="disabled:opacity-50" @click="submit">{{ t(copying ? 'modal.destination.copyConfirm' : 'modal.destination.moveConfirm') }}</Button>
     </template>
   </Modal>
 </template>

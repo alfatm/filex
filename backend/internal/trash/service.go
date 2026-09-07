@@ -176,14 +176,17 @@ func (s *Service) Restore(ctx context.Context, nodeID int64) error {
 // Each entry's `Path` is the ORIGINAL path (`storage_key`) so the user
 // sees where the item lived, not the internal `.filex-trash/...` key.
 // `TTLDays` is the days remaining before automatic purge.
-func (s *Service) List(ctx context.Context, storageID *int64, limit, offset int) ([]TrashEntry, int, error) {
+// topLevelOnly leaves out the rows a folder dragged in with it, so the caller
+// gets one entry per thing the user actually deleted; restoring the folder
+// brings those children back with it (RestoreNodeAt mirrors the soft-delete).
+func (s *Service) List(ctx context.Context, storageID *int64, topLevelOnly bool, limit, offset int) ([]TrashEntry, int, error) {
 	if s == nil || s.Store == nil {
 		return nil, 0, errors.New("trash: service not initialised")
 	}
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
-	rows, total, err := s.Store.ListTrashed(ctx, storageID, limit, offset)
+	rows, total, err := s.Store.ListTrashed(ctx, storageID, topLevelOnly, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -393,7 +396,7 @@ func (s *Service) purgeDirDescendants(ctx context.Context, dir *model.Node) {
 	}
 	var descendants []*model.Node
 	for offset := 0; ; {
-		batch, _, err := s.Store.ListTrashed(ctx, &dir.StorageID, 500, offset)
+		batch, _, err := s.Store.ListTrashed(ctx, &dir.StorageID, false, 500, offset)
 		if err != nil || len(batch) == 0 {
 			break
 		}

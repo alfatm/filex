@@ -82,10 +82,14 @@ gone.
 
 A **folder** goes to trash as one restorable unit: the folder row is retagged
 into the trash and its cached descendants are dragged along with it, so a single
-Restore brings the whole subtree back. Note that the descendants are still
-individual rows, and the trash listing is flat — a deleted folder therefore
-shows its children as separate entries even though restoring the folder is one
-action.
+Restore brings the whole subtree back. The descendants are still individual
+rows, so the raw listing is flat: a deleted folder shows its children as
+separate entries even though restoring the folder is one action. Pass
+`?top_level_only=1` to leave those children out and get one row per thing that
+was actually deleted — what an end-user trash screen wants. "Top level" means
+"my parent is not in the trash too", not "I have no parent": a file the sync
+poller soft-deleted because it vanished from the storage keeps its live parent
+and stays in the listing either way.
 
 > ⚠ **Sync clients delete in bulk.** A single `rclone sync --delete` run can
 > remove hundreds of files, and every one of them now lands in the trash. That
@@ -135,7 +139,7 @@ rows at a time) and reports a summary (`scanned` / `deleted` / `failed` /
 
 | Method & path | Body / query | Notes |
 |---|---|---|
-| `GET /api/files/manager/trash` | `?storage_id=…&limit=…&offset=…` | Lists soft‑deleted items. `limit` defaults to 50 (max 500). Each entry shows the **original** `name`/`path` (not the internal trash key), `deleted_at`, `size`, `storage_name`, and **`ttl_days`** (days remaining before purge, floored at 0). |
+| `GET /api/files/manager/trash` | `?storage_id=…&limit=…&offset=…&top_level_only=1` | Lists soft‑deleted items. `limit` defaults to 50 (max 500). Each entry shows the **original** `name`/`path` (not the internal trash key), `deleted_at`, `size`, `storage_name`, and **`ttl_days`** (days remaining before purge, floored at 0). `top_level_only=1` drops the rows a deleted folder dragged in with it, and narrows `total` to match. |
 | `POST /api/files/manager/restore` | `{ "node_id": 123 }` | Moves the file back to its original path and re‑attaches the row. |
 
 Both are **filtered by access**: a [confined](RBAC.md) (root‑locked) caller only

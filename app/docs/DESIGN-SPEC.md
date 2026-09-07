@@ -249,19 +249,35 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
 
 - **Item ⋮ / context menu**: white, radius 12, shadow-menu, padding 6, items h 38
   15 with 18px icon: Open, Preview, Download, Share, Rename, Move to, Cut,
-  Copy to, Add to starred, Tags, Version history, Manage access, divider, Move
-  to trash (red `#dc2626`).
+  Copy, Copy to, Add to starred, Tags, Version history, Manage access, divider,
+  Move to trash (red `#dc2626`). Cut and Copy load the clipboard for a later
+  paste; Move to and Copy to name the destination in a dialog and act at once.
 - **Modals** (Rename, New folder, Delete, Share): radius 16, w 480, padding 26,
   title 20/600, inputs h 44, footer buttons h 44 radius 10.
+- **Destination picker** — one dialog behind both Move to and Copy to: storage
+  select, folder filter, and the folder tree of the chosen storage, max height
+  320. A node's own subtree is never a destination. The folder the nodes already
+  sit in is disabled for a move (nothing to do) and offered for a copy, which
+  duplicates them in place as `<base>-copy`. Copying across storages spans two
+  adapters, which the server refuses: the other storages stay in the select,
+  greyed, under the line "Copying between storages is not supported yet."
 - **Pages** Home / Shared with me / Recent / Starred / Trash: same content
   frame; header row with title 22/600; Recent groups by day ("Today",
   "Yesterday", "Jul 5"); Shared with me adds "Shared by" column; Trash adds
   "Deleted" column and a top banner "Items in trash are deleted forever after
   30 days" with "Empty trash" button.
 - **Selection bar** (appears above table when ≥1 selected): h 48, "3 selected",
-  icon buttons Download, Share, Move, Star, Delete, `X` clear.
+  icon buttons Download, Share, Move, Star, Delete, `X` clear. Download saves a
+  single file as itself and anything else — a folder, or several things — as one
+  zip; where the server cannot zip (`folderDownload` off, as in the demo's mock)
+  it falls back to a click per file and skips folders.
 - **Toasts** bottom-left, radius 12, shadow-menu.
-- **Upload tray** bottom-right card w 360 with per-file progress.
+- **Upload tray** bottom-right card w 360 with per-file progress. The bar is
+  the byte count the server has accepted, not a timer: the repository uploads
+  in 1 MiB chunks and reports each one, and a row is ticked done only once the
+  storage has the file — filex answering "staged" is not yet an arrival. A
+  transfer that fails marks its row with a red alert icon and the header says
+  how many failed, because a bar frozen at 60% says nothing.
 
 ## 7a. Filter chips
 
@@ -375,14 +391,22 @@ Theme as a 3-segment control (Light / System / Dark, h 36), "Use compact file
 list" checkbox with a caption. Storage & uploads — default upload folder
 select, an auto-open-preview switch (44×24), upload conflict select.
 Notifications — three switches with captions. Security — three 52-high rows
-(icon, title 13/500, caption 12, chevron) and a Manage security button.
+(icon, title 13/500, caption 12, chevron) and a Manage security button. The
+first row names the sign-in method and is read-only: the realm and its second
+step belong to the auth provider, and `GET /api/auth/methods` is what the card
+asks. The second offers a password change only where that realm allows one (an
+OIDC account's password lives at its identity provider); it opens in place into
+three fields with its own button, because a password is not part of the draft
+"Save changes" commits and "Cancel" throws away. Active sessions stays inert —
+filex has no endpoint listing them.
 AI assistant — enable switch, default search mode select, a note that the
 provider is set by the administrator.
 
 Editing works on a copy: Cancel drops it, Save changes commits everything at
 once. Theme, language and the compact list take effect immediately; the
-profile fields, notification switches, photo buttons and every Security row
-are mocks until the backend grows the endpoints (see BACKEND-GAP.md).
+profile fields, notification switches and photo buttons are mocks until the
+backend grows the endpoints (see BACKEND-GAP.md); of the Security rows only
+Active sessions still is.
 
 ## 9. Mock data (matches the refs)
 

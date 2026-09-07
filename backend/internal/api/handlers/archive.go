@@ -15,8 +15,11 @@ import (
 	"time"
 
 	"github.com/brf-tech/filex/backend/internal/acl"
+	"github.com/brf-tech/filex/backend/internal/auth"
+	"github.com/brf-tech/filex/backend/internal/confine"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/filebody"
+	"github.com/brf-tech/filex/backend/internal/httpx"
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/protocolsync"
 	"github.com/brf-tech/filex/backend/internal/search"
@@ -581,4 +584,192 @@ func sanitizeZipPath(name string) (string, error) {
 		return "", fmt.Errorf("clean rejected: %q", name)
 	}
 	return clean, nil
+}
+
+// ── folder / multi-selection download ────────────────────────────────────────
+
+// zipMaxRoots caps how many paths one download may name. It is a URL length
+// guard as much as a server one: the paths ride in the query string.
+const zipMaxRoots = 500
+
+// zipMaxDepth stops a symlinked directory cycle from producing an endless
+// stream. Nothing legitimate nests this deep.
+const zipMaxDepth = 32
+
+// DownloadZip streams a zip of the named paths — files, folders, or a mix.
+//
+//	GET /api/files/download/zip?path=main://Design&path=main://notes.md[&name=…]
+//
+// A GET with repeated `path` params, not a POST with a body, because the
+// browser has to run this as a navigation to get its own save dialog, its own
+// progress and its own disk write; a POST would mean holding the whole archive
+// in the page's memory first.
+//
+// Everything that can be checked is checked BEFORE the first byte: once a zip
+// header is on the wire the status is 200 for good, and a later failure can
+// only cut the stream short. A read error deep inside a subtree is exactly that
+// case — it ends the response and leaves the client with a short file, which is
+// the honest outcome and the reason each root is stat'ed and authorised first.
+func (a *Archive) DownloadZip(w http.ResponseWriter, r *http.Request) {
+	paths := r.URL.Query()["path"]
+	if len(paths) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing path"})
+		return
+	}
+	if len(paths) > zipMaxRoots {
+		writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "too many paths"})
+		return
+	}
+
+	ctx := r.Context()
+	type zipRoot struct {
+		storageID int64
+		rel       string
+		// name is what this root is called INSIDE the archive: the basename, so a
+		// selected folder arrives as "Design/…" rather than as the server's layout.
+		name  string
+		isDir bool
+	}
+	roots := make([]zipRoot, 0, len(paths))
+	for _, p := range paths {
+		storageID, rel, err := a.resolveStorage(ctx, 0, p)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if root, ok := confine.RootFrom(ctx); ok {
+			st := a.storageRow(ctx, storageID)
+			if st == nil || !root.Within(st.Name, rel) {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "outside your root"})
+				return
+			}
+		}
+		if !aclAllowID(ctx, a.ACL, a.Store, storageID, rel, acl.LevelViewer) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient permission: " + p})
+			return
+		}
+		drv, err := a.StorageResolver(storageID)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad storage"})
+			return
+		}
+		obj, err := drv.Stat(ctx, rel)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found: " + p})
+			return
+		}
+		name := path.Base(strings.Trim(rel, "/"))
+		if name == "" || name == "." {
+			// A storage root has no basename of its own; the drive's name is the only one it has.
+			if st := a.storageRow(ctx, storageID); st != nil {
+				name = st.Name
+			}
+		}
+		roots = append(roots, zipRoot{storageID: storageID, rel: rel, name: name, isDir: obj.Kind == storage.KindDirectory})
+	}
+
+	filename := r.URL.Query().Get("name")
+	if filename == "" {
+		// One thing selected is named after it; a mixed selection has no name of its own.
+		if len(roots) == 1 {
+			filename = roots[0].name + ".zip"
+		} else {
+			filename = "files.zip"
+		}
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", httpx.ContentDisposition("attachment", filename))
+	// The size is unknowable without building the archive first, so this streams
+	// chunked and the browser shows an indeterminate download.
+	zw := zip.NewWriter(w)
+	for _, rt := range roots {
+		guard, err := a.zipGuard(ctx, rt.storageID)
+		if err != nil {
+			slog.Error("zip download: acl", slog.String("err", err.Error()))
+			return
+		}
+		if err := a.zipInto(ctx, zw, rt.storageID, rt.rel, rt.name, rt.isDir, guard, 0); err != nil {
+			// The status line is long gone; all that is left is to stop writing.
+			slog.Error("zip download aborted", slog.String("path", rt.rel), slog.String("err", err.Error()))
+			return
+		}
+	}
+	if err := zw.Close(); err != nil {
+		slog.Error("zip download: close", slog.String("err", err.Error()))
+	}
+}
+
+// zipGuard loads the caller's permission set once per storage. A subtree can be
+// thousands of files and each one has to be checked — `Effective` on a loaded
+// set is a lookup, `aclAllowID` per member would be a database round trip.
+func (a *Archive) zipGuard(ctx context.Context, storageID int64) (*acl.Set, error) {
+	if a.ACL == nil {
+		return nil, nil
+	}
+	st, err := a.Store.GetStorage(ctx, storageID)
+	if err != nil {
+		return nil, err
+	}
+	return a.ACL.LoadSet(ctx, auth.UserFrom(ctx), st)
+}
+
+// zipInto writes one path into the archive, walking a folder depth-first.
+// A member the caller may not see is skipped rather than refused: that is what
+// the folder listing does, and half an archive is better than none.
+func (a *Archive) zipInto(ctx context.Context, zw *zip.Writer, storageID int64, rel, name string, isDir bool, guard *acl.Set, depth int) error {
+	if guard != nil && guard.Effective(strings.Trim(rel, "/")) < acl.LevelViewer {
+		return nil
+	}
+	if !isDir {
+		return a.zipFile(ctx, zw, storageID, rel, name)
+	}
+	if depth >= zipMaxDepth {
+		return nil
+	}
+	drv, err := a.StorageResolver(storageID)
+	if err != nil {
+		return err
+	}
+	entries, err := drv.List(ctx, rel)
+	if err != nil {
+		return err
+	}
+	if len(entries) == 0 {
+		// An empty folder is part of what was selected; a zip records it as a name
+		// ending in "/", and without this the folder would simply vanish.
+		_, err := zw.Create(name + "/")
+		return err
+	}
+	for _, e := range entries {
+		child := path.Join(name, e.Name)
+		// A symlink is zipped as the file it stands for, which is how every other
+		// read path in filex treats one; only a real directory is walked.
+		if err := a.zipInto(ctx, zw, storageID, e.Path, child, e.Kind == storage.KindDirectory, guard, depth+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// zipFile copies one object's bytes into the archive under `name`.
+func (a *Archive) zipFile(ctx context.Context, zw *zip.Writer, storageID int64, rel, name string) error {
+	drv, err := a.StorageResolver(storageID)
+	if err != nil {
+		return err
+	}
+	src, err := a.Body.Resolve(ctx, drv, storageID, rel, nil)
+	if err != nil {
+		return err
+	}
+	rc, err := src.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	fw, err := zw.Create(name)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(fw, rc)
+	return err
 }

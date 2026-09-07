@@ -155,6 +155,24 @@ test.describe('File actions', () => {
     await expect(row(page, 'Documents')).toContainText('25 items');
   });
 
+  test('Copy to via ⋮ leaves the original where it is', async ({ page }) => {
+    await page.goto('files?view=list');
+    await pickMenu(page, 'Archive', 'Copy to');
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Copy “Archive” to' })).toBeVisible();
+    const targets = dialog.getByRole('listbox', { name: 'Destination folder' });
+    // A folder still cannot be copied inside itself, but its current parent is a target: that duplicates it in place.
+    await expect(targets.getByRole('option', { name: 'Archive' })).toBeDisabled();
+    await expect(targets.getByRole('option', { name: 'demo' })).toBeEnabled();
+    await targets.getByRole('option', { name: 'Documents' }).click();
+    await dialog.getByRole('button', { name: 'Copy', exact: true }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText('“Archive” copied to Documents')).toBeVisible();
+    await expect(row(page, 'Archive')).toHaveCount(1);
+    await expect(row(page, 'Documents')).toContainText('25 items');
+  });
+
   test('Share via ⋮ turns on link sharing and shows the URL row', async ({ page }) => {
     await page.goto('files?view=list');
     await pickMenu(page, 'Design', 'Share');

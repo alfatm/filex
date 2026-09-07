@@ -368,7 +368,9 @@ type Store interface {
 	// Trash retention
 	ListTrashedExpired(ctx context.Context, before time.Time, limit int) ([]*model.Node, error)
 	// ListTrashed returns soft-deleted nodes (paginated). storage filter optional.
-	ListTrashed(ctx context.Context, storageID *int64, limit, offset int) ([]*model.Node, int, error)
+	// topLevelOnly drops the rows that were dragged into the trash with a folder
+	// (their parent is trashed too), leaving one row per thing the user deleted.
+	ListTrashed(ctx context.Context, storageID *int64, topLevelOnly bool, limit, offset int) ([]*model.Node, int, error)
 	RestoreNode(ctx context.Context, id int64) error
 	// RestoreNodeAt restores a soft-deleted node, simultaneously reverting its
 	// path/path_hash to the supplied original-path values and re-attaching it

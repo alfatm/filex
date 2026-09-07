@@ -114,14 +114,18 @@
       "anyoneCanView": "Anyone with the link can view",
       "off": "Only people with access can open"
     },
-    "move": {
+    "destination": {
       "storage": "Storage",
       "filter": "Filter folders",
       "noMatch": "No folders match",
-      "titleOne": "Move “{name}” to",
-      "titleMany": "Move {count} item to | Move {count} items to",
-      "destination": "Destination folder",
-      "confirm": "Move"
+      "moveTitleOne": "Move “{name}” to",
+      "moveTitleMany": "Move {count} item to | Move {count} items to",
+      "copyTitleOne": "Copy “{name}” to",
+      "copyTitleMany": "Copy {count} item to | Copy {count} items to",
+      "folder": "Destination folder",
+      "crossDrive": "Copying between storages is not supported yet.",
+      "moveConfirm": "Move",
+      "copyConfirm": "Copy"
     },
     "tags": {
       "title": "Tags",
@@ -161,6 +165,7 @@
     "deletedForeverOne": "“{name}” deleted forever",
     "deletedForeverMany": "{count} item deleted forever | {count} items deleted forever",
     "trashEmptied": "Trash emptied",
+    "stillRunning": "Still running on the server — the list will show it when it finishes",
     "starredOne": "“{name}” added to starred",
     "starredMany": "{count} item added to starred | {count} items added to starred",
     "unstarredOne": "“{name}” removed from starred",
@@ -175,6 +180,8 @@
   "upload": {
     "title": "Uploading {done} of {total}",
     "done": "{count} upload complete | {count} uploads complete",
+    "failed": "{count} upload failed | {count} uploads failed",
+    "failedItem": "Upload failed",
     "close": "Close"
   },
   "topbar": {
@@ -499,10 +506,28 @@
     },
     "security": {
       "hint": "Keep your account safe and secure.",
+      "signIn": "Sign-in method",
+      "provider": {
+        "local": "Local account",
+        "oidc": "Single sign-on",
+        "proxyheader": "Reverse proxy",
+        "unknown": "Unknown"
+      },
+      "twoFactorOn": "two-factor on",
+      "twoFactorOff": "two-factor off",
+      "twoFactorProvider": "second step set by your provider",
       "password": "Password",
       "passwordHint": "Change your password",
-      "twoFactor": "Two-factor authentication",
-      "twoFactorHint": "Add a second sign-in step",
+      "passwordProvider": "Set where you sign in",
+      "submit": "Change password",
+      "currentPassword": "Current password",
+      "newPassword": "New password",
+      "repeatPassword": "Repeat new password",
+      "otherSessions": "Your other sessions will be signed out.",
+      "passwordSaved": "Password changed",
+      "wrongPassword": "That is not your current password.",
+      "tooShort": "Use at least {min} characters.",
+      "mismatch": "The two new passwords do not match.",
       "sessions": "Active sessions",
       "sessionsHint": "Devices signed in",
       "manage": "Manage security"

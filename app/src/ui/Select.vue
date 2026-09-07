@@ -4,7 +4,8 @@ import { ChevronDown } from 'lucide-vue-next';
 
 withDefaults(
   defineProps<{
-    options: { value: T; label: string }[];
+    /** A disabled option stays visible and greyed: it says the destination exists but is not offered. */
+    options: { value: T; label: string; disabled?: boolean }[];
     icon?: Component;
     width?: number;
     label?: string;
@@ -25,7 +26,7 @@ const model = defineModel<T>({ required: true });
       class="h-full w-full appearance-none rounded-md border border-border bg-bg leading-none text-text focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
       :class="[icon ? 'pl-[42px]' : dense ? 'pl-2.5' : 'pl-3', dense ? 'pr-6 text-14' : 'pr-9 text-15']"
     >
-      <option v-for="option in options" :key="option.value" :value="option.value">{{ option.label }}</option>
+      <option v-for="option in options" :key="option.value" :value="option.value" :disabled="option.disabled">{{ option.label }}</option>
     </select>
     <ChevronDown :size="16" class="pointer-events-none absolute text-text-3" :class="dense ? 'right-1.5' : 'right-3'" />
   </span>

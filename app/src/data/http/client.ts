@@ -46,6 +46,18 @@ function messageOf(status: number, body: unknown): string {
   return detail ? `${status}: ${detail}` : `HTTP ${status}`;
 }
 
+/** The shared tail of every call: read the body, raise the interesting statuses, hand back the payload. */
+async function settle<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  const payload: unknown = text ? safeParse(text) : null;
+  if (!response.ok) {
+    // Whoever is listening (the shell) sends the user to the login page; the caller still gets its rejection.
+    if (response.status === 401) window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+    throw new HttpError(response.status, payload, messageOf(response.status, payload));
+  }
+  return payload as T;
+}
+
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = 'GET', body, query, signal } = options;
   const response = await fetch(withQuery(path, query), {
@@ -57,30 +69,21 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
-  const text = await response.text();
-  const payload: unknown = text ? safeParse(text) : null;
-
-  if (!response.ok) {
-    // Whoever is listening (the shell) sends the user to the login page; the caller still gets its rejection.
-    if (response.status === 401) window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
-    throw new HttpError(response.status, payload, messageOf(response.status, payload));
-  }
-  return payload as T;
+  return settle<T>(response);
 }
 
 /**
- * A multipart POST. It bypasses `request` for one reason: a `FormData` body must go out with the boundary the
- * browser generates, so the content-type header has to be left alone rather than set to JSON.
+ * One chunk of a staged upload. It bypasses `request` too: the body is bytes rather than JSON, and `Content-Range`
+ * is what tells the server where they belong — the offset is not in the URL.
  */
-export async function upload<T>(path: string, query: RequestOptions['query'], form: FormData): Promise<T> {
-  const response = await fetch(withQuery(path, query), { method: 'POST', credentials: 'include', body: form });
-  const text = await response.text();
-  const payload: unknown = text ? safeParse(text) : null;
-  if (!response.ok) {
-    if (response.status === 401) window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
-    throw new HttpError(response.status, payload, messageOf(response.status, payload));
-  }
-  return payload as T;
+export async function putChunk<T>(path: string, range: string, chunk: Blob): Promise<T> {
+  const response = await fetch(path, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'content-range': range },
+    body: chunk,
+  });
+  return settle<T>(response);
 }
 
 function safeParse(text: string): unknown {
