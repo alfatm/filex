@@ -27,7 +27,8 @@ export const TYPE_GROUPS: Record<Exclude<FileTypeGroup, 'any'>, FileType[]> = {
  */
 export function matchesFilter(node: Node, filter: ListingFilter, now = Date.now()): boolean {
   if (filter.fileType !== 'any' && (node.kind !== 'file' || !TYPE_GROUPS[filter.fileType].includes(node.fileType ?? 'other'))) return false;
-  if (filter.modified !== 'any' && now - Date.parse(node.modifiedAt) > MODIFIED_WINDOW_DAYS[filter.modified] * DAY) return false;
+  // A node with no date can never be inside a "modified in the last N days" window.
+  if (filter.modified !== 'any' && (!node.modifiedAt || now - Date.parse(node.modifiedAt) > MODIFIED_WINDOW_DAYS[filter.modified] * DAY)) return false;
   if (filter.size !== 'any') {
     if (node.kind !== 'file') return false;
     const [min, max] = SIZE_PRESET_BYTES[filter.size];

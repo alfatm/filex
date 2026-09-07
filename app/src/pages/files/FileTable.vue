@@ -165,7 +165,7 @@ function onContextMenu(node: Node, event: MouseEvent) {
               <span class="ml-5 min-w-[96px] truncate pr-2 text-16 font-medium text-text">{{ node.name }}</span>
               <Star v-if="node.starred" :size="14" fill="currentColor" class="mr-2 shrink-0 text-folder" role="img" :aria-label="t('panel.starred')" />
               <span v-if="node.kind === 'folder'" class="shrink-0 text-text-3">
-                {{ t('files.items', node.itemCount ?? 0) }}
+                {{ node.itemCount === undefined ? t('type.folder') : t('files.items', node.itemCount) }}
               </span>
             </div>
           </td>

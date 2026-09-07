@@ -77,8 +77,10 @@ is accepted behaviour, not a gap.
 |---|---|---|
 | Listing filters | no query params | `HttpRepository` post-filters through `data/listingFilter.ts`, the same predicate the mock uses |
 | Advanced search facets | `q`, `scope`, `limit` only | date window, type group, size band and owner are applied to the answer |
-| Item count per folder | not returned | known only for the folder currently open (its own listing length) |
+| Item count per folder | not returned | known only for the folder currently open (its own listing length); everywhere else a folder shows its TYPE instead of a count, because "0 items" for a folder nobody counted is a lie |
 | Creation date | absent from the listing projection (`FileNode` carries `last_modified` only) | `Node.createdAt` is optional; the details panel omits the row rather than showing an invented date |
+| Modification date of a folder ROOT | a storage root is not a node and has none | `Node.modifiedAt` is optional too; the formatters render an em dash. Anything filex did date keeps its date |
+| Per-drive usage | `/api/files/quota/me` meters the ACCOUNT, not the drive | every drive reports the same figure. An account with no ceiling (`unlimited`) shows what it has used and no progress bar — a bar that can never fill says nothing |
 | `shared` per row | `/api/files/share` is per node | listing rows report `false`; the share modal reads the real state when it opens |
 
 ### No endpoint at all

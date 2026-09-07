@@ -6,6 +6,7 @@ import type {
   ListingFilter,
   Node,
   Person,
+  ProfilePatch,
   SearchQuery,
   SearchResult,
   Storage,
@@ -16,6 +17,12 @@ import type {
 
 /** `createFolder` / `rename` reject with an Error carrying this message when a live sibling has the same name. */
 export const DUPLICATE_NAME = 'duplicateName';
+
+/** `changePassword` rejects with this when the current password does not match. */
+export const WRONG_PASSWORD = 'wrongPassword';
+
+/** filex refuses anything shorter, so the form says so before a request goes out. */
+export const MIN_PASSWORD_LENGTH = 8;
 
 export interface Repository {
   listStorages(): Promise<Storage[]>;
@@ -41,6 +48,10 @@ export interface Repository {
   /** Options of the People chip: everyone who can own a row in the user's listings. */
   listFilterPeople(): Promise<Person[]>;
   currentUser(): Promise<User>;
+  /** Saves the account fields the settings modal owns and answers with the account as it now stands. */
+  updateProfile(patch: ProfilePatch): Promise<User>;
+  /** Rejects with `WRONG_PASSWORD` when `currentPassword` is not the account's. */
+  changePassword(currentPassword: string, newPassword: string): Promise<void>;
   /** Feature snapshot for this user; read once at start-up. */
   capabilities(): Promise<Capabilities>;
   search(query: SearchQuery): Promise<SearchResult>;

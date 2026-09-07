@@ -1,6 +1,6 @@
-import { DUPLICATE_NAME, type Repository } from '../repository';
+import { DUPLICATE_NAME, WRONG_PASSWORD, type Repository } from '../repository';
 import { matchesFilter } from '../listingFilter';
-import { noCapabilities, type ActivityEvent, type AssistantEvent, type Capabilities, type ListingFilter, type Node, type Person, type Quota, type SearchHit, type SearchQuery, type SearchResult, type Storage, type UploadInput, type User, type Version } from '../types';
+import { noCapabilities, type ActivityEvent, type AssistantEvent, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type Quota, type SearchHit, type SearchQuery, type SearchResult, type Storage, type UploadInput, type User, type Version } from '../types';
 import { HttpError, request, upload } from './client';
 import {
   fromFileNode,
@@ -9,6 +9,7 @@ import {
   joinPath,
   nameOf,
   parentPath,
+  SELF,
   splitPath,
   toQuota,
   toStorage,
@@ -63,6 +64,24 @@ interface WireUser {
   email: string;
   display_name?: string;
   role: string;
+  avatar_url?: string;
+  locale?: string;
+  timezone?: string;
+}
+
+/** An account with no display name is shown by the address it signs in with, which is what it has. */
+function toUser(wire: WireUser): User {
+  const name = wire.display_name?.trim() || wire.email;
+  return {
+    id: String(wire.id),
+    name,
+    initial: initialOf(name),
+    email: wire.email,
+    role: wire.role === 'admin' ? 'admin' : 'member',
+    avatarUrl: wire.avatar_url || undefined,
+    locale: wire.locale || undefined,
+    timeZone: wire.timezone || undefined,
+  };
 }
 
 interface WireVersion {
@@ -121,8 +140,16 @@ export class HttpRepository implements Repository {
   private project(rows: WireFileNode[]): Node[] {
     return rows.map((row) => {
       this.remember(row.path, row.id);
-      return fromFileNode(row);
+      return { ...fromFileNode(row), ownerId: this.owner() };
     });
+  }
+
+  /**
+   * filex stores no owner per node, so everything the caller can see is theirs. Saying so with the account's OWN id
+   * rather than a sentinel is what lets the details panel recognise it and print "You".
+   */
+  private owner(): string {
+    return this.user?.id ?? SELF;
   }
 
   /** `model.Node` rows only address a storage by name on the handlers that fill it in; a row without one is unusable. */
@@ -132,7 +159,7 @@ export class HttpRepository implements Repository {
       if (!row.storage) continue;
       const node = fromModelNode(row, row.storage);
       this.remember(node.id, row.id);
-      out.push(node);
+      out.push({ ...node, ownerId: this.owner() });
     }
     return out;
   }
@@ -180,15 +207,36 @@ export class HttpRepository implements Repository {
   async currentUser(): Promise<User> {
     if (this.user) return this.user;
     const { user } = await request<{ user: WireUser }>('/api/auth/me');
-    const name = user.display_name?.trim() || user.email;
-    this.user = {
-      id: String(user.id),
-      name,
-      initial: initialOf(name),
-      email: user.email,
-      role: user.role === 'admin' ? 'admin' : 'member',
-    };
+    this.user = toUser(user);
     return this.user;
+  }
+
+  /**
+   * The account fields the modal owns, in one PATCH. filex answers with the whole user row, so the store gets the
+   * value the server actually stored — a display name it trimmed, or an avatar it refused.
+   */
+  async updateProfile(patch: ProfilePatch): Promise<User> {
+    const wire = await request<WireUser>('/api/auth/profile', {
+      method: 'PATCH',
+      body: {
+        ...(patch.name === undefined ? {} : { display_name: patch.name }),
+        ...(patch.locale === undefined ? {} : { locale: patch.locale }),
+        ...(patch.timeZone === undefined ? {} : { timezone: patch.timeZone }),
+        ...(patch.avatarUrl === undefined ? {} : { avatar_url: patch.avatarUrl }),
+      },
+    });
+    this.user = toUser(wire);
+    return this.user;
+  }
+
+  /** filex checks the old password itself and answers 401 when it is wrong; every other status is a real failure. */
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    try {
+      await request('/api/auth/password', { method: 'POST', body: { old_password: currentPassword, new_password: newPassword } });
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 401) throw new Error(WRONG_PASSWORD);
+      throw error;
+    }
   }
 
   /**
@@ -240,8 +288,7 @@ export class HttpRepository implements Repository {
       kind: 'folder',
       parentId: parentPath(id),
       size: 0,
-      modifiedAt: new Date(0).toISOString(),
-      ownerId: 'me',
+      ownerId: this.owner(),
       itemCount,
       shared: false,
       starred: false,
@@ -487,7 +534,7 @@ export class HttpRepository implements Repository {
     const hits: SearchHit[] = [];
     for (const row of results) {
       if (!row.storage) continue;
-      const node = fromModelNode(row, row.storage);
+      const node = { ...fromModelNode(row, row.storage), ownerId: this.owner() };
       this.remember(node.id, row.id);
       if (!matchesFilter(node, { fileType: query.fileType, modified: query.modified, size: query.size.preset === 'custom' ? 'any' : query.size.preset, personId: query.ownerId })) continue;
       const parent = parentPath(node.id);

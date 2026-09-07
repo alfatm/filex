@@ -1,0 +1,113 @@
+# filex + the end-user app, wired to each other — a throwaway stack for testing
+# `app/` against a REAL server instead of its mock repository.
+#
+#   docker compose -f docker-compose.app.yml up --build
+#
+# Then, in this order:
+#   1. http://localhost:5212/  — sign in as admin@filex.test / FilexTest1!
+#   2. http://localhost:5175/app/ — the end-user app, now talking to that server
+#
+# The order matters and the second step needs no second login: a cookie is
+# scoped by DOMAIN, not by port, so the session minted on :5212 is sent to
+# :5175 as well. That port is deliberately NOT 5174: a `pnpm dev` running on
+# the host owns that one, and the stack must not fight it for it. The app itself has no login screen — it is the signed-in
+# surface, and the admin SPA is where an account signs in.
+#
+# Nothing here is production shape: the admin password is in this file, the
+# database and the drive are throwaway volumes, and the app is served by Vite
+# with hot reload rather than built. `docker compose -f docker-compose.app.yml
+# down -v` erases the lot and gives you a fresh install on the next `up`.
+
+services:
+  # ---------------------------------------------------------------------
+  # filex, built from THIS working tree — the point of the stack is to test
+  # against the endpoints in the branch, not against a published image.
+  # ---------------------------------------------------------------------
+  filex:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: filex-app-test
+    ports:
+      - "${FILEX_PORT:-5212}:5212"
+    volumes:
+      - filex-data:/data
+      - filex-storage:/srv/files
+      # The demo files, read-only, so there is something real to browse. Env
+      # seeding only ever creates ONE drive, so this one is added by hand:
+      # Storages → New → local, path /srv/demo, read-only. Skip it and the
+      # stack still works — the writable drive above just starts empty.
+      - ${DEMO_ASSETS_DIR:-../drive-demo-assets/demo}:/srv/demo:ro
+    environment:
+      FILEX_PUBLIC_URL: http://localhost:${FILEX_PORT:-5212}
+      FILEX_LISTEN: 0.0.0.0:5212
+      FILEX_DB_DRIVER: sqlite
+      FILEX_DB_DSN: /data/filex.db
+
+      # First boot creates this account and skips the setup wizard. Both are
+      # test credentials on purpose — never copy this block into a real deploy.
+      FILEX_ADMIN_EMAIL: ${FILEX_ADMIN_EMAIL:-admin@filex.test}
+      FILEX_ADMIN_PASSWORD: ${FILEX_ADMIN_PASSWORD:-FilexTest1!}
+
+      # First boot also creates one writable drive. Its NAME is what the app
+      # addresses every node by (`main://Docs/report.pdf`), so it is worth
+      # keeping short and recognisable in the URL bar.
+      FILEX_DEFAULT_STORAGE_DRIVER: local
+      FILEX_DEFAULT_STORAGE_NAME: ${FILEX_STORAGE_NAME:-main}
+      FILEX_DEFAULT_STORAGE_PATH: /srv/files
+
+      FILEX_THUMBS_ENABLED: "true"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5212/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+  # ---------------------------------------------------------------------
+  # The end-user app, on Vite's dev server so an edit on the host is visible
+  # without rebuilding anything. `VITE_FILEX_API` is what switches
+  # `src/data/index.ts` off the mock repository and onto the HTTP one.
+  # ---------------------------------------------------------------------
+  app:
+    image: node:20-alpine
+    container_name: filex-app-test-ui
+    working_dir: /repo
+    depends_on:
+      filex:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT:-5175}:5174"
+    environment:
+      VITE_FILEX_API: "1"
+      # Same-origin from the browser's side: the dev server forwards /api, so
+      # the session cookie rides along and nothing needs CORS.
+      FILEX_API_PROXY: http://filex:5212
+      VITE_HOST: 0.0.0.0
+      # Hot reload dials back to the PUBLISHED port, which is not the one Vite
+      # binds inside the container.
+      VITE_HMR_CLIENT_PORT: ${APP_PORT:-5175}
+      NODE_OPTIONS: --max-old-space-size=4096
+    volumes:
+      - ./:/repo
+      # Dependencies are installed INSIDE the container and kept out of the
+      # bind mount: esbuild and rollup ship native binaries, and the host's
+      # copies are built for the host's libc, not this image's musl.
+      - app-node-modules:/repo/node_modules
+      - app-pkg-node-modules:/repo/app/node_modules
+      - pnpm-store:/pnpm-store
+    command:
+      - sh
+      - -c
+      - |
+        corepack enable
+        pnpm config set store-dir /pnpm-store
+        pnpm install --filter @brftech/filex-app... --no-frozen-lockfile
+        pnpm --filter @brftech/filex-app dev
+
+volumes:
+  filex-data:
+  filex-storage:
+  app-node-modules:
+  app-pkg-node-modules:
+  pnpm-store:

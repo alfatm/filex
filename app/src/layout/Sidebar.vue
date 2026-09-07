@@ -181,13 +181,17 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
       <p class="text-15 font-semibold leading-none">{{ files.storage.name }}</p>
       <p class="mt-1.5 text-13 leading-none text-text-3">
         {{
-          t('quota.used', {
-            used: formatSize(files.storage.quota.usedBytes),
-            total: formatSize(files.storage.quota.totalBytes),
-          })
+          files.storage.quota.totalBytes
+            ? t('quota.used', {
+                used: formatSize(files.storage.quota.usedBytes),
+                total: formatSize(files.storage.quota.totalBytes),
+              })
+            : t('quota.usedUnlimited', { used: formatSize(files.storage.quota.usedBytes) })
         }}
       </p>
+      <!-- An account with no ceiling has nothing to fill, so it gets the figure without the bar. -->
       <ProgressBar
+        v-if="files.storage.quota.totalBytes"
         class="mt-2.5"
         :value="files.storage.quota.usedBytes"
         :max="files.storage.quota.totalBytes"

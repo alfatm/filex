@@ -298,7 +298,7 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
               {{ hit.node.kind === 'folder' ? t('search.updated', { date: formatDate(hit.node.modifiedAt) }) : formatDate(hit.node.modifiedAt) }}
             </span>
             <span class="ml-4 w-14 shrink-0 text-right text-13">
-              {{ hit.node.kind === 'folder' ? t('files.items', hit.node.itemCount ?? 0) : formatSize(hit.node.size) }}
+              {{ hit.node.kind === 'folder' ? (hit.node.itemCount === undefined ? t('type.folder') : t('files.items', hit.node.itemCount)) : formatSize(hit.node.size) }}
             </span>
           </li>
           <li v-if="!liveHits.length && !store.loading" class="flex h-9 items-center text-15 text-text-3">{{ t('search.noResults') }}</li>

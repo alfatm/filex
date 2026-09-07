@@ -32,7 +32,7 @@ const folderLabel = computed(() => hitFolderLabel(props.hit, files.storages));
       <div class="flex items-center">
         <HitIcon :node="hit.node" />
         <span class="ml-5 truncate text-16 font-medium text-text">{{ hit.node.name }}</span>
-        <span v-if="hit.node.kind === 'folder'" class="ml-4 shrink-0 text-text-3">{{ t('files.items', hit.node.itemCount ?? 0) }}</span>
+        <span v-if="hit.node.kind === 'folder'" class="ml-4 shrink-0 text-text-3">{{ hit.node.itemCount === undefined ? t('type.folder') : t('files.items', hit.node.itemCount) }}</span>
       </div>
     </td>
     <td class="truncate text-text-3">{{ folderLabel }}</td>

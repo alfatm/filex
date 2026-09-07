@@ -68,4 +68,25 @@ test.describe('User settings', () => {
     await page.getByRole('button', { name: 'Save changes' }).click();
     expect((await row.boundingBox())?.height).toBe(34);
   });
+
+  test('the display name is saved to the account and shows up wherever the avatar does', async ({ page }) => {
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const dialog = page.getByRole('dialog');
+    const displayName = dialog.getByRole('textbox', { name: 'Display name' });
+    await expect(displayName).toHaveValue('demo');
+    await displayName.fill('Ada Lovelace');
+    await dialog.getByRole('button', { name: 'Save changes' }).click();
+    await expect(dialog).toBeHidden();
+
+    // The account, not the form: the header avatar re-initialises from the name the repository returned.
+    await expect(page.getByRole('button', { name: 'Account' })).toContainText('A');
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await expect(page.getByRole('dialog').getByRole('textbox', { name: 'Display name' })).toHaveValue('Ada Lovelace');
+  });
+
+  test('the remove-photo button is inert until there is a photo to remove', async ({ page }) => {
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await expect(page.getByRole('dialog').getByRole('button', { name: 'Remove' })).toBeDisabled();
+    await expect(page.getByRole('dialog').getByRole('button', { name: 'Change photo' })).toBeEnabled();
+  });
 });

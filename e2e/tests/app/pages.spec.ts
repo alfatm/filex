@@ -37,6 +37,23 @@ test.describe('Pages', () => {
     await expect(page).toHaveURL(/\/app\/files$/);
   });
 
+  // A row picked on a listing beside the tree describes a node like any other; the panel has to say where that
+  // node actually LIVES, which is nowhere near the folder the user last had open.
+  test('Recent: selecting a row opens the details panel with the file\u2019s own location', async ({ page }) => {
+    await page.goto('recent');
+    const panel = page.getByRole('complementary', { name: 'Details' });
+    await expect(panel).toBeHidden();
+
+    await page.getByRole('row', { name: /Brand Guidelines\.pdf/ }).click();
+    await expect(panel).toBeVisible();
+    await expect(panel.getByRole('heading', { name: 'Brand Guidelines.pdf' })).toBeVisible();
+    await expect(panel.getByText('/demo/Design')).toBeVisible();
+
+    // A second selection turns it back off: the panel describes one node, not a set.
+    await page.getByRole('row', { name: /README\.md/ }).first().click({ modifiers: ['ControlOrMeta'] });
+    await expect(panel).toBeHidden();
+  });
+
   test('Recent: newest first, grouped by day, no sort control', async ({ page }) => {
     await page.goto('recent');
     await expect(page.getByRole('heading', { name: 'Recent' })).toBeVisible();

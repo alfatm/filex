@@ -23,7 +23,7 @@ const sizes = {
 <template>
   <button
     :type="type"
-    class="inline-flex items-center justify-center gap-2 font-medium leading-none select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+    class="inline-flex items-center justify-center gap-2 font-medium leading-none select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring disabled:pointer-events-none disabled:opacity-50"
     :class="[variants[variant], sizes[size]]"
   >
     <slot />

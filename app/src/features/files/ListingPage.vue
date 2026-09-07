@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { onMounted, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AlertTriangle, Filter } from 'lucide-vue-next';
+import { AlertTriangle, Filter, Info } from 'lucide-vue-next';
 import type { Node } from '@/data/types';
+import DetailsPanel from '@/pages/files/DetailsPanel.vue';
 import EmptyState from '@/pages/files/EmptyState.vue';
 import ListingSkeleton from '@/pages/files/ListingSkeleton.vue';
 import FileTable, { type TableColumn } from '@/pages/files/FileTable.vue';
 import SelectionBar from '@/pages/files/SelectionBar.vue';
 import SortControl from '@/pages/files/SortControl.vue';
 import { useFilesStore, type ListingKind } from '@/stores/files';
-import { Button } from '@/ui';
+import { useViewStore } from '@/stores/view';
+import { Button, IconButton } from '@/ui';
 import FilterChip from './FilterChip.vue';
 import { type FilterId } from './filters';
 import { useListingKeyboard } from './useListingKeyboard';
@@ -33,6 +35,7 @@ const props = withDefaults(
 
 const { t } = useI18n();
 const files = useFilesStore();
+const view = useViewStore();
 const { onKeydown, onMainClick, onMainContextMenu, activeDescendant, open } = useListingKeyboard();
 
 onMounted(() => files.openListing(props.listing));
@@ -52,6 +55,17 @@ onMounted(() => files.openListing(props.listing));
         <FilterChip v-for="id in filters" :key="id" :id="id" />
       </div>
       <SortControl v-if="sortable" variant="pill" class="ml-auto mr-[10px]" />
+      <!-- Same toggle as My files, in the same place: a row selected here describes a node like any other. -->
+      <IconButton
+        :label="t('files.details')"
+        variant="outline"
+        :active="view.detailsOpen"
+        class="!w-11"
+        :class="sortable ? '' : 'ml-auto'"
+        @click="view.togglePanel('details')"
+      >
+        <Info :size="20" />
+      </IconButton>
     </div>
 
     <ListingSkeleton v-if="files.loading && !files.ordered.length" class="mr-[9px] mt-[22px]" />
@@ -80,4 +94,14 @@ onMounted(() => files.openListing(props.listing));
       <Button v-if="files.filtered" variant="outline" @click="files.clearFilter()">{{ t('filter.clear') }}</Button>
     </EmptyState>
   </main>
+
+  <!-- These listings have no folder of their own, so the panel appears only once a row is picked. -->
+  <DetailsPanel
+    v-if="view.detailsOpen && files.selected.length === 1 && files.focusNode"
+    :node="files.focusNode"
+    :path="files.focusPath"
+    :people="files.people"
+    :user="files.user"
+    @close="view.detailsOpen = false"
+  />
 </template>

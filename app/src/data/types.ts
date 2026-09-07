@@ -12,7 +12,8 @@ export interface Node {
   parentId: string | null;
   /** Bytes; 0 for folders. */
   size: number;
-  modifiedAt: string;
+  /** Absent where the source records none — a storage root is not a file anything wrote. */
+  modifiedAt?: string;
   /** Absent when the listing that produced the node does not carry one; the details panel then omits the row. */
   createdAt?: string;
   /** Id of the owning user; `ownerName` carries the display name when it is not the current user (shared drives). */
@@ -141,6 +142,20 @@ export interface User {
   email: string;
   /** Shown as a badge in the settings modal; the backend's own role names map onto it. */
   role: 'owner' | 'admin' | 'member';
+  /** Profile picture — a URL or a small `data:` URI. Absent means the avatar draws the initial. */
+  avatarUrl?: string;
+  /** Preferences the ACCOUNT carries, so they follow the person to another browser. */
+  locale?: string;
+  timeZone?: string;
+}
+
+/** What the settings modal may change about the account; an absent field is left alone. */
+export interface ProfilePatch {
+  name?: string;
+  locale?: string;
+  timeZone?: string;
+  /** An empty string removes the picture. */
+  avatarUrl?: string;
 }
 
 // The allowed-value lists double as the URL-parsing whitelists in features/search/searchStore.ts.

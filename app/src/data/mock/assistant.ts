@@ -99,7 +99,7 @@ async function* words(text: string, signal: AbortSignal): AsyncGenerator<Assista
 }
 
 function inMonth(hit: SearchHit, month: number, now: Date): boolean {
-  const at = new Date(hit.node.modifiedAt);
+  const at = new Date(hit.node.modifiedAt ?? 0);
   return at.getFullYear() === now.getFullYear() && at.getMonth() === month;
 }
 

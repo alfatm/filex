@@ -216,7 +216,7 @@ watch(
   <DetailsPanel
     v-if="view.detailsOpen && files.focusNode"
     :node="files.focusNode"
-    :path="files.selected.length === 1 ? [...files.path, files.folder!] : files.path"
+    :path="files.focusPath"
     :people="files.people"
     :user="files.user"
     @close="view.detailsOpen = false"

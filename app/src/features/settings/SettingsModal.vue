@@ -5,6 +5,7 @@ import { Dialog, DialogPanel, DialogTitle } from '@headlessui/vue';
 import { Bell, Camera, ChevronRight, Folder, KeyRound, Monitor, Settings2, ShieldCheck, Smartphone, Sparkles, UserRound, X } from 'lucide-vue-next';
 import { repository } from '@/data';
 import type { Node } from '@/data/types';
+import { useToastStore } from '@/stores/toast';
 import { LOCALES, setLocale, type Locale } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
 import { Avatar, Button, Checkbox, Input, Select } from '@/ui';
@@ -29,9 +30,14 @@ const SECURITY_ROWS = [
   { id: 'sessions', icon: Monitor },
 ] as const;
 
+/** The picture is stored inline on the account, so it is downscaled to a thumbnail before it is ever sent. */
+const AVATAR_PX = 160;
+const AVATAR_QUALITY = 0.85;
+
 const { t, locale } = useI18n();
 const files = useFilesStore();
 const store = useSettingsStore();
+const toast = useToastStore();
 
 // The modal edits a copy: Cancel just drops it, Save commits everything at once.
 const draft = ref<Settings>({ ...store.settings });
@@ -40,6 +46,10 @@ const active = ref<SectionId>('profile');
 const scroller = ref<HTMLElement>();
 const sections = ref<Record<string, HTMLElement>>({});
 const folders = ref<Node[]>([]);
+// The picture belongs to the ACCOUNT, not to the local settings, so it is drafted on its own.
+const avatarUrl = ref('');
+const photoInput = ref<HTMLInputElement>();
+const saving = ref(false);
 const panel = ref<{ $el: HTMLElement } | null>(null);
 const panelEl = computed(() => panel.value?.$el ?? undefined);
 
@@ -83,9 +93,31 @@ watch(
     if (!user) return;
     draft.value.fullName ||= user.name;
     draft.value.displayName ||= user.name;
+    avatarUrl.value = user.avatarUrl ?? '';
   },
   { immediate: true },
 );
+
+/**
+ * A chosen picture is re-encoded to at most AVATAR_PX square before it goes anywhere: the account carries it as an
+ * inline `data:` URI that rides along with the user row, so a 4 MB camera photo would be paid for on every read.
+ */
+async function pickPhoto(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  (event.target as HTMLInputElement).value = '';
+  if (!file) return;
+  const source = await createImageBitmap(file);
+  const side = Math.min(source.width, source.height);
+  const canvas = document.createElement('canvas');
+  canvas.width = AVATAR_PX;
+  canvas.height = AVATAR_PX;
+  // Centre-cropped to a square, because the avatar is drawn in a circle and a squashed face is worse than a crop.
+  canvas
+    .getContext('2d')
+    ?.drawImage(source, (source.width - side) / 2, (source.height - side) / 2, side, side, 0, 0, AVATAR_PX, AVATAR_PX);
+  source.close();
+  avatarUrl.value = canvas.toDataURL('image/jpeg', AVATAR_QUALITY);
+}
 
 function onScroll() {
   const top = scroller.value?.getBoundingClientRect().top ?? 0;
@@ -99,7 +131,26 @@ function goTo(id: SectionId) {
   sections.value[id]?.scrollIntoView({ block: 'start' });
 }
 
-function save() {
+/**
+ * Two destinations, one button. The display name, the language, the time zone and the picture are the account's and
+ * go to the server; everything else is this browser's and stays in local storage. A server that refuses keeps the
+ * modal open with the edit intact — closing it would throw the change away and say nothing.
+ */
+async function save() {
+  saving.value = true;
+  try {
+    files.user = await repository.updateProfile({
+      name: draft.value.displayName,
+      locale: language.value,
+      timeZone: draft.value.timeZone,
+      avatarUrl: avatarUrl.value,
+    });
+  } catch {
+    toast.push(t('settings.saveFailed'));
+    return;
+  } finally {
+    saving.value = false;
+  }
   store.apply({ ...draft.value });
   if (language.value !== locale.value) setLocale(language.value);
   store.open = false;
@@ -115,7 +166,7 @@ const LABEL = 'block text-13 leading-none text-text-3';
     <div class="fixed inset-0 flex items-center justify-center overflow-y-auto p-6">
       <DialogPanel ref="panel" tabindex="-1" class="flex max-h-[850px] w-[808px] flex-col rounded-2xl bg-bg px-4 py-5 focus:outline-none shadow-modal">
         <div class="flex items-start">
-          <Avatar :initial="files.user?.initial ?? ''" :size="44" class="!text-16" />
+          <Avatar :initial="files.user?.initial ?? ''" :src="avatarUrl" :size="44" class="!text-16" />
           <div class="ml-4 min-w-0 flex-1">
             <DialogTitle class="truncate-safe text-20 font-semibold leading-none">{{ t('settings.title') }}</DialogTitle>
             <p class="mt-1.5 truncate-safe text-14 leading-none text-text-3">{{ t('settings.subtitle') }}</p>
@@ -155,7 +206,7 @@ const LABEL = 'block text-13 leading-none text-text-3';
 
               <div class="mt-4 flex items-center">
                 <span class="relative shrink-0">
-                  <Avatar :initial="files.user?.initial ?? ''" :size="62" class="!text-22" />
+                  <Avatar :initial="files.user?.initial ?? ''" :src="avatarUrl" :size="62" class="!text-22" />
                   <span class="absolute -bottom-0.5 -right-0.5 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-bg text-text-2">
                     <Camera :size="13" />
                   </span>
@@ -169,11 +220,11 @@ const LABEL = 'block text-13 leading-none text-text-3';
                   </p>
                   <p class="mt-2 truncate-safe text-14 leading-none text-text-3">{{ files.user?.email }}</p>
                 </div>
-                <!-- Both need an avatar upload endpoint; they keep the reference look and say so on hover. -->
-                <Button variant="outline" class="ml-3 shrink-0 cursor-default" aria-disabled="true" :title="t('common.comingSoon')">
+                <input ref="photoInput" type="file" accept="image/*" class="sr-only" @change="pickPhoto" />
+                <Button variant="outline" class="ml-3 shrink-0" @click="photoInput?.click()">
                   {{ t('settings.profile.changePhoto') }}
                 </Button>
-                <Button variant="outline" class="ml-2 shrink-0 cursor-default !text-danger" aria-disabled="true" :title="t('common.comingSoon')">
+                <Button variant="outline" class="ml-2 shrink-0 !text-danger" :disabled="!avatarUrl" @click="avatarUrl = ''">
                   {{ t('settings.profile.removePhoto') }}
                 </Button>
               </div>
@@ -314,7 +365,7 @@ const LABEL = 'block text-13 leading-none text-text-3';
 
         <div class="mt-5 flex shrink-0 items-center justify-end gap-3 border-t border-border pt-5">
           <Button variant="outline" class="!h-11 px-5" @click="store.open = false">{{ t('settings.cancel') }}</Button>
-          <Button class="!h-11 px-5" @click="save">{{ t('settings.save') }}</Button>
+          <Button class="!h-11 px-5" :disabled="saving" @click="save">{{ t('settings.save') }}</Button>
         </div>
       </DialogPanel>
     </div>

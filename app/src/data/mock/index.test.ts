@@ -119,7 +119,7 @@ describe('mock repository mutations', () => {
     const before = (await repo.getNode('readme-md')).modifiedAt;
     const node = await repo.rename('readme-md', 'GUIDE.md');
     expect(node.name).toBe('GUIDE.md');
-    expect(Date.parse(node.modifiedAt)).toBeGreaterThan(Date.parse(before));
+    expect(Date.parse(node.modifiedAt ?? '')).toBeGreaterThan(Date.parse(before ?? ''));
     expect(names(await repo.listFolder('demo'))).toContain('GUIDE.md');
   });
 
@@ -223,7 +223,7 @@ describe('mock repository mutations', () => {
     const logo = listed.find((n) => n.name === 'logo.svg')!;
     expect(logo).toMatchObject({ id: 'design/logo-svg', size: 684, fileType: 'image', assetUrl: '/app/demo-assets/Design/logo.svg' });
     expect(listed.find((n) => n.name === 'Brand Guidelines.pdf')?.assetUrl).toBe('/app/demo-assets/Design/Brand%20Guidelines.pdf');
-    expect(listed.map((n) => n.modifiedAt.slice(0, 13))).toEqual(listed.map((_, i) => `2026-07-01T0${8 - i}`));
+    expect(listed.map((n) => n.modifiedAt?.slice(0, 13))).toEqual(listed.map((_, i) => `2026-07-01T0${8 - i}`));
     expect((await repo.getPath('design/logo-svg')).map((n) => n.id)).toEqual(['demo', 'design']);
     expect(names(await repo.listFolders('demo'))).toContain('Design');
   });
@@ -250,7 +250,7 @@ describe('mock repository mutations', () => {
     await repo.recordOpen('mountains-jpg');
     const recent = await repo.listRecent();
     expect(recent[0].name).toBe('mountains.jpg');
-    expect(Date.parse(recent[0].openedAt!)).toBeGreaterThan(Date.parse(recent[1].modifiedAt));
+    expect(Date.parse(recent[0].openedAt!)).toBeGreaterThan(Date.parse(recent[1].modifiedAt ?? ''));
     expect(recent[1].name).toBe('Q3 report.pdf');
     // The search-only reference hits can be opened too.
     await repo.recordOpen('design/overview-pdf');

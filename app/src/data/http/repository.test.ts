@@ -94,6 +94,28 @@ describe('HttpRepository', () => {
     expect(calls).toEqual([]);
   });
 
+  it('patches only the profile fields it was given, in the server\u2019s own spelling', async () => {
+    routes = [['/api/auth/profile', { id: 1, email: 'ada@filex.test', display_name: 'Ada', role: 'user', locale: 'ru', timezone: 'Europe/Berlin' }]];
+    const user = await new HttpRepository().updateProfile({ name: 'Ada', locale: 'ru' });
+    expect(calls[0]).toMatchObject({ method: 'PATCH', body: { display_name: 'Ada', locale: 'ru' } });
+    // An untouched field must not be sent at all: an explicit "" is how the server is told to CLEAR one.
+    expect(calls[0].body).not.toHaveProperty('avatar_url');
+    expect(calls[0].body).not.toHaveProperty('timezone');
+    expect(user).toMatchObject({ id: '1', name: 'Ada', initial: 'A', locale: 'ru', timeZone: 'Europe/Berlin' });
+  });
+
+  it('falls back to the sign-in address when the account has no display name', async () => {
+    routes = [['/api/auth/me', { user: { id: 2, email: 'nobody@filex.test', display_name: '', role: 'user' } }]];
+    expect(await new HttpRepository().currentUser()).toMatchObject({ name: 'nobody@filex.test', initial: 'N' });
+  });
+
+  it('tells a wrong current password apart from a server failure', async () => {
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 401, text: async () => '{"error":"old password incorrect"}' }) as Response);
+    await expect(new HttpRepository().changePassword('nope', 'longenough')).rejects.toThrow('wrongPassword');
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 500, text: async () => '{"error":"boom"}' }) as Response);
+    await expect(new HttpRepository().changePassword('nope', 'longenough')).rejects.toThrow('500');
+  });
+
   it('reports a name collision as the shared duplicate error the modals show inline', async () => {
     vi.stubGlobal('fetch', async () => ({ ok: false, status: 409, text: async () => '{"error":"exists"}' }) as Response);
     await expect(new HttpRepository().createFolder('main://Docs', 'Reports')).rejects.toThrow('duplicateName');

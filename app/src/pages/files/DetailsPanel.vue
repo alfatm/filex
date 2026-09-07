@@ -31,7 +31,7 @@ const typeLabel = computed(() =>
 );
 const meta = computed(() =>
   props.node.kind === 'folder'
-    ? t('panel.folderMeta', props.node.itemCount ?? 0)
+    ? (props.node.itemCount === undefined ? t('type.folder') : t('panel.folderMeta', props.node.itemCount))
     : t('panel.fileMeta', { type: typeLabel.value, size: formatSize(props.node.size) }),
 );
 const location = computed(() => '/' + props.path.map((n) => n.name).join('/'));

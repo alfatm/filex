@@ -5,14 +5,24 @@ import FileModals from './features/files/FileModals.vue';
 import ItemMenuHost from './features/files/ItemMenuHost.vue';
 import UploadTray from './features/files/UploadTray.vue';
 import AppShell from './layout/AppShell.vue';
+import { useSettingsStore } from './features/settings/settingsStore';
+import { LOCALES, setLocale, type Locale } from './i18n';
 import { useCapabilitiesStore } from './stores/capabilities';
 import { useFilesStore } from './stores/files';
 
 const { locale } = useI18n();
 const files = useFilesStore();
+const settings = useSettingsStore();
 
 watch(locale, (value) => (document.documentElement.lang = value), { immediate: true });
-void files.bootstrap();
+// The account carries the language and the time zone, so they follow the person to another browser. Local storage
+// is what an offline or demo run falls back to; an account that has never set them leaves that choice standing.
+void files.bootstrap().then(() => {
+  const account = files.user;
+  if (!account) return;
+  if (account.locale && LOCALES.includes(account.locale as Locale)) setLocale(account.locale as Locale);
+  if (account.timeZone) settings.apply({ ...settings.settings, timeZone: account.timeZone });
+});
 void useCapabilitiesStore().load();
 
 // Screenshot / e2e URL hooks (`?view`, `?select`, `?panel`, `?modal`, `?menu`, `?demo`); dev builds only.

@@ -40,7 +40,7 @@ export function listVersions(nodeId: string): Version[] {
   if (!node || node.kind !== 'file') return [];
   const known = versions.get(nodeId);
   if (known) return known;
-  const at = Date.parse(node.modifiedAt);
+  const at = Date.parse(node.modifiedAt ?? '');
   const seeded = Array.from({ length: SEEDED_VERSIONS }, (_, i) => ({
     id: `${nodeId}@${i}`,
     at: new Date(at - i * VERSION_GAP_HOURS * HOUR).toISOString(),
@@ -75,7 +75,7 @@ export function listActivity(nodeId: string): ActivityEvent[] {
   const logged = activity.get(nodeId) ?? [];
   // The two events every node carries in its own fields, so the tab is never empty.
   const seeded: ActivityEvent[] = [
-    { id: `${nodeId}:modified`, at: node.modifiedAt, actorId: node.ownerId, actorName: node.ownerName ?? user.name, kind: 'modified' },
+    ...(node.modifiedAt ? [{ id: `${nodeId}:modified`, at: node.modifiedAt, actorId: node.ownerId, actorName: node.ownerName ?? user.name, kind: 'modified' as const }] : []),
     ...(node.createdAt ? [{ id: `${nodeId}:created`, at: node.createdAt, actorId: node.ownerId, actorName: node.ownerName ?? user.name, kind: 'created' as const }] : []),
   ];
   return [...logged, ...seeded].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));

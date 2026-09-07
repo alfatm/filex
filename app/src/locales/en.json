@@ -31,7 +31,8 @@
     "document": "New document"
   },
   "quota": {
-    "used": "{used} of {total} used"
+    "used": "{used} of {total} used",
+    "usedUnlimited": "{used} used"
   },
   "unit": {
     "b": "B",
@@ -508,7 +509,8 @@
       "enabled": "Enable AI assistant",
       "defaultMode": "Default search mode",
       "providerNote": "The model and API key are configured by your administrator."
-    }
+    },
+    "saveFailed": "Could not save your profile."
   },
   "error": {
     "retry": "Try again",

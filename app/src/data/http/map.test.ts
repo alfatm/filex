@@ -64,7 +64,7 @@ describe('listing rows → app model', () => {
   });
 
   it('sorts a dateless row last rather than as an invalid date', () => {
-    expect(Date.parse(fromFileNode(listed({ last_modified: undefined })).modifiedAt)).toBe(0);
+    expect(fromFileNode(listed({ last_modified: undefined })).modifiedAt).toBeUndefined();
   });
 
   it('leaves shared and starred off: neither is knowable from a listing row', () => {

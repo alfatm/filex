@@ -47,7 +47,7 @@ function onContextMenu(event: MouseEvent) {
     <FolderIcon :shared="node.shared" />
     <div class="ml-6 min-w-0 flex-1">
       <p class="truncate-safe text-16 font-medium leading-none">{{ node.name }}</p>
-      <p class="mt-1 text-14 leading-none text-text-3">{{ t('files.items', node.itemCount ?? 0) }}</p>
+      <p class="mt-1 text-14 leading-none text-text-3">{{ node.itemCount === undefined ? t('type.folder') : t('files.items', node.itemCount) }}</p>
     </div>
     <IconButton :label="t('files.more')" :size="32" class="text-text-3" data-menu-button @click.stop="itemMenu.openFor(node, $event.currentTarget as HTMLElement)" @dblclick.stop>
       <MoreVertical :size="20" />

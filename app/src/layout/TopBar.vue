@@ -128,7 +128,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
         :aria-expanded="!!accountMenu"
         @click="accountMenu = anchorBelow($event.currentTarget as HTMLElement, ACCOUNT_MENU_WIDTH)"
       >
-        <Avatar :initial="files.user?.initial ?? ''" />
+        <Avatar :initial="files.user?.initial ?? ''" :src="files.user?.avatarUrl" />
         <ChevronDown :size="16" class="text-text-2" />
       </button>
       <FloatingMenu

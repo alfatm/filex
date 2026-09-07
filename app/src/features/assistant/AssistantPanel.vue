@@ -122,7 +122,7 @@ onBeforeUnmount(() => {
             <p class="whitespace-pre-wrap text-15 leading-[1.45]">{{ message.text }}</p>
             <p class="mt-1 text-12 leading-none text-text-3">{{ formatTime(message.at) }}</p>
           </div>
-          <Avatar :initial="files.user?.initial ?? ''" class="ml-3" />
+          <Avatar :initial="files.user?.initial ?? ''" :src="files.user?.avatarUrl" class="ml-3" />
         </div>
         <div v-else-if="followUp" :aria-live="streaming ? 'off' : undefined">
           <p class="text-15 leading-[1.45]">{{ message.text }}</p>

@@ -105,7 +105,7 @@ describe('mock search', () => {
     const now = Date.parse('2026-07-10T18:00:00');
     const names = (hits: { node: { name: string } }[]) => hits.map((h) => h.node.name);
     const today = search(query({ modified: 'today' }), now).hits;
-    expect(today.every((h) => now - Date.parse(h.node.modifiedAt) <= 24 * 60 * 60 * 1000)).toBe(true);
+    expect(today.every((h) => now - Date.parse(h.node.modifiedAt ?? '') <= 24 * 60 * 60 * 1000)).toBe(true);
     expect(names(today)).toContain('README.md');
     expect(names(today)).not.toContain('mountains.jpg');
     // demo.mp4 (Jul 3, 16:55) fell out of the 7-day window an hour ago.

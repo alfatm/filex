@@ -31,7 +31,8 @@
     "document": "Yeni belge"
   },
   "quota": {
-    "used": "{total} alanın {used} kadarı kullanıldı"
+    "used": "{total} alanın {used} kadarı kullanıldı",
+    "usedUnlimited": "{used} kullanıldı"
   },
   "unit": {
     "b": "B",
@@ -508,7 +509,8 @@
       "enabled": "AI asistanı etkinleştir",
       "defaultMode": "Varsayılan arama modu",
       "providerNote": "Model ve API anahtarı yöneticiniz tarafından yapılandırılır."
-    }
+    },
+    "saveFailed": "Profiliniz kaydedilemedi."
   },
   "error": {
     "retry": "Yeniden dene",

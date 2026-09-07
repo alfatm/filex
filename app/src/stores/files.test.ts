@@ -182,7 +182,7 @@ describe('files store', () => {
     view.sortDir = 'asc';
     await files.openListing('recent');
     expect(files.ordered[0]?.name).toBe('Q3 report.pdf');
-    const times = files.ordered.map((n) => Date.parse(n.modifiedAt));
+    const times = files.ordered.map((n) => Date.parse(n.modifiedAt ?? ''));
     expect(times).toEqual([...times].sort((a, b) => b - a));
   });
 });

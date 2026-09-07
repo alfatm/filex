@@ -1,6 +1,6 @@
 import { segments } from '@/lib/path';
-import { DUPLICATE_NAME, type Repository } from '../repository';
-import type { ListingFilter, Node } from '../types';
+import { DUPLICATE_NAME, MIN_PASSWORD_LENGTH, type Repository } from '../repository';
+import type { ListingFilter, Node, User } from '../types';
 import { fileTypeOf, filterPeople, indexedOnly, live, nodes, storages, TYPE_THUMBNAILS, user } from './dataset';
 import * as history from './history';
 import { assistantAsk } from './assistant';
@@ -8,11 +8,14 @@ import { matchesFilter, search } from './search';
 
 // `nodes` is the single in-memory state: search reads it too, so mutations edit that array in place.
 const initial: Node[] = structuredClone(nodes);
+// The account is mutable too — the settings modal edits it — so its starting shape is kept for the reset.
+const initialUser: User = { ...user };
 let seq = 0;
 
 /** Tests only: puts the dataset back to its initial shape. */
 export function resetMock() {
   nodes.splice(0, nodes.length, ...structuredClone(initial));
+  Object.assign(user, initialUser);
   history.resetHistory();
   seq = 0;
 }
@@ -119,7 +122,22 @@ export const mockRepository: Repository = {
     return filterPeople();
   },
   async currentUser() {
-    return user;
+    return { ...user };
+  },
+  /** The demo account is edited in place, so the header and the avatar follow the modal as the real one would. */
+  async updateProfile(patch) {
+    if (patch.name !== undefined) {
+      user.name = patch.name;
+      user.initial = (patch.name.trim()[0] ?? '?').toUpperCase();
+    }
+    if (patch.locale !== undefined) user.locale = patch.locale;
+    if (patch.timeZone !== undefined) user.timeZone = patch.timeZone;
+    if (patch.avatarUrl !== undefined) user.avatarUrl = patch.avatarUrl || undefined;
+    return { ...user };
+  },
+  /** No credential to check against; the demo account accepts any change but still enforces the length rule. */
+  async changePassword(_current, next) {
+    if (next.length < MIN_PASSWORD_LENGTH) throw new Error('passwordTooShort');
   },
   async capabilities() {
     // What this mock actually implements. Zipping a folder is the one thing it cannot do.
@@ -148,7 +166,7 @@ export const mockRepository: Repository = {
   },
 
   async listRecent(filter) {
-    const at = (n: Node) => Date.parse(n.openedAt ?? n.modifiedAt);
+    const at = (n: Node) => Date.parse(n.openedAt ?? n.modifiedAt ?? '');
     return copy(nodes.filter((n) => n.kind === 'file' && live(n) && keep(n, filter))).sort((a, b) => at(b) - at(a));
   },
   async listStarred(filter) {

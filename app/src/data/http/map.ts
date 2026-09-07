@@ -142,8 +142,8 @@ export function fromFileNode(wire: WireFileNode): Node {
     kind,
     parentId: parentPath(wire.path),
     size: kind === 'folder' ? 0 : wire.size,
-    // A row with no date at all would sort as "Invalid Date"; the epoch sorts last and reads as "unknown".
-    modifiedAt: new Date(wire.last_modified ?? 0).toISOString(),
+    // A row filex could not date at all keeps none, rather than being stamped with the epoch.
+    modifiedAt: wire.last_modified === undefined ? undefined : new Date(wire.last_modified).toISOString(),
     ...typed(wire.basename, kind),
     assetUrl: kind === 'file' ? previewUrl(wire.path) : undefined,
     shared: false,
@@ -165,7 +165,7 @@ export function fromModelNode(wire: WireNode, adapter: string): Node {
     kind,
     parentId: parentPath(id),
     size: kind === 'folder' ? 0 : wire.size,
-    modifiedAt: wire.backend_mtime ?? wire.db_mtime ?? wire.updated_at ?? new Date(0).toISOString(),
+    modifiedAt: wire.backend_mtime ?? wire.db_mtime ?? wire.updated_at,
     // Unlike the listing projection, `model.Node` does carry it — the details panel shows it when it is there.
     createdAt: wire.created_at,
     ...typed(wire.name, kind),

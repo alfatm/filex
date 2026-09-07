@@ -156,8 +156,14 @@ export default defineConfig({
   },
   server: {
     port: 5174,
+    // Host so the dev server is reachable from outside a container; the proxy target moves with it
+    // (docker-compose.app.yml points it at the filex service). Both default to a plain local backend.
+    host: process.env.VITE_HOST ?? 'localhost',
+    // Behind a container port mapping the browser reaches a different port than Vite binds; the HMR socket has
+    // to be told which one to dial, or every edit silently fails to reload.
+    hmr: process.env.VITE_HMR_CLIENT_PORT ? { clientPort: Number(process.env.VITE_HMR_CLIENT_PORT) } : undefined,
     proxy: {
-      '/api': 'http://localhost:5212',
+      '/api': process.env.FILEX_API_PROXY ?? 'http://localhost:5212',
     },
   },
 });

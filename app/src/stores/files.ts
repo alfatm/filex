@@ -27,6 +27,7 @@ export const useFilesStore = defineStore('files', () => {
   const path = ref<Node[]>([]);
   const items = ref<Node[]>([]);
   const people = ref<Person[]>([]);
+  const focusPath = ref<Node[]>([]);
   /** Chips above the listing. The repository applies them, so every change is a fresh load, as it will be over HTTP. */
   const filter = ref<ListingFilter>(emptyFilter());
   const filtered = computed(() => isFiltered(filter.value));
@@ -51,9 +52,9 @@ export const useFilesStore = defineStore('files', () => {
     // The trash shows a "Deleted" column instead of "Last modified", so its date sort follows that column;
     // Recent is ordered by the last open, with the modification as the fallback (see `listRecent`).
     const date = (n: Node) => {
-      if (listing.value?.kind === 'trash') return n.deletedAt ?? n.modifiedAt;
-      if (recent) return n.openedAt ?? n.modifiedAt;
-      return n.modifiedAt;
+      if (listing.value?.kind === 'trash') return n.deletedAt ?? n.modifiedAt ?? '';
+      if (recent) return n.openedAt ?? n.modifiedAt ?? '';
+      return n.modifiedAt ?? '';
     };
     const cmp = (a: Node, b: Node): number => {
       switch (key) {
@@ -77,11 +78,16 @@ export const useFilesStore = defineStore('files', () => {
   /** The node the details panel describes: the single selection, else the current folder. */
   const focusNode = computed(() => (selected.value.length === 1 ? selected.value[0] : folder.value));
 
+  // Everything the details panel needs about the focused node beyond the node itself. The ancestor chain is loaded
+  // here rather than derived from `path`, because the listings beside the tree (Recent, Starred, Shared) describe
+  // nodes that are not in the open folder at all — their location has to come from the node.
   watch(focusNode, async (node) => {
-    const list = node ? await repository.listPeople(node.id) : [];
-    // A faster selection change may have resolved meanwhile; keep the newest node's list.
-    if (focusNode.value?.id === node?.id) people.value = list;
-  });
+    const [list, chain] = node ? await Promise.all([repository.listPeople(node.id), repository.getPath(node.id)]) : [[], []];
+    // A faster selection change may have resolved meanwhile; keep the newest node's answers.
+    if (focusNode.value?.id !== node?.id) return;
+    people.value = list;
+    focusPath.value = chain;
+  }, { immediate: true });
 
   async function load(target: Listing) {
     const seq = ++loadSeq;
@@ -285,6 +291,7 @@ export const useFilesStore = defineStore('files', () => {
     path,
     items,
     people,
+    focusPath,
     loading,
     error,
     filter,

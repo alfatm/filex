@@ -104,7 +104,7 @@ function buildTree(): Node[] {
     const parentPath = at === -1 ? '' : entry.path.slice(0, at);
     const parent = at === -1 ? rootNode : byPath.get(parentPath)!;
     const ref = at === -1 ? REF_OVERRIDES[name] : undefined;
-    const modifiedAt = ref?.modifiedAt ?? derivedDate(parent.modifiedAt, childrenOf(parentPath).indexOf(entry));
+    const modifiedAt = ref?.modifiedAt ?? derivedDate(parent.modifiedAt ?? '', childrenOf(parentPath).indexOf(entry));
     const fileType = entry.kind === 'file' ? fileTypeOf(name) : undefined;
     const thumbnail = fileType && (fileType === 'image' ? 'mountain' : TYPE_THUMBNAILS[fileType]);
     const node: Node = {

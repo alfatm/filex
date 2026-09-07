@@ -86,7 +86,7 @@ export function search(query: SearchQuery, now = Date.now()): SearchResult {
     if (tagsWanted.length && !tagsWanted.every((t) => tags.includes(t))) continue;
     if (query.ownerId && node.ownerId !== query.ownerId) continue;
     if (query.fileType !== 'any' && (node.kind !== 'file' || !TYPE_GROUPS[query.fileType].includes(node.fileType ?? 'other'))) continue;
-    if (query.modified !== 'any' && now - Date.parse(node.modifiedAt) > MODIFIED_WINDOW_DAYS[query.modified] * DAY) continue;
+    if (query.modified !== 'any' && (!node.modifiedAt || now - Date.parse(node.modifiedAt) > MODIFIED_WINDOW_DAYS[query.modified] * DAY)) continue;
     if (query.size.preset !== 'any') {
       if (node.kind !== 'file') continue;
       const unit = UNIT_BYTES[query.size.unit];
