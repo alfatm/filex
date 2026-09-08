@@ -1,7 +1,7 @@
 import { DUPLICATE_NAME, OPERATION_PENDING, WRONG_PASSWORD, type Repository } from '../repository';
 import { matchesFilter, MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
-import { noCapabilities, type ActivityEvent, type AssistantEvent, type AuthMethods, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type Quota, type SearchHit, type SearchQuery, type SearchResult, type Storage, type UploadInput, type UploadOptions, type User, type Version } from '../types';
+import { noCapabilities, type ActivityEvent, type AssistantEvent, type AuthMethods, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type Quota, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type User, type Version } from '../types';
 import { HttpError, putChunk, request } from './client';
 import {
   fromFileNode,
@@ -22,6 +22,8 @@ import {
   type WireQuota,
   type WireStorage,
   type WireAuthMethods,
+  fromSession,
+  type WireSession,
   type WireActivityEvent,
   type WireTrashEmpty,
   type WireTrashEntry,
@@ -73,6 +75,20 @@ const POLL_GIVE_UP_MS = 60_000;
  * the unit a failure costs: at 8 MiB most documents would be one chunk, and their bar would only ever read 0 or
  * 100. The extra round trips are cheap next to the bytes they carry.
  */
+const NOTIFY_SETTINGS = '/api/notifications/settings';
+
+/**
+ * Which filex event each switch of the Notifications tab stands for. A failed upload is deliberately not
+ * part of "finished uploads": muting the good news must not silence the bad.
+ */
+const NOTIFY_EVENTS = { shared: 'share.created', comments: 'comment.added', uploads: 'file.uploaded' } as const;
+
+/** `model.NotificationSettings` — the per-user mute list, shared with every other client of the account. */
+interface WireNotifySettings {
+  in_app_enabled?: boolean;
+  muted_events?: string[];
+}
+
 const UPLOAD = '/api/files/upload';
 const CHUNK_BYTES = 1024 * 1024;
 
@@ -149,6 +165,8 @@ interface WireUser {
   avatar_url?: string;
   locale?: string;
   timezone?: string;
+  full_name?: string;
+  job_title?: string;
 }
 
 /** An account with no display name is shown by the address it signs in with, which is what it has. */
@@ -161,6 +179,8 @@ function toUser(wire: WireUser): User {
     email: wire.email,
     role: wire.role === 'admin' ? 'admin' : 'member',
     avatarUrl: wire.avatar_url || undefined,
+    fullName: wire.full_name || undefined,
+    jobTitle: wire.job_title || undefined,
     locale: wire.locale || undefined,
     timeZone: wire.timezone || undefined,
   };
@@ -323,6 +343,8 @@ export class HttpRepository implements Repository {
       method: 'PATCH',
       body: {
         ...(patch.name === undefined ? {} : { display_name: patch.name }),
+        ...(patch.fullName === undefined ? {} : { full_name: patch.fullName }),
+        ...(patch.jobTitle === undefined ? {} : { job_title: patch.jobTitle }),
         ...(patch.locale === undefined ? {} : { locale: patch.locale }),
         ...(patch.timeZone === undefined ? {} : { timezone: patch.timeZone }),
         ...(patch.avatarUrl === undefined ? {} : { avatar_url: patch.avatarUrl }),
@@ -344,6 +366,41 @@ export class HttpRepository implements Repository {
   async authMethods(): Promise<AuthMethods> {
     const wire = await request<WireAuthMethods>('/api/auth/methods');
     return { provider: wire.provider, changePassword: wire.change_password, totpEnabled: wire.totp_enabled };
+  }
+
+  /**
+   * filex stores the opposite of what the modal shows — a list of MUTED events — and that list is shared with
+   * every other client of the account, so what the app does not own is read back and written out untouched.
+   */
+  async notifyPrefs(): Promise<NotifyPrefs> {
+    const wire = await request<WireNotifySettings>(NOTIFY_SETTINGS);
+    const muted = new Set(wire.muted_events ?? []);
+    const on = (event: string) => wire.in_app_enabled !== false && !muted.has(event);
+    return { shared: on(NOTIFY_EVENTS.shared), comments: on(NOTIFY_EVENTS.comments), uploads: on(NOTIFY_EVENTS.uploads) };
+  }
+
+  async saveNotifyPrefs(prefs: NotifyPrefs): Promise<void> {
+    const wire = await request<WireNotifySettings>(NOTIFY_SETTINGS);
+    const muted = new Set(wire.muted_events ?? []);
+    for (const [key, event] of Object.entries(NOTIFY_EVENTS)) {
+      if (prefs[key as keyof NotifyPrefs]) muted.delete(event);
+      else muted.add(event);
+    }
+    await request(NOTIFY_SETTINGS, {
+      method: 'PATCH',
+      // Switching one back on has to switch the master back on too, or the server keeps everything quiet.
+      body: { in_app_enabled: true, muted_events: [...muted] },
+    });
+  }
+
+  /** Every sign-in of this account that has not expired; the row this app is calling with says so itself. */
+  async listSessions(): Promise<Session[]> {
+    const wire = await request<{ sessions: WireSession[] }>('/api/auth/sessions');
+    return (wire.sessions ?? []).map(fromSession);
+  }
+
+  async revokeSession(id: string): Promise<void> {
+    await request(`/api/auth/sessions/${id}`, { method: 'DELETE' });
   }
 
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {

@@ -73,6 +73,53 @@ test.describe('User settings', () => {
     await expect(dialog.getByRole('textbox', { name: 'Current password' })).toBeHidden();
   });
 
+  test('the profile fields and the notification switches are the account, not this browser', async ({ page }) => {
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('textbox', { name: 'Job title' }).fill('Product Designer');
+    await dialog.getByRole('tab', { name: 'Notifications' }).click();
+    const comments = dialog.getByRole('switch', { name: 'Comments' });
+    await expect(comments).toBeChecked();
+    await comments.click();
+    await dialog.getByRole('button', { name: 'Save changes' }).click();
+    await expect(dialog).toBeHidden();
+
+    // Nothing of either lives in this browser's settings blob — they went to the repository.
+    const stored = await page.evaluate(() => localStorage.getItem('filex.app.settings') ?? '');
+    expect(stored).not.toContain('Product Designer');
+    expect(stored).not.toContain('comments');
+
+    await page.getByRole('button', { name: 'Settings' }).click();
+    await expect(page.getByRole('dialog').getByRole('textbox', { name: 'Job title' })).toHaveValue('Product Designer');
+    await page.getByRole('dialog').getByRole('tab', { name: 'Notifications' }).click();
+    await expect(page.getByRole('dialog').getByRole('switch', { name: 'Comments' })).not.toBeChecked();
+  });
+
+  test('Active sessions lists where the account is signed in and ends one', async ({ page }) => {
+    await page.getByRole('button', { name: 'Settings' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('tab', { name: 'Security' }).click();
+
+    // The count is part of the collapsed row, so it is fetched with the rest of the Security answer.
+    const row = dialog.getByRole('button', { name: /Active sessions/ });
+    await expect(row).toContainText('3 sessions');
+    await row.click();
+
+    // The user agent is turned into something a person can recognise; the current session has no button.
+    const list = dialog.getByRole('list', { name: 'Active sessions' });
+    const here = list.getByRole('listitem').filter({ hasText: 'Chrome · macOS' });
+    await expect(here).toContainText('This device');
+    await expect(here.getByRole('button', { name: 'End session' })).toHaveCount(0);
+
+    const phone = list.getByRole('listitem').filter({ hasText: 'Safari · iPhone' });
+    await expect(phone).toContainText('192.168.1.31');
+    await phone.getByRole('button', { name: 'End session' }).click();
+
+    // Ending a session acts at once — it is not part of the draft "Save changes" commits.
+    await expect(dialog.getByText('Safari · iPhone')).toBeHidden();
+    await expect(row).toContainText('2 sessions');
+  });
+
   test('the theme applies on save and is discarded on cancel', async ({ page }) => {
     const html = page.locator('html');
     await expect(html).not.toHaveAttribute('data-theme', /.*/);

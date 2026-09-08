@@ -5,14 +5,16 @@ import { Dialog, DialogPanel, DialogTitle } from '@headlessui/vue';
 import { Bell, ChevronRight, Folder, KeyRound, Monitor, Settings2, ShieldCheck, Sparkles, UserRound, X } from 'lucide-vue-next';
 import { repository } from '@/data';
 import { MIN_PASSWORD_LENGTH, WRONG_PASSWORD } from '@/data/repository';
-import type { AuthMethods, Node } from '@/data/types';
+import type { AuthMethods, Node, NotifyPrefs, Session } from '@/data/types';
 import { useToastStore } from '@/stores/toast';
 import { LOCALES, setLocale, type Locale } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
 import { Avatar, Button, Input, Select } from '@/ui';
+import { useFormat } from '@/composables/useFormat';
 import Segmented from './Segmented.vue';
 import SettingRow from './SettingRow.vue';
 import Toggle from './Toggle.vue';
+import { deviceLabel } from './userAgent';
 import { ASSISTANT_MODE_VALUES, CONFLICT_BEHAVIORS, THEMES, TIME_ZONES, useSettingsStore, type Settings } from './settingsStore';
 
 /** The nav is a vertical tab strip: one item, one panel, nothing else rendered. */
@@ -31,12 +33,20 @@ const AVATAR_PX = 160;
 const AVATAR_QUALITY = 0.85;
 
 const { t, te, locale } = useI18n();
+const { formatDate } = useFormat();
 const files = useFilesStore();
 const store = useSettingsStore();
 const toast = useToastStore();
 
 // The modal edits a copy: Cancel just drops it, Save commits everything at once.
 const draft = ref<Settings>({ ...store.settings });
+/**
+ * The account's own fields, kept apart from `draft` because they have a different destination: these go to the
+ * server and follow the person to another browser, while `draft` is what this browser remembers.
+ */
+const profile = ref({ fullName: '', displayName: '', jobTitle: '' });
+/** Null until the server answers — an install with notifications switched off has no matrix to show. */
+const notify = ref<NotifyPrefs | null>(null);
 const language = ref<Locale>(locale.value as Locale);
 const active = ref<SectionId>('profile');
 const folders = ref<Node[]>([]);
@@ -57,6 +67,14 @@ const passwordError = ref('');
 const currentPassword = ref('');
 const newPassword = ref('');
 const repeatPassword = ref('');
+
+/**
+ * Where this account is signed in. Null while it is unknown — an older server has no `/api/auth/sessions` — and
+ * the row then says nothing rather than an invented "0 sessions".
+ */
+const sessions = ref<Session[] | null>(null);
+const sessionsOpen = ref(false);
+const sessionsError = ref('');
 
 const providerLabel = computed(() => {
   const key = `settings.security.provider.${auth.value?.provider ?? ''}`;
@@ -104,12 +122,36 @@ const folderOptions = computed(() => [
   ...folders.value.filter((f) => f.parentId).map((f) => ({ value: f.id, label: f.name })),
 ]);
 
-const displayName = computed(() => draft.value.displayName || files.user?.name || '');
+const displayName = computed(() => profile.value.displayName || files.user?.name || '');
 
 onMounted(async () => {
   if (files.storage) folders.value = await repository.listFolders(files.storage.id);
   auth.value = await repository.authMethods();
+  // The switches are the account's, so what they show has to come from the account rather than from a default.
+  try {
+    notify.value = await repository.notifyPrefs();
+  } catch {
+    notify.value = null;
+  }
+  // The count is part of the collapsed row, so the list is fetched with the rest of the Security answer.
+  try {
+    sessions.value = await repository.listSessions();
+  } catch {
+    sessions.value = null;
+  }
 });
+
+/** Ending a session takes effect immediately: it is not part of the draft "Save changes" commits. */
+async function endSession(id: string) {
+  sessionsError.value = '';
+  try {
+    await repository.revokeSession(id);
+  } catch {
+    sessionsError.value = t('settings.security.sessionsFailed');
+    return;
+  }
+  sessions.value = (sessions.value ?? []).filter((session) => session.id !== id);
+}
 
 function openPassword() {
   passwordOpen.value = true;
@@ -143,13 +185,12 @@ async function submitPassword() {
   }
 }
 
-// Prefill the profile form from the account once, so empty mock fields still show the real name.
+// The profile form IS the account: filled from what the server holds, and empty where the person left it empty.
 watch(
   () => files.user,
   (user) => {
     if (!user) return;
-    draft.value.fullName ||= user.name;
-    draft.value.displayName ||= user.name;
+    profile.value = { fullName: user.fullName ?? '', displayName: user.name, jobTitle: user.jobTitle ?? '' };
     avatarUrl.value = user.avatarUrl ?? '';
   },
   { immediate: true },
@@ -193,11 +234,14 @@ async function save() {
   saving.value = true;
   try {
     files.user = await repository.updateProfile({
-      name: draft.value.displayName,
+      name: profile.value.displayName,
+      fullName: profile.value.fullName,
+      jobTitle: profile.value.jobTitle,
       locale: language.value,
       timeZone: draft.value.timeZone,
       avatarUrl: avatarUrl.value,
     });
+    if (notify.value) await repository.saveNotifyPrefs(notify.value);
   } catch {
     toast.push(t('settings.saveFailed'));
     return;
@@ -303,11 +347,11 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
               <div class="mt-5 grid grid-cols-2 gap-x-6 gap-y-4">
                 <label>
                   <span :class="LABEL">{{ t('settings.profile.fullName') }}</span>
-                  <Input v-model="draft.fullName" class="mt-2" :label="t('settings.profile.fullName')" />
+                  <Input v-model="profile.fullName" class="mt-2" :label="t('settings.profile.fullName')" />
                 </label>
                 <label>
                   <span :class="LABEL">{{ t('settings.profile.displayName') }}</span>
-                  <Input v-model="draft.displayName" class="mt-2" :label="t('settings.profile.displayName')" />
+                  <Input v-model="profile.displayName" class="mt-2" :label="t('settings.profile.displayName')" />
                 </label>
                 <div>
                   <span :class="LABEL">{{ t('settings.profile.email') }}</span>
@@ -318,7 +362,7 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                 </div>
                 <label>
                   <span :class="LABEL">{{ t('settings.profile.jobTitle') }}</span>
-                  <Input v-model="draft.jobTitle" class="mt-2" :label="t('settings.profile.jobTitle')" />
+                  <Input v-model="profile.jobTitle" class="mt-2" :label="t('settings.profile.jobTitle')" />
                 </label>
               </div>
             </section>
@@ -370,16 +414,18 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
             <section v-else-if="active === 'notifications'">
               <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.notifications') }}</h3>
               <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.notify.hint') }}</p>
-              <div class="mt-3 flex flex-col gap-1">
+              <div v-if="notify" class="mt-3 flex flex-col gap-1">
                 <SettingRow
-                  v-for="key in (['notifyShared', 'notifyComments', 'notifyUploads'] as const)"
+                  v-for="key in (['shared', 'comments', 'uploads'] as const)"
                   :key="key"
                   :label="t(`settings.notify.${key}`)"
                   :hint="t(`settings.notify.${key}Hint`)"
                 >
-                  <Toggle v-model="draft[key]" :label="t(`settings.notify.${key}`)" />
+                  <Toggle v-model="notify[key]" :label="t(`settings.notify.${key}`)" />
                 </SettingRow>
               </div>
+              <!-- An install with notifications switched off has nothing to offer here, and says so. -->
+              <p v-else class="mt-3 text-13 leading-none text-text-3">{{ t('settings.notify.unavailable') }}</p>
             </section>
 
             <section v-else-if="active === 'security'">
@@ -428,13 +474,45 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                   </div>
                 </li>
                 <li>
-                  <!-- Inert: filex has no session-listing endpoint (BACKEND-GAP.md). -->
-                  <div :class="[SECURITY_ROW, 'cursor-default']" :title="t('common.comingSoon')">
+                  <!-- The list opens in place, like the password form: both act at once rather than waiting for
+                       "Save changes", and both are about this account rather than about this browser. -->
+                  <button
+                    v-if="sessions"
+                    type="button"
+                    :class="[SECURITY_ROW, 'hover:bg-hover-row']"
+                    :aria-expanded="sessionsOpen"
+                    @click="sessionsOpen = !sessionsOpen"
+                  >
                     <Monitor :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
                     <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ t('settings.security.sessions') }}</span>
-                    <span class="truncate-safe text-13 leading-none text-text-3">{{ t('settings.security.sessionsHint') }}</span>
-                    <ChevronRight :size="16" class="shrink-0 text-text-3" />
+                    <span class="truncate-safe text-13 leading-none text-text-3">{{ t('settings.security.sessionsCount', sessions.length) }}</span>
+                    <ChevronRight :size="16" class="shrink-0 text-text-3 transition-transform" :class="{ 'rotate-90': sessionsOpen }" />
+                  </button>
+                  <!-- A server without the endpoint leaves the row standing and silent. -->
+                  <div v-else :class="[SECURITY_ROW, 'cursor-default']">
+                    <Monitor :size="18" :stroke-width="1.75" class="shrink-0 text-text-3" />
+                    <span class="min-w-0 flex-1 truncate-safe text-15 leading-none text-text-3">{{ t('settings.security.sessions') }}</span>
                   </div>
+
+                  <ul
+                    v-if="sessions && sessionsOpen"
+                    :aria-label="t('settings.security.sessions')"
+                    class="mb-1 mt-1 flex flex-col gap-1 pl-[30px]"
+                  >
+                    <li v-for="session in sessions" :key="session.id" class="flex min-h-9 items-center gap-3">
+                      <div class="min-w-0 flex-1">
+                        <p class="truncate-safe text-14 leading-none">{{ deviceLabel(session.userAgent) || t('settings.security.unknownDevice') }}</p>
+                        <p class="mt-1.5 truncate-safe text-12 leading-none text-text-3">
+                          {{ [session.ip, t('settings.security.signedIn', { when: formatDate(session.createdAt) })].filter(Boolean).join(' · ') }}
+                        </p>
+                      </div>
+                      <span v-if="session.current" class="shrink-0 text-12 leading-none text-text-3">{{ t('settings.security.currentSession') }}</span>
+                      <Button v-else variant="outline" class="!h-8 shrink-0 px-2.5 !text-13" @click="endSession(session.id)">
+                        {{ t('settings.security.endSession') }}
+                      </Button>
+                    </li>
+                  </ul>
+                  <p v-if="sessionsError" class="mt-1 pl-[30px] text-12 leading-none text-danger" role="alert">{{ sessionsError }}</p>
                 </li>
               </ul>
             </section>

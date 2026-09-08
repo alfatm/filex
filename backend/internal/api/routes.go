@@ -652,6 +652,10 @@ func BuildRouter(d *Deps) http.Handler {
 		r.Get("/api/auth/methods", authSelf.Methods)
 		r.Patch("/api/auth/profile", authSelf.UpdateProfile)
 		r.Post("/api/auth/password", authSelf.ChangePassword)
+		// Where this account is signed in, and how to end one of those sign-ins. Both are
+		// scoped to the caller by the context principal, not by a parameter.
+		r.Get("/api/auth/sessions", authSelf.Sessions)
+		r.Delete("/api/auth/sessions/{id}", authSelf.RevokeSession)
 		r.Post("/api/auth/totp/enroll", authSelf.TotpEnroll)
 		r.Post("/api/auth/totp/verify", authSelf.TotpVerify)
 		r.Post("/api/auth/totp/disable", authSelf.TotpDisable)

@@ -29,8 +29,9 @@ export const TIME_ZONES = [
 ];
 
 /**
- * Everything the user settings modal writes. Profile fields and the notification switches are local mocks until the
- * backend grows the endpoints (docs/BACKEND-GAP.md); theme, language and the compact list take effect immediately.
+ * What the settings modal keeps in THIS BROWSER. The profile fields and the notification switches are not here:
+ * they belong to the account and go to the server, so they follow the person to another machine. What is left is
+ * genuinely local — how this browser draws and behaves — and takes effect the moment it is applied.
  */
 export interface Settings {
   theme: Theme;
@@ -40,12 +41,6 @@ export interface Settings {
   defaultUploadFolder: string;
   autoOpenPreview: boolean;
   conflictBehavior: ConflictBehavior;
-  fullName: string;
-  displayName: string;
-  jobTitle: string;
-  notifyShared: boolean;
-  notifyComments: boolean;
-  notifyUploads: boolean;
   assistantEnabled: boolean;
   assistantMode: AssistantMode;
 }
@@ -66,12 +61,6 @@ export function defaultSettings(): Settings {
     defaultUploadFolder: '',
     autoOpenPreview: true,
     conflictBehavior: 'ask',
-    fullName: '',
-    displayName: '',
-    jobTitle: '',
-    notifyShared: true,
-    notifyComments: true,
-    notifyUploads: false,
     assistantEnabled: true,
     assistantMode: 'filename',
   };
@@ -106,12 +95,6 @@ function load(): Settings {
     defaultUploadFolder: text(saved.defaultUploadFolder, base.defaultUploadFolder),
     autoOpenPreview: bool(saved.autoOpenPreview, base.autoOpenPreview),
     conflictBehavior: pick(saved.conflictBehavior, CONFLICT_BEHAVIORS, base.conflictBehavior),
-    fullName: text(saved.fullName, base.fullName),
-    displayName: text(saved.displayName, base.displayName),
-    jobTitle: text(saved.jobTitle, base.jobTitle),
-    notifyShared: bool(saved.notifyShared, base.notifyShared),
-    notifyComments: bool(saved.notifyComments, base.notifyComments),
-    notifyUploads: bool(saved.notifyUploads, base.notifyUploads),
     assistantEnabled: bool(saved.assistantEnabled, base.assistantEnabled),
     assistantMode: pick(saved.assistantMode, ASSISTANT_MODE_VALUES, base.assistantMode),
   };

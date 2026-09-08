@@ -394,4 +394,58 @@ describe('HttpRepository', () => {
     ];
     await expect(new HttpRepository().copy(['main://a.txt'], 'main://ro')).rejects.toThrow('destination is read-only');
   });
+  it('reads the sign-ins of the account and ends one by id', async () => {
+    routes = [
+      [
+        '/api/auth/sessions',
+        {
+          sessions: [
+            { id: 7, ip: '10.0.0.9', user_agent: 'Chrome/126.0', created_at: '2026-07-10T08:12:00Z', expires_at: '2026-08-09T08:12:00Z', current: true },
+            { id: 8, created_at: '2026-07-08T19:40:00Z', expires_at: '2026-08-07T19:40:00Z', current: false },
+          ],
+        },
+      ],
+    ];
+    const repo = new HttpRepository();
+    const sessions = await repo.listSessions();
+    // The numeric session id becomes the app's string id, and a row the server left blank stays blank.
+    expect(sessions.map((s) => [s.id, s.ip ?? '', s.current])).toEqual([
+      ['7', '10.0.0.9', true],
+      ['8', '', false],
+    ]);
+
+    await repo.revokeSession('8');
+    expect(calls.at(-1)).toMatchObject({ url: '/api/auth/sessions/8', method: 'DELETE' });
+  });
+
+  it('reads the notification switches out of the mute list and writes back what it does not own', async () => {
+    let saved: unknown;
+    routes = [
+      [
+        '/api/notifications/settings',
+        (call: Call) => {
+          if (call.method === 'PATCH') {
+            saved = call.body;
+            return {};
+          }
+          // `replica_fail` belongs to the admin surface, not to this modal.
+          return { in_app_enabled: true, muted_events: ['comment.added', 'replica_fail'] };
+        },
+      ],
+    ];
+    const repo = new HttpRepository();
+    expect(await repo.notifyPrefs()).toEqual({ shared: true, comments: false, uploads: true });
+
+    await repo.saveNotifyPrefs({ shared: true, comments: true, uploads: false });
+    expect(saved).toEqual({ in_app_enabled: true, muted_events: ['replica_fail', 'file.uploaded'] });
+  });
+
+  it('sends the optional profile fields only when they were edited', async () => {
+    routes = [['/api/auth/profile', { id: 3, email: 'ada@filex.test', display_name: 'Ada', full_name: 'Ada Lovelace', job_title: 'Analyst' }]];
+    const repo = new HttpRepository();
+    const user = await repo.updateProfile({ name: 'Ada', jobTitle: '' });
+    // An empty string is an edit — it is how a job title is cleared — while an absent field is not sent at all.
+    expect(calls.at(-1)?.body).toEqual({ display_name: 'Ada', job_title: '' });
+    expect([user.fullName, user.jobTitle]).toEqual(['Ada Lovelace', 'Analyst']);
+  });
 });

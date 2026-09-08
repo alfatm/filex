@@ -39,8 +39,14 @@ type User struct {
 	// rclone/WinSCP config files split on `@`. Every login surface accepts
 	// EITHER this or the e-mail; internal/identity owns that rule and is the
 	// only place allowed to decide which one an identifier is.
-	Username          string   `json:"username"`
-	DisplayName       string   `json:"display_name"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	// FullName and JobTitle are optional profile fields (migration 00035). The full name is
+	// NOT the display name: the display name is what other people see next to a file, and it
+	// is often shorter than the name on the account. Empty means "not set"; nothing requires
+	// either of them.
+	FullName          string   `json:"full_name,omitempty"`
+	JobTitle          string   `json:"job_title,omitempty"`
 	PasswordHash      string   `json:"-"`
 	Role              string   `json:"role"`
 	TOTPSecret        string   `json:"-"`

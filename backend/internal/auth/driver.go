@@ -60,6 +60,26 @@ func WithUser(ctx context.Context, u *model.User) context.Context {
 	return context.WithValue(ctx, userCtxKey{}, u)
 }
 
+// clientCtxKey is unexported to prevent collision.
+type clientCtxKey struct{}
+
+type clientInfo struct{ ip, userAgent string }
+
+// WithClient carries "who is at the other end of this request" — the source address and the user
+// agent — down to wherever the session row is written. The mint happens inside a login DRIVER, which
+// has no *http.Request of its own, and the alternative was widening IssueSession's signature for
+// every driver that mints one.
+func WithClient(ctx context.Context, ip, userAgent string) context.Context {
+	return context.WithValue(ctx, clientCtxKey{}, clientInfo{ip: ip, userAgent: userAgent})
+}
+
+// ClientFrom returns the address and user agent stored by WithClient; both are "" when the context
+// came from somewhere that never saw a request.
+func ClientFrom(ctx context.Context) (ip, userAgent string) {
+	v, _ := ctx.Value(clientCtxKey{}).(clientInfo)
+	return v.ip, v.userAgent
+}
+
 // UserFrom returns the user from ctx, nil if absent.
 func UserFrom(ctx context.Context) *model.User {
 	v, _ := ctx.Value(userCtxKey{}).(*model.User)

@@ -915,7 +915,7 @@ const userCols = `id, email, COALESCE(display_name,''), COALESCE(password_hash,'
 	`COALESCE(totp_secret,''), COALESCE(totp_pending_secret,''), COALESCE(totp_enabled,FALSE), ` +
 	`COALESCE(totp_recovery_codes_json::text,'[]'), locale, timezone, created_at, updated_at, last_login_at, ` +
 	`provider_id, COALESCE(oidc_subject,''), COALESCE(quota_bytes,0), COALESCE(usage_bytes,0), COALESCE(enabled,TRUE), ` +
-	`COALESCE(avatar_url,''), COALESCE(username,'')`
+	`COALESCE(avatar_url,''), COALESCE(username,''), COALESCE(full_name,''), COALESCE(job_title,'')`
 
 func (s *Store) CreateUser(ctx context.Context, email, hash, role, locale, tz string) (*model.User, error) {
 	// New users default to the always-present "default" provider (the
@@ -1052,6 +1052,47 @@ func (s *Store) GetSessionByToken(ctx context.Context, token string) (*model.Ses
 		return nil, err
 	}
 	return out, nil
+}
+
+// ListSessionsForUser lists the user's unexpired sessions, newest first. The token rides
+// along because the caller has to be able to tell which row is the one it is calling from;
+// model.Session never serializes it.
+func (s *Store) ListSessionsForUser(ctx context.Context, userID int64) ([]*model.Session, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, user_id, token, expires_at, COALESCE(ip,''), COALESCE(user_agent,''), created_at
+		   FROM sessions WHERE user_id=$1 AND expires_at > NOW() ORDER BY created_at DESC`,
+		userID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*model.Session
+	for rows.Next() {
+		sess := &model.Session{}
+		if err := rows.Scan(&sess.ID, &sess.UserID, &sess.Token, &sess.ExpiresAt, &sess.IP, &sess.UserAgent, &sess.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+// DeleteUserSession ends one of that user's sessions.
+func (s *Store) DeleteUserSession(ctx context.Context, userID, sessionID int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id=$1 AND user_id=$2`, sessionID, userID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// UpdateUserProfileFields writes the two optional profile fields.
+func (s *Store) UpdateUserProfileFields(ctx context.Context, id int64, fullName, jobTitle string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET full_name=$1, job_title=$2, updated_at=NOW() WHERE id=$3`,
+		fullName, jobTitle, id)
+	return err
 }
 
 func (s *Store) DeleteSession(ctx context.Context, token string) error {
@@ -2070,7 +2111,7 @@ func scanUser(r rowScanner) (*model.User, error) {
 	u := &model.User{}
 	var recoveryJSON string
 	var providerID sql.NullInt64
-	if err := r.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.Role, &u.TOTPSecret, &u.TOTPPendingSecret, &u.TOTPEnabled, &recoveryJSON, &u.Locale, &u.Timezone, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt, &providerID, &u.OIDCSubject, &u.QuotaBytes, &u.UsageBytes, &u.Enabled, &u.AvatarURL, &u.Username); err != nil {
+	if err := r.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.Role, &u.TOTPSecret, &u.TOTPPendingSecret, &u.TOTPEnabled, &recoveryJSON, &u.Locale, &u.Timezone, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt, &providerID, &u.OIDCSubject, &u.QuotaBytes, &u.UsageBytes, &u.Enabled, &u.AvatarURL, &u.Username, &u.FullName, &u.JobTitle); err != nil {
 		return nil, err
 	}
 	if recoveryJSON != "" {

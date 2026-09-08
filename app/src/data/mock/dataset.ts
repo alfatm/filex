@@ -9,7 +9,7 @@ const DAY = 24 * HOUR;
 
 export const ROOT_ID = 'demo';
 
-export const user: User = { id: 'demo', name: 'demo', initial: 'D', email: 'demo@filex.local', role: 'owner' };
+export const user: User = { id: 'demo', name: 'demo', initial: 'D', email: 'demo@filex.local', role: 'owner', fullName: 'demo' };
 
 export const storages: Storage[] = [
   { id: 'demo', name: 'demo', rootId: ROOT_ID, quota: { usedBytes: 12.4 * GB, totalBytes: 100 * GB } },

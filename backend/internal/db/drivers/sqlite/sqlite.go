@@ -1138,10 +1138,29 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 
 // ─────────────────── Sessions ───────────────────
 
+// ⚠ Every expiry this driver compares in SQL is written and read in UTC.
+//
+// modernc's driver stores a time.Time in Go's String() layout — "2026-09-08 10:52:58.41 +0300 UTC+3"
+// — and SQLite compares those as TEXT, so the offset is decoration: two rows written in different
+// zones do not sort by instant, and neither does a row compared against CURRENT_TIMESTAMP, which is
+// UTC wall clock with no offset at all. On a host at UTC+3 that made an expired session keep
+// authenticating for three hours and the sweeper walk past it; west of UTC it killed live ones early.
+// Normalised to UTC, the text prefix IS the instant and the comparison means what it reads as.
+//
+// Rows written before this change keep their old zone until they are rewritten; sessions age out
+// within their 12h TTL, and a share re-saved gets the canonical form.
+func expiryUTC(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	v := t.UTC()
+	return &v
+}
+
 func (s *Store) CreateSession(ctx context.Context, userID int64, token string, expiresAt time.Time, ip, ua string) (*model.Session, error) {
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO sessions (user_id, token, expires_at, ip, user_agent) VALUES (?,?,?,?,?)`,
-		userID, token, expiresAt, ip, ua)
+		userID, token, expiresAt.UTC(), ip, ua)
 	if err != nil {
 		return nil, err
 	}
@@ -1150,14 +1169,66 @@ func (s *Store) CreateSession(ctx context.Context, userID int64, token string, e
 }
 
 func (s *Store) GetSessionByToken(ctx context.Context, token string) (*model.Session, error) {
+	// ⚠ The cutoff is a BOUND PARAMETER, not CURRENT_TIMESTAMP. SQLite compares these as text, the
+	// driver writes a Go time with its zone offset, and CURRENT_TIMESTAMP is UTC — so on a host east
+	// of UTC "2026-09-08 09:20:19+03:00" > "2026-09-08 06:20:19" is true for a session that expired
+	// three hours ago, and it kept authenticating. West of UTC the same comparison killed sessions
+	// early. Passing time.Now() encodes the cutoff the way CreateSession encoded the value.
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, token, expires_at, COALESCE(ip,''), COALESCE(user_agent,''), created_at FROM sessions WHERE token=? AND expires_at > CURRENT_TIMESTAMP`,
-		token)
+		`SELECT id, user_id, token, expires_at, COALESCE(ip,''), COALESCE(user_agent,''), created_at FROM sessions WHERE token=? AND expires_at > ?`,
+		token, time.Now().UTC())
 	out := &model.Session{}
 	if err := row.Scan(&out.ID, &out.UserID, &out.Token, &out.ExpiresAt, &out.IP, &out.UserAgent, &out.CreatedAt); err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+// ListSessionsForUser lists the user's unexpired sessions, newest first. The token rides
+// along because the caller has to be able to tell which row is the one it is calling from;
+// model.Session never serializes it.
+func (s *Store) ListSessionsForUser(ctx context.Context, userID int64) ([]*model.Session, error) {
+	// The cutoff is a bound parameter, not CURRENT_TIMESTAMP: SQLite compares these as strings,
+	// and the driver writes a Go time with its offset while CURRENT_TIMESTAMP is UTC — so on a
+	// host east of UTC the two do not mean what they look like. Passing time.Now() encodes the
+	// cutoff exactly the way CreateSession encoded the value it is compared against.
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, user_id, token, expires_at, COALESCE(ip,''), COALESCE(user_agent,''), created_at
+		   FROM sessions WHERE user_id=? AND expires_at > ? ORDER BY created_at DESC`,
+		userID, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*model.Session
+	for rows.Next() {
+		sess := &model.Session{}
+		if err := rows.Scan(&sess.ID, &sess.UserID, &sess.Token, &sess.ExpiresAt, &sess.IP, &sess.UserAgent, &sess.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+// DeleteUserSession ends one of that user's sessions.
+func (s *Store) DeleteUserSession(ctx context.Context, userID, sessionID int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id=? AND user_id=?`, sessionID, userID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// UpdateUserProfileFields writes the two optional profile fields. Both are always written:
+// clearing one is a legitimate edit, and a nil-means-keep dance belongs in the handler that
+// knows which keys the caller actually sent.
+func (s *Store) UpdateUserProfileFields(ctx context.Context, id int64, fullName, jobTitle string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET full_name=?, job_title=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+		fullName, jobTitle, id)
+	return err
 }
 
 func (s *Store) DeleteSession(ctx context.Context, token string) error {
@@ -1180,12 +1251,12 @@ func (s *Store) DeleteSessionsForUser(ctx context.Context, userID int64, exceptT
 // CountActiveSessions returns the count of unexpired sessions.
 func (s *Store) CountActiveSessions(ctx context.Context) (int64, error) {
 	var n int64
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE expires_at > CURRENT_TIMESTAMP`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE expires_at > ?`, time.Now().UTC()).Scan(&n)
 	return n, err
 }
 
 func (s *Store) DeleteExpiredSessions(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= CURRENT_TIMESTAMP`)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, time.Now().UTC())
 	return err
 }
 
@@ -1661,7 +1732,7 @@ func (s *Store) DeleteFileGrant(ctx context.Context, id int64) error {
 func (s *Store) CreateShare(ctx context.Context, sh *model.Share) (*model.Share, error) {
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO shares (node_id, token, pin_hash, expires_at, max_downloads, created_by, created_via, kind, max_uploads, drop_settings) VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		sh.NodeID, sh.Token, sh.PinHash, sh.ExpiresAt, sh.MaxDownloads, sh.CreatedBy, sh.CreatedVia, shareKind(sh.Kind), sh.MaxUploads, sh.DropSettings)
+		sh.NodeID, sh.Token, sh.PinHash, expiryUTC(sh.ExpiresAt), sh.MaxDownloads, sh.CreatedBy, sh.CreatedVia, shareKind(sh.Kind), sh.MaxUploads, sh.DropSettings)
 	if err != nil {
 		return nil, err
 	}
@@ -1695,7 +1766,8 @@ func (s *Store) ListAllShares(ctx context.Context, creatorID *int64, activeOnly 
 		args = append(args, *creatorID)
 	}
 	if activeOnly {
-		where = append(where, `(s.expires_at IS NULL OR s.expires_at > CURRENT_TIMESTAMP)`)
+		where = append(where, `(s.expires_at IS NULL OR s.expires_at > ?)`)
+		args = append(args, time.Now().UTC())
 		where = append(where, `(s.max_downloads IS NULL OR s.download_count < s.max_downloads)`)
 	}
 	whereSQL := strings.Join(where, " AND ")
@@ -1733,7 +1805,9 @@ func (s *Store) ListAllShares(ctx context.Context, creatorID *int64, activeOnly 
 // RevokeShare soft-revokes by setting expires_at = NOW. Audit trail is
 // kept (the row is not deleted).
 func (s *Store) RevokeShare(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE shares SET expires_at=CURRENT_TIMESTAMP WHERE id=?`, id)
+	// Written the same way the expiry checks now read it: a CURRENT_TIMESTAMP here is UTC text, and
+	// west of UTC it sorts ABOVE a Go-encoded "now" — a revoked link that stayed open.
+	_, err := s.db.ExecContext(ctx, `UPDATE shares SET expires_at=? WHERE id=?`, time.Now().UTC(), id)
 	return err
 }
 
@@ -1793,7 +1867,7 @@ func (s *Store) DeleteShare(ctx context.Context, id int64) error {
 }
 
 func (s *Store) DeleteExpiredShares(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM shares WHERE expires_at IS NOT NULL AND expires_at < CURRENT_TIMESTAMP`)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM shares WHERE expires_at IS NOT NULL AND expires_at < ?`, time.Now().UTC())
 	return err
 }
 
@@ -1803,7 +1877,7 @@ func (s *Store) CreateChunkedUpload(ctx context.Context, u *model.ChunkedUpload)
 	parts, _ := json.Marshal(u.Parts)
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO chunked_uploads (id, storage_id, storage_key, upload_id, total_size, parts_json, expires_at) VALUES (?,?,?,?,?,?,?)`,
-		u.ID, u.StorageID, u.StorageKey, u.UploadID, u.TotalSize, string(parts), u.ExpiresAt)
+		u.ID, u.StorageID, u.StorageKey, u.UploadID, u.TotalSize, string(parts), u.ExpiresAt.UTC())
 	return err
 }
 
@@ -1830,7 +1904,7 @@ func (s *Store) DeleteChunkedUpload(ctx context.Context, id string) error {
 }
 
 func (s *Store) DeleteExpiredChunkedUploads(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM chunked_uploads WHERE expires_at < CURRENT_TIMESTAMP`)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM chunked_uploads WHERE expires_at < ?`, time.Now().UTC())
 	return err
 }
 
@@ -2397,7 +2471,7 @@ func scanStorage(r rowScanner) (*model.Storage, error) {
 }
 
 func userSelect() string {
-	return `SELECT id, email, COALESCE(display_name,''), COALESCE(password_hash,''), role, COALESCE(totp_secret,''), COALESCE(totp_pending_secret,''), COALESCE(totp_enabled,0), COALESCE(totp_recovery_codes_json,'[]'), locale, timezone, created_at, updated_at, last_login_at, provider_id, COALESCE(oidc_subject,''), COALESCE(quota_bytes,0), COALESCE(usage_bytes,0), COALESCE(enabled,1), COALESCE(avatar_url,''), COALESCE(username,'')`
+	return `SELECT id, email, COALESCE(display_name,''), COALESCE(password_hash,''), role, COALESCE(totp_secret,''), COALESCE(totp_pending_secret,''), COALESCE(totp_enabled,0), COALESCE(totp_recovery_codes_json,'[]'), locale, timezone, created_at, updated_at, last_login_at, provider_id, COALESCE(oidc_subject,''), COALESCE(quota_bytes,0), COALESCE(usage_bytes,0), COALESCE(enabled,1), COALESCE(avatar_url,''), COALESCE(username,''), COALESCE(full_name,''), COALESCE(job_title,'')`
 }
 
 func scanUser(r rowScanner) (*model.User, error) {
@@ -2406,7 +2480,7 @@ func scanUser(r rowScanner) (*model.User, error) {
 	var recoveryJSON string
 	var providerID sql.NullInt64
 	var enabled int
-	if err := r.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.Role, &u.TOTPSecret, &u.TOTPPendingSecret, &totpEnabled, &recoveryJSON, &u.Locale, &u.Timezone, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt, &providerID, &u.OIDCSubject, &u.QuotaBytes, &u.UsageBytes, &enabled, &u.AvatarURL, &u.Username); err != nil {
+	if err := r.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.Role, &u.TOTPSecret, &u.TOTPPendingSecret, &totpEnabled, &recoveryJSON, &u.Locale, &u.Timezone, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt, &providerID, &u.OIDCSubject, &u.QuotaBytes, &u.UsageBytes, &enabled, &u.AvatarURL, &u.Username, &u.FullName, &u.JobTitle); err != nil {
 		return nil, err
 	}
 	u.TOTPEnabled = totpEnabled == 1
@@ -2566,7 +2640,7 @@ func (s *Store) CountNodesDeletedSince(ctx context.Context, storageID int64, sin
 func (s *Store) CountTotalShares(ctx context.Context) (int64, error) {
 	var n int64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM shares WHERE expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP`).Scan(&n)
+		`SELECT COUNT(*) FROM shares WHERE expires_at IS NULL OR expires_at > ?`, time.Now().UTC()).Scan(&n)
 	return n, err
 }
 

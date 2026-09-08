@@ -405,16 +405,23 @@ account's password lives at its identity provider; it opens in place into
 three fields with its own button, since a password is not part of the draft
 "Save changes" commits and "Cancel" throws away. Two-factor is filex's own
 TOTP on a local realm (a green dot when it is on) and the provider's business
-otherwise. AI assistant — enable switch, default search mode select, a note
-that the provider is set by the administrator.
+otherwise. Active sessions carries the count and opens in place into the list
+(`GET /api/auth/sessions`): device and system read off the user agent, the
+address and the sign-in date under it, "This device" on the session the app is
+calling with and End session on every other one, which acts at once. AI
+assistant — enable switch, default search mode select, a note that the
+provider is set by the administrator.
 
 Editing works on a copy: Cancel drops it, Save changes commits everything at
-once. Theme, language and the compact list take effect immediately; the
-profile fields, notification switches and photo buttons are mocks until the
-backend grows the endpoints (see BACKEND-GAP.md). Of the Security rows only
-the password change acts: two-factor and Active sessions are read-only, the
-first because the second step belongs to the auth provider, the second because
-filex has no endpoint listing sessions.
+once — and the copy has two destinations. Theme, the compact list, the upload
+preferences and the time zone are THIS BROWSER's and stay in localStorage;
+the profile fields (display name, full name, job title, picture), the language
+and the three notification switches are the ACCOUNT's and go to the server, so
+they follow the person to another machine. Of the Security rows two act
+at once — the password change and ending a session — and neither waits for
+"Save changes"; two-factor is read-only, because the second step belongs to
+the auth provider. A session signed in before the server learned to record its
+address reads "Unknown device", which is what is actually known about it.
 
 ## 9. Mock data (matches the refs)
 

@@ -6,10 +6,12 @@ import type {
   Capabilities,
   ListingFilter,
   Node,
+  NotifyPrefs,
   Person,
   ProfilePatch,
   SearchQuery,
   SearchResult,
+  Session,
   Storage,
   UploadInput,
   UploadOptions,
@@ -70,6 +72,14 @@ export interface Repository {
   /** How this account signs in, and what it may change here: the Security card asks before it offers anything. */
   authMethods(): Promise<AuthMethods>;
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
+  /** The three notification switches, read from the account's mute list. */
+  notifyPrefs(): Promise<NotifyPrefs>;
+  /** Writes them back, leaving every event the app does not own exactly as it found it. */
+  saveNotifyPrefs(prefs: NotifyPrefs): Promise<void>;
+  /** Where this account is signed in, newest first; the caller's own session is flagged `current`. */
+  listSessions(): Promise<Session[]>;
+  /** Ends one of those sessions. The server refuses the current one — signing out is a different button. */
+  revokeSession(id: string): Promise<void>;
   /** Feature snapshot for this user; read once at start-up. */
   capabilities(): Promise<Capabilities>;
   search(query: SearchQuery): Promise<SearchResult>;

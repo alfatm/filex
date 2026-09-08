@@ -7,6 +7,8 @@
 //	GET    /api/auth/methods         — how this user signs in, and what they may change
 //	PATCH  /api/auth/profile         — update email/username/locale/timezone
 //	POST   /api/auth/password        — change password (requires old)
+//	GET    /api/auth/sessions        — where this account is signed in
+//	DELETE /api/auth/sessions/{id}   — end one of those sessions
 //	POST   /api/auth/totp/enroll     — start TOTP enrollment
 //	POST   /api/auth/totp/verify     — confirm TOTP enrollment with code
 //	POST   /api/auth/totp/disable    — turn TOTP off (password + code)
@@ -18,7 +20,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	qrcode "github.com/skip2/go-qrcode"
 	"golang.org/x/crypto/bcrypt"
@@ -121,8 +127,12 @@ type profileReq struct {
 	// the account did not get is worse than an error.
 	Username    *string `json:"username,omitempty"`
 	DisplayName *string `json:"display_name,omitempty"`
-	Locale      *string `json:"locale,omitempty"`
-	Timezone    *string `json:"timezone,omitempty"`
+	// FullName and JobTitle are the optional profile fields of migration 00035. Absent means
+	// "leave as it was"; an empty string means "clear it".
+	FullName *string `json:"full_name,omitempty"`
+	JobTitle *string `json:"job_title,omitempty"`
+	Locale   *string `json:"locale,omitempty"`
+	Timezone *string `json:"timezone,omitempty"`
 	// AvatarURL is the profile picture — a small data:image/… URI (what the
 	// profile page's file picker produces) or an http(s)/site-relative URL.
 	// An explicit "" removes it. Absent = leave the current one alone.
@@ -174,6 +184,21 @@ func (h *AuthSelf) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	if req.DisplayName != nil {
 		_ = h.Store.UpdateUserDisplayName(r.Context(), u.ID, strings.TrimSpace(*req.DisplayName))
 	}
+	// Optional profile fields: written only when the caller sent the key, and an empty string is a
+	// legitimate value — it is how a job title is removed.
+	if req.FullName != nil || req.JobTitle != nil {
+		full, title := u.FullName, u.JobTitle
+		if req.FullName != nil {
+			full = strings.TrimSpace(*req.FullName)
+		}
+		if req.JobTitle != nil {
+			title = strings.TrimSpace(*req.JobTitle)
+		}
+		if err := h.Store.UpdateUserProfileFields(r.Context(), u.ID, full, title); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 	if req.AvatarURL != nil {
 		avatar := strings.TrimSpace(*req.AvatarURL)
 		// Reject loudly rather than silently dropping the picture: the user is
@@ -200,6 +225,108 @@ func (h *AuthSelf) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, _ := h.Store.GetUser(r.Context(), u.ID)
 	writeJSON(w, http.StatusOK, updated)
+}
+
+// sessionView is one row of GET /api/auth/sessions: where a sign-in came from and how long it
+// still has. The session token itself never leaves the server — it IS the credential, and a list
+// of live credentials is exactly what an XSS would want to read.
+type sessionView struct {
+	ID        int64     `json:"id"`
+	IP        string    `json:"ip,omitempty"`
+	UserAgent string    `json:"user_agent,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	// Current marks the session this very request is authenticated by — the one row that must
+	// not be offered an "end session" button, because ending it is signing out.
+	Current bool `json:"current"`
+}
+
+// Sessions answers `GET /api/auth/sessions` with the caller's own unexpired sign-ins.
+//
+// Scoped to the caller by construction: the user id comes from the request context, never from a
+// parameter, so there is no id to tamper with. A caller authenticated by an API token instead of
+// a browser session has no cookie, so no row comes back marked current.
+func (h *AuthSelf) Sessions(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFrom(r.Context())
+	if u == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
+		return
+	}
+	rows, err := h.Store.ListSessionsForUser(r.Context(), u.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	current := currentSessionToken(r)
+	out := make([]sessionView, 0, len(rows))
+	for _, s := range rows {
+		out = append(out, sessionView{
+			ID:        s.ID,
+			IP:        s.IP,
+			UserAgent: s.UserAgent,
+			CreatedAt: s.CreatedAt,
+			ExpiresAt: s.ExpiresAt,
+			Current:   current != "" && s.Token == current,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
+}
+
+// RevokeSession ends one of the caller's other sessions.
+//
+//	DELETE /api/auth/sessions/{id}
+//
+// The current session is refused rather than deleted: "sign out everywhere but here" is what this
+// surface is for, and a button that silently signs the user out of the tab they are looking at
+// would be indistinguishable from a bug.
+func (h *AuthSelf) RevokeSession(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFrom(r.Context())
+	if u == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad session id"})
+		return
+	}
+	rows, err := h.Store.ListSessionsForUser(r.Context(), u.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	var target *model.Session
+	for _, s := range rows {
+		if s.ID == id {
+			target = s
+			break
+		}
+	}
+	if target == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such session"})
+		return
+	}
+	if token := currentSessionToken(r); token != "" && target.Token == token {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "that is the session you are calling from",
+			"hint":  "sign out to end this one",
+		})
+		return
+	}
+	if _, err := h.Store.DeleteUserSession(r.Context(), u.ID, id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// currentSessionToken is the browser session this request rides on, or "" for any other way in.
+func currentSessionToken(r *http.Request) string {
+	c, err := r.Cookie(authlocal.SessionCookieName)
+	if err != nil {
+		return ""
+	}
+	return c.Value
 }
 
 type passwordReq struct {

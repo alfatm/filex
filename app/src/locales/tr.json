@@ -496,12 +496,13 @@
     },
     "notify": {
       "hint": "filex'in size neleri bildireceğini seçin.",
-      "notifyShared": "Benimle paylaşılanlar",
-      "notifySharedHint": "Biri sizinle bir dosya veya klasör paylaştığında",
-      "notifyComments": "Yorumlar",
-      "notifyCommentsHint": "Biri dosyanıza yorum yaptığında",
-      "notifyUploads": "Tamamlanan yüklemeler",
-      "notifyUploadsHint": "Büyük bir yükleme arka planda bittiğinde"
+      "shared": "Benimle paylaşılanlar",
+      "sharedHint": "Biri sizinle bir dosya veya klasör paylaştığında",
+      "comments": "Yorumlar",
+      "commentsHint": "Biri sahibi olduğunuz bir dosyaya yorum yaptığında",
+      "uploads": "Tamamlanan yüklemeler",
+      "uploadsHint": "Büyük bir yükleme arka planda tamamlandığında",
+      "unavailable": "Bu sunucu bildirim tutmuyor."
     },
     "security": {
       "hint": "Hesabınızı güvende tutun.",
@@ -527,7 +528,12 @@
       "tooShort": "En az {min} karakter kullanın.",
       "mismatch": "Yeni parolalar eşleşmiyor.",
       "sessions": "Etkin oturumlar",
-      "sessionsHint": "Oturum açılmış cihazlar"
+      "sessionsCount": "{n} oturum | {n} oturum",
+      "signedIn": "giriş {when}",
+      "currentSession": "Bu cihaz",
+      "endSession": "Sonlandır",
+      "unknownDevice": "Bilinmeyen cihaz",
+      "sessionsFailed": "Oturumlara ulaşılamadı."
     },
     "assistant": {
       "hint": "AI asistanın sizin için nasıl davranacağı.",

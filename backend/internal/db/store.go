@@ -146,6 +146,15 @@ type Store interface {
 	// Sessions
 	CreateSession(ctx context.Context, userID int64, token string, expiresAt time.Time, ip, ua string) (*model.Session, error)
 	GetSessionByToken(ctx context.Context, token string) (*model.Session, error)
+	// UpdateUserProfileFields writes the optional full name and job title (migration 00035).
+	UpdateUserProfileFields(ctx context.Context, id int64, fullName, jobTitle string) error
+	// ListSessionsForUser returns the user's own unexpired sessions, newest first — the
+	// list behind "where am I signed in".
+	ListSessionsForUser(ctx context.Context, userID int64) ([]*model.Session, error)
+	// DeleteUserSession ends one session of that user. The user id is part of the WHERE, so
+	// the worst a caller can do with somebody else's session id is delete nothing; the bool
+	// says whether a row was actually there.
+	DeleteUserSession(ctx context.Context, userID, sessionID int64) (bool, error)
 	DeleteSession(ctx context.Context, token string) error
 	DeleteSessionsForUser(ctx context.Context, userID int64, exceptToken string) error
 	CountActiveSessions(ctx context.Context) (int64, error)

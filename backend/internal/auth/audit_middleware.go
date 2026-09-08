@@ -47,7 +47,7 @@ func AuditMiddleware(store db.Store) func(http.Handler) http.Handler {
 				Action:     action,
 				TargetType: targetType,
 				TargetID:   targetID,
-				IP:         clientIP(r),
+				IP:         ClientIP(r),
 				CreatedAt:  time.Now(),
 			}
 			if user != nil && user.ID > 0 {
@@ -346,8 +346,9 @@ func ActionForPath(method, p, id, name string) (string, string, string) {
 	return "", "", ""
 }
 
-// clientIP mirrors the helper in api/middleware.go so we don't pull a dep cycle.
-func clientIP(r *http.Request) string {
+// ClientIP mirrors the helper in api/middleware.go so we don't pull a dep cycle. Exported because a
+// session row records where it was signed in from, and the login drivers live outside this package.
+func ClientIP(r *http.Request) string {
 	if v := r.Header.Get("X-Forwarded-For"); v != "" {
 		// take just the first hop
 		if idx := strings.IndexByte(v, ','); idx >= 0 {

@@ -69,7 +69,9 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
 		return
 	}
-	user, token, err := h.LocalAuth.Login(r.Context(), req.Email, req.Password)
+	// Carried to whichever driver mints the session, so the row it writes says where from and with what.
+	ctx := auth.WithClient(r.Context(), clientIP(r), r.UserAgent())
+	user, token, err := h.LocalAuth.Login(ctx, req.Email, req.Password)
 	if err != nil {
 		// ⚠ One answer for every failure, on purpose — see the comment on
 		// local.Driver.Login. The driver has already logged WHICH failure it

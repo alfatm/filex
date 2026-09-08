@@ -25,12 +25,12 @@ describe('settings store', () => {
   });
 
   it('rejects values outside the allowed sets, field by field', () => {
-    localStorage.setItem(KEY, JSON.stringify({ theme: 'sepia', conflictBehavior: 'replace', compactList: 'yes', jobTitle: 7 }));
+    localStorage.setItem(KEY, JSON.stringify({ theme: 'sepia', conflictBehavior: 'replace', compactList: 'yes', defaultUploadFolder: 7 }));
     const { settings } = useSettingsStore();
     expect(settings.theme).toBe('system');
     expect(settings.conflictBehavior).toBe('replace');
     expect(settings.compactList).toBe(false);
-    expect(settings.jobTitle).toBe('');
+    expect(settings.defaultUploadFolder).toBe('');
   });
 
   it('ignores non-object payloads', () => {
@@ -53,12 +53,12 @@ describe('settings store', () => {
 
   it('persists what apply commits', async () => {
     const store = useSettingsStore();
-    store.apply({ ...store.settings, theme: 'light', compactList: true, jobTitle: 'Product Designer' });
+    store.apply({ ...store.settings, theme: 'light', compactList: true, defaultUploadFolder: 'demo://Design' });
     await nextTick();
     const saved = JSON.parse(backing.get(KEY) ?? '{}');
-    expect(saved).toMatchObject({ theme: 'light', compactList: true, jobTitle: 'Product Designer' });
+    expect(saved).toMatchObject({ theme: 'light', compactList: true, defaultUploadFolder: 'demo://Design' });
 
     setActivePinia(createPinia());
-    expect(useSettingsStore().settings.jobTitle).toBe('Product Designer');
+    expect(useSettingsStore().settings.defaultUploadFolder).toBe('demo://Design');
   });
 });

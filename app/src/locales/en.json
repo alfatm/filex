@@ -496,12 +496,13 @@
     },
     "notify": {
       "hint": "Choose what filex tells you about.",
-      "notifyShared": "Shared with me",
-      "notifySharedHint": "Someone shares a file or folder with you",
-      "notifyComments": "Comments",
-      "notifyCommentsHint": "Someone comments on a file you own",
-      "notifyUploads": "Finished uploads",
-      "notifyUploadsHint": "A large upload finishes in the background"
+      "shared": "Shared with me",
+      "sharedHint": "Someone shares a file or folder with you",
+      "comments": "Comments",
+      "commentsHint": "Someone comments on a file you own",
+      "uploads": "Finished uploads",
+      "uploadsHint": "A large upload finishes in the background",
+      "unavailable": "This server does not keep notifications."
     },
     "security": {
       "hint": "Keep your account safe and secure.",
@@ -527,7 +528,12 @@
       "tooShort": "Use at least {min} characters.",
       "mismatch": "The two new passwords do not match.",
       "sessions": "Active sessions",
-      "sessionsHint": "Devices signed in"
+      "sessionsCount": "{n} session | {n} sessions",
+      "signedIn": "signed in {when}",
+      "currentSession": "This device",
+      "endSession": "End session",
+      "unknownDevice": "Unknown device",
+      "sessionsFailed": "Could not reach your sessions."
     },
     "assistant": {
       "hint": "How the AI assistant behaves for you.",

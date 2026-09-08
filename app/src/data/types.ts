@@ -138,6 +138,30 @@ export interface AuthMethods {
   totpEnabled: boolean;
 }
 
+/**
+ * One place this account is signed in: filex has recorded ip, user agent and expiry for every session since its
+ * first migration. `current` marks the session the app itself is calling with — the one row that gets no "end
+ * session" button, because ending it is signing out.
+ */
+export interface Session {
+  id: string;
+  ip?: string;
+  userAgent?: string;
+  createdAt: string;
+  expiresAt: string;
+  current: boolean;
+}
+
+/**
+ * The three notification switches the settings modal owns. They are the ACCOUNT's, not this browser's:
+ * filex keeps a per-user mute list, and the server reads it when it decides whether an event rings.
+ */
+export interface NotifyPrefs {
+  shared: boolean;
+  comments: boolean;
+  uploads: boolean;
+}
+
 export interface Quota {
   usedBytes: number;
   totalBytes: number;
@@ -166,6 +190,9 @@ export interface User {
   role: 'owner' | 'admin' | 'member';
   /** Profile picture — a URL or a small `data:` URI. Absent means the avatar draws the initial. */
   avatarUrl?: string;
+  /** Optional profile fields the account carries; empty means the person never filled them in. */
+  fullName?: string;
+  jobTitle?: string;
   /** Preferences the ACCOUNT carries, so they follow the person to another browser. */
   locale?: string;
   timeZone?: string;
@@ -174,6 +201,9 @@ export interface User {
 /** What the settings modal may change about the account; an absent field is left alone. */
 export interface ProfilePatch {
   name?: string;
+  /** Optional; an empty string clears the field, which is how a job title is removed. */
+  fullName?: string;
+  jobTitle?: string;
   locale?: string;
   timeZone?: string;
   /** An empty string removes the picture. */

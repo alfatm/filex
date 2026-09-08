@@ -1,5 +1,5 @@
 import { fileTypeOf, TYPE_THUMBNAILS } from '../fileTypes';
-import type { ActivityEvent, Node, Quota, Storage } from '../types';
+import type { ActivityEvent, Node, Quota, Session, Storage } from '../types';
 
 /**
  * filex's wire shapes → the app's model, and the addressing that ties them together.
@@ -203,6 +203,27 @@ export interface WireAuthMethods {
   provider: string;
   change_password: boolean;
   totp_enabled: boolean;
+}
+
+/** `sessionView` from `GET /api/auth/sessions`. The session token is never in the answer. */
+export interface WireSession {
+  id: number;
+  ip?: string;
+  user_agent?: string;
+  created_at: string;
+  expires_at: string;
+  current: boolean;
+}
+
+export function fromSession(wire: WireSession): Session {
+  return {
+    id: String(wire.id),
+    ip: wire.ip,
+    userAgent: wire.user_agent,
+    createdAt: wire.created_at,
+    expiresAt: wire.expires_at,
+    current: wire.current,
+  };
 }
 
 export interface WireStorage {

@@ -1,6 +1,6 @@
 import { segments } from '@/lib/path';
 import { DUPLICATE_NAME, MIN_PASSWORD_LENGTH, WRONG_PASSWORD, type Repository } from '../repository';
-import type { ListingFilter, Node, User } from '../types';
+import type { ListingFilter, Node, NotifyPrefs, Session, User } from '../types';
 import { fileTypeOf, filterPeople, indexedOnly, live, nodes, storages, TYPE_THUMBNAILS, user } from './dataset';
 import * as history from './history';
 import { assistantAsk } from './assistant';
@@ -89,6 +89,40 @@ export const MOCK_UPLOAD_MS = 1500;
 export const MOCK_PASSWORD = 'demo';
 const MOCK_UPLOAD_STEPS = 15;
 
+/** The demo account's notification switches, kept where the server would keep them. */
+const notify: NotifyPrefs = { shared: true, comments: true, uploads: false };
+
+/**
+ * Where the demo account is "signed in". Dated inside the mock tree's own week so the list reads the same on every
+ * run, and revoking really removes a row — the Security tab is otherwise a screen that cannot be wrong.
+ */
+let sessions: Session[] = [
+  {
+    id: '1',
+    ip: '192.168.1.24',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+    createdAt: '2026-07-10T08:12:00Z',
+    expiresAt: '2026-08-09T08:12:00Z',
+    current: true,
+  },
+  {
+    id: '2',
+    ip: '192.168.1.31',
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1',
+    createdAt: '2026-07-08T19:40:00Z',
+    expiresAt: '2026-08-07T19:40:00Z',
+    current: false,
+  },
+  {
+    id: '3',
+    ip: '81.2.69.144',
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0',
+    createdAt: '2026-07-02T11:05:00Z',
+    expiresAt: '2026-08-01T11:05:00Z',
+    current: false,
+  },
+];
+
 function fakeTransfer(size: number, onProgress?: (sent: number, total: number) => void): Promise<void> {
   if (!onProgress) return Promise.resolve();
   return new Promise((resolve) => {
@@ -172,6 +206,8 @@ export const mockRepository: Repository = {
       user.name = patch.name;
       user.initial = (patch.name.trim()[0] ?? '?').toUpperCase();
     }
+    if (patch.fullName !== undefined) user.fullName = patch.fullName || undefined;
+    if (patch.jobTitle !== undefined) user.jobTitle = patch.jobTitle || undefined;
     if (patch.locale !== undefined) user.locale = patch.locale;
     if (patch.timeZone !== undefined) user.timeZone = patch.timeZone;
     if (patch.avatarUrl !== undefined) user.avatarUrl = patch.avatarUrl || undefined;
@@ -185,6 +221,22 @@ export const mockRepository: Repository = {
   async authMethods() {
     // The demo signs in the way a single-drive filex install does.
     return { provider: 'local', changePassword: true, totpEnabled: false };
+  },
+  async notifyPrefs() {
+    return { ...notify };
+  },
+  async saveNotifyPrefs(prefs) {
+    Object.assign(notify, prefs);
+  },
+  async listSessions() {
+    return sessions.map((session) => ({ ...session }));
+  },
+  async revokeSession(id) {
+    const target = sessions.find((session) => session.id === id);
+    // The server refuses the session the caller is using; the demo answers the same way rather than
+    // signing the demo out of a screen that has no sign-in.
+    if (target?.current) throw new Error('cannot revoke the current session');
+    sessions = sessions.filter((session) => session.id !== id);
   },
   async changePassword(current, next) {
     if (next.length < MIN_PASSWORD_LENGTH) throw new Error('passwordTooShort');
