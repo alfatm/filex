@@ -37,7 +37,7 @@ export default defineConfig({
   snapshotPathTemplate: '{testDir}/__screenshots__/{arg}{ext}',
   timeout: 30_000,
   expect: {
-    timeout: 5_000,
+    timeout: 10_000,
     // 50 pixels, not a ratio. 0.002 of this 1672×941 frame is 3147 px, and Playwright counts only pixels that
     // differ perceptibly (pixelmatch, threshold 0.2), so real design changes score far below that: enabling two
     // greyed menu entries and swapping one icon measures 234 px — thirteen times under the old ceiling, which is
@@ -51,6 +51,22 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
 
+  // ⚠ Four, not Playwright's default half-the-cores.
+  //
+  // Measured on a 14-core machine, same commit, same suite, back to back at the
+  // same load:
+  //
+  //   workers 7 (the old default)   77 s, 77 s — and the second run failed
+  //   workers 4 (this)              22 s, 22 s, 21 s, 22 s, 22 s — all green
+  //
+  // Fewer browsers is not a trade of speed for stability here; it is faster AND
+  // stable, because seven Chromiums plus a Vite process on one box is
+  // oversubscription and everything then waits on everything. The same config
+  // that failed at load average ~23 passed 108/108 in 20 s at load ~2, which is
+  // the whole flakiness story this suite has had: not a product bug, not a bad
+  // selector, a browser count tuned for an idle machine.
+  workers: process.env.CI ? 2 : 4,
+
   reporter: [['html', { outputFolder: 'playwright-report/app', open: 'never' }], ['list']],
 
   use: {
@@ -61,8 +77,12 @@ export default defineConfig({
     timezoneId: 'UTC',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-    actionTimeout: 10_000,
-    navigationTimeout: 15_000,
+    // Headroom for a loaded machine, not for a slow app: every one of these
+    // tests drives an in-memory mock repository, so anything past a few hundred
+    // milliseconds is the machine, and reporting the machine as a product
+    // failure is what these numbers are here to stop.
+    actionTimeout: 20_000,
+    navigationTimeout: 30_000,
   },
 
   projects: [
@@ -72,6 +92,16 @@ export default defineConfig({
     },
   ],
 
+  // ⚠ The dev server, and it has to be: the screenshot/e2e query hooks this
+  // suite drives (`?panel=assistant`, `?modal=preview`, `?demo=…`) live behind
+  // `import.meta.env.DEV` and are deliberately absent from a build. Serving the
+  // build from `vite preview` was measured rather than assumed: 47 of 108
+  // failed, every one of them on a hook that is not in the bundle.
+  //
+  // ⚠⚠ `reuseExistingServer` reuses ANY server that answers on this port, not
+  // only this app's. A stray dev server from another package that has drifted
+  // onto 5176 will be tested instead, and every failure it produces is a lie.
+  // If results look impossible, check what is actually listening.
   webServer: {
     command: `pnpm --filter ./app exec vite --port ${PORT} --strictPort`,
     cwd: path.resolve(E2E_DIR, '..'),

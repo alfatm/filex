@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HttpRepository } from './repository';
 import type { WireFileNode } from './map';
+import type { SearchHit } from '../types';
 
 /** One recorded call, in the order the repository made it. */
 interface Call {
@@ -577,13 +578,47 @@ describe('HttpRepository', () => {
     for await (const event of new HttpRepository().assistantAsk('how are my files?', 'filename', '7', new AbortController().signal)) {
       events.push(event);
     }
-    expect(asked).toMatchObject({ url: '/api/assistant/sessions/7/turn', body: { prompt: 'how are my files?' } });
+    // The chip travels with the question: the server turns it into a scope hint for this turn.
+    expect(asked).toMatchObject({ url: '/api/assistant/sessions/7/turn', body: { prompt: 'how are my files?', mode: 'filename' } });
     expect(events).toEqual([
       { type: 'meta', conversationId: '7' },
       { type: 'text', delta: 'Your ' },
       { type: 'text', delta: 'files.' },
       { type: 'done' },
     ]);
+  });
+
+  it('turns the rows a search found into result cards', async () => {
+    const frames = [
+      'data: {"type":"meta","conversation_id":"7"}\n\n',
+      'data: {"type":"hits","hits":[{"path":"main://Docs/spec.pdf","name":"spec.pdf","type":"file","size":12,"last_modified":1788800115455,"snippet":"the «invoice» for March"}]}\n\n',
+      'data: {"type":"done"}\n\n',
+    ];
+    vi.stubGlobal('fetch', async () => {
+      const encoder = new TextEncoder();
+      return {
+        ok: true,
+        status: 200,
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const frame of frames) controller.enqueue(encoder.encode(frame));
+            controller.close();
+          },
+        }),
+      } as Response;
+    });
+    const events = [];
+    for await (const event of new HttpRepository().assistantAsk('find the invoice', 'filename', '7', new AbortController().signal)) {
+      events.push(event);
+    }
+    const hits = events.find((e) => e.type === 'hits');
+    expect(hits).toBeDefined();
+    const hit = (hits as { hits: SearchHit[] }).hits[0];
+    expect(hit.node).toMatchObject({ id: 'main://Docs/spec.pdf', name: 'spec.pdf', kind: 'file', size: 12 });
+    expect(hit.storageId).toBe('main');
+    expect(hit.folderPath).toBe('Docs');
+    // ⚠ The « » markers become highlight ranges; they are not shown as characters.
+    expect(hit.snippet).toEqual({ text: 'the invoice for March', ranges: [{ start: 4, end: 11 }] });
   });
 
   it('passes the name the server gave the conversation', async () => {

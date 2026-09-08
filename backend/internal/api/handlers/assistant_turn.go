@@ -73,6 +73,34 @@ func (h *Assistant) Status(w http.ResponseWriter, r *http.Request) {
 
 type turnReq struct {
 	Prompt string `json:"prompt"`
+	// Mode is the scope chip the person had selected: "filename", "content" or
+	// "tags". Anything else is ignored rather than refused — it is a hint, and
+	// a turn is worth more than a 400 over a chip.
+	Mode string `json:"mode"`
+}
+
+// scopeHints turn the panel's chips into a sentence the model can act on. They
+// are NOT stored with the question and not replayed: the chip belongs to the
+// turn it was set for, the same way it does on screen.
+var scopeHints = map[string]string{
+	"filename": "For this question, search by file and folder NAMES.",
+	"content":  "For this question, look inside file contents where filex has indexed them, not only at names.",
+	"tags":     "For this question, narrow by tags — search_files understands `tag:<name>` terms.",
+}
+
+// withScope appends the chip's hint to the question the model is about to be
+// asked, marked so the model can tell it from the person's own words.
+func withScope(history []assistant.Message, mode string) []assistant.Message {
+	hint := scopeHints[mode]
+	if hint == "" || len(history) == 0 {
+		return history
+	}
+	last := len(history) - 1
+	if history[last].Role != assistant.RoleUser {
+		return history
+	}
+	history[last].Content += "\n\n(Scope chosen in the interface: " + hint + ")"
+	return history
 }
 
 // Turn asks the model and streams the answer back as server-sent events:
@@ -170,9 +198,12 @@ func (h *Assistant) Turn(w http.ResponseWriter, r *http.Request) {
 	}
 	var answer strings.Builder
 	// Cards outlive the stream: a conversation reopened tomorrow has to show
-	// the same pending approval, so they are stored with the answer.
+	// the same pending approval, so they are stored with the answer. So do the
+	// search results — an answer that pointed at four files is half missing
+	// without them.
 	var cards []assistant.Card
-	askErr := h.AI.Ask(r.Context(), cfg, box, history, func(event assistant.Event) error {
+	var hits []json.RawMessage
+	askErr := h.AI.Ask(r.Context(), cfg, box, withScope(history, req.Mode), func(event assistant.Event) error {
 		switch event.Type {
 		case assistant.EventText:
 			answer.WriteString(event.Delta)
@@ -181,6 +212,12 @@ func (h *Assistant) Turn(w http.ResponseWriter, r *http.Request) {
 			// What it is doing, while it does it. A panel that shows nothing
 			// for twenty seconds of tool calls looks stuck.
 			return send(map[string]any{"type": "tool", "tool": event.Tool, "target": toolTarget(event.Args)})
+		case assistant.EventHits:
+			// Straight through: the rows were built by the tool and are read by
+			// the panel, and re-shaping them here would only add a third
+			// spelling of a file row.
+			hits = append(hits, event.Hits)
+			return send(map[string]any{"type": "hits", "hits": json.RawMessage(event.Hits)})
 		case assistant.EventCard:
 			if event.Card == nil {
 				return nil
@@ -207,7 +244,7 @@ func (h *Assistant) Turn(w http.ResponseWriter, r *http.Request) {
 	// exactly the case this matters most — the person pressed stop — and
 	// writing through it would drop the words they had already read.
 	stopped := r.Context().Err() != nil
-	h.persistAnswer(r, session.ID, answer.String(), stopped, cards)
+	h.persistAnswer(r, session.ID, answer.String(), stopped, cards, hits)
 
 	if askErr != nil && !errors.Is(askErr, assistant.ErrNotConfigured) {
 		_ = send(map[string]any{"type": "error", "message": askErr.Error()})
@@ -240,8 +277,8 @@ func (h *Assistant) history(r *http.Request, sessionID int64) ([]assistant.Messa
 // An answer that never started is not stored: an empty assistant row would
 // draw an empty bubble in the panel and would be replayed to the model as a
 // turn it did not take.
-func (h *Assistant) persistAnswer(r *http.Request, sessionID int64, text string, stopped bool, cards []assistant.Card) {
-	if strings.TrimSpace(text) == "" && len(cards) == 0 {
+func (h *Assistant) persistAnswer(r *http.Request, sessionID int64, text string, stopped bool, cards []assistant.Card, hits []json.RawMessage) {
+	if strings.TrimSpace(text) == "" && len(cards) == 0 && len(hits) == 0 {
 		return
 	}
 	ctx := context.WithoutCancel(r.Context())
@@ -249,7 +286,7 @@ func (h *Assistant) persistAnswer(r *http.Request, sessionID int64, text string,
 		SessionID:   sessionID,
 		Role:        model.AssistantRoleAssistant,
 		Content:     text,
-		PayloadJSON: cardPayload(cards),
+		PayloadJSON: turnPayload(cards, hits),
 		Aborted:     stopped,
 	}); err != nil {
 		slog.Error("assistant: storing the answer failed", slog.Any("error", err), slog.Int64("session", sessionID))
@@ -309,13 +346,22 @@ func toolTarget(args string) string {
 	return fields.Path
 }
 
-// cardPayload stores the turn's cards beside the answer, so reopening the
+// turnPayload stores the turn's cards and search results beside the answer, so reopening the
 // conversation redraws a pending approval rather than losing it.
-func cardPayload(cards []assistant.Card) string {
-	if len(cards) == 0 {
+func turnPayload(cards []assistant.Card, hits []json.RawMessage) string {
+	if len(cards) == 0 && len(hits) == 0 {
 		return "{}"
 	}
-	raw, err := json.Marshal(map[string]any{"cards": cards})
+	out := map[string]any{}
+	if len(cards) > 0 {
+		out["cards"] = cards
+	}
+	// One array of rows, not an array of searches: two searches in one turn are
+	// still one set of results to the reader.
+	if flat := flattenHits(hits); len(flat) > 0 {
+		out["hits"] = flat
+	}
+	raw, err := json.Marshal(out)
 	if err != nil {
 		return "{}"
 	}
@@ -353,4 +399,19 @@ func (h *Assistant) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": path})
+}
+
+// flattenHits concatenates the per-search arrays into one. A search whose
+// payload cannot be read is skipped: it was already sent to the client, and a
+// stored answer is worth more than an exact copy of it.
+func flattenHits(searches []json.RawMessage) []json.RawMessage {
+	var out []json.RawMessage
+	for _, raw := range searches {
+		var rows []json.RawMessage
+		if json.Unmarshal(raw, &rows) != nil {
+			continue
+		}
+		out = append(out, rows...)
+	}
+	return out
 }

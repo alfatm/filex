@@ -1,5 +1,5 @@
 import { fileTypeOf, TYPE_THUMBNAILS } from '../fileTypes';
-import type { ActivityEvent, Node, Quota, Session, Storage } from '../types';
+import type { ActivityEvent, MatchRange, Node, Quota, SearchHit, Session, Storage } from '../types';
 
 /**
  * filex's wire shapes → the app's model, and the addressing that ties them together.
@@ -316,6 +316,69 @@ export function fromModelNode(wire: WireNode, adapter: string): Node {
     shared: wire.shared ?? false,
     starred: false,
     ...(wire.deleted_at ? { deletedAt: wire.deleted_at } : {}),
+  };
+}
+
+/**
+ * One row the assistant's search found, as the tool reports it: an address, the
+ * basics of the file, and — for a content hit — a snippet with the matched
+ * words wrapped in « ».
+ *
+ * ⚠ Its own shape, not `WireNode`. The assistant's file surface answers in the
+ * addressing scheme (`drive://path`, unix millis) rather than in node rows, and
+ * faking a `WireNode` here would mean inventing a numeric id that means nothing.
+ */
+export interface WireAssistantHit {
+  path: string;
+  name: string;
+  type: WireType;
+  size?: number;
+  mime?: string;
+  last_modified?: number;
+  snippet?: string;
+  matched?: string;
+}
+
+/** Splits a server snippet on its « » markers into text plus highlight ranges. */
+export function fromSnippet(raw: string): { text: string; ranges: MatchRange[] } {
+  const ranges: MatchRange[] = [];
+  let text = '';
+  let rest = raw;
+  for (;;) {
+    const open = rest.indexOf('«');
+    const close = open < 0 ? -1 : rest.indexOf('»', open + 1);
+    if (open < 0 || close < 0) break;
+    text += rest.slice(0, open);
+    const start = text.length;
+    text += rest.slice(open + 1, close);
+    ranges.push({ start, end: text.length });
+    rest = rest.slice(close + 1);
+  }
+  return { text: text + rest, ranges };
+}
+
+/** One assistant search result, as the panel's result card reads it. */
+export function fromAssistantHit(wire: WireAssistantHit): SearchHit {
+  const kind = wire.type === 'dir' ? 'folder' : 'file';
+  const { adapter } = splitPath(wire.path);
+  const parent = parentPath(wire.path);
+  const node: Node = {
+    id: wire.path,
+    name: wire.name,
+    kind,
+    parentId: parent,
+    size: kind === 'folder' ? 0 : (wire.size ?? 0),
+    modifiedAt: wire.last_modified ? new Date(wire.last_modified).toISOString() : undefined,
+    ...typed(wire.name, kind),
+    assetUrl: kind === 'file' ? previewUrl(wire.path) : undefined,
+    shared: false,
+    starred: false,
+  };
+  return {
+    node,
+    storageId: adapter,
+    folderPath: parent ? splitPath(parent).rel : '',
+    ...(wire.snippet ? { snippet: fromSnippet(wire.snippet) } : {}),
   };
 }
 

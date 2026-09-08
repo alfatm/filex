@@ -241,10 +241,13 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
   person typed is never replaced. Filtering is client-side: the
   history is capped at 100 per account, so the list is already in the browser.
 - The mode chips (filename / content / tags) are drawn as the reference has
-  them and are NOT sent to the server. filex's assistant answers in prose and
-  has no per-mode search behind it; the chips become the scope hint the day it
-  has tools to search with. Sending a field the server ignores would only have
-  looked like it worked.
+  them and ARE sent with the question, as `mode`. The server turns the chip
+  into one sentence of guidance appended to that turn's question — search by
+  names / look inside contents / narrow by tags — and nothing else: it is not
+  stored with the question and not replayed, so the chip belongs to the turn it
+  was set on, exactly as it looks on screen. They were inert until the
+  assistant had search tools; sending a field the server ignored would only
+  have looked like it worked.
 - Permission card (below the answer that raised it, full width, border 1px
   radius 12 padding 16): "May I open this file?" 14/500, the full address 14
   gray (breaks anywhere — an address is longer than the panel), the assistant's
@@ -297,6 +300,11 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
 - Result card (full width, border 1px radius 12 padding 14, gap 12 between):
   icon 40 (pdf tile red radius 8 / fig / md), name 16/500, path 14 gray,
   "Matched content: "…"" 14 gray (wraps), `MoreVertical` 20 top-right.
+  Drawn from the `hits` frame the server sends whenever the assistant ran a
+  search — the same rows the model reads as JSON — and stored with the answer,
+  so reopening the conversation redraws them. The snippet's matched words
+  arrive wrapped in « » and are turned into highlight ranges, never shown as
+  those characters.
 - Follow-up line 15 + timestamp 12.
 - Mode chips h 38 pill: "Filename" active primary bg white text with `File`
   16; "Content" (`Search`), "Tags" (`Tag`) bordered; gap 10.

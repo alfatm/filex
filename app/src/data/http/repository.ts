@@ -30,6 +30,8 @@ import {
   type WireUploadBegin,
   type WireUploadCommit,
   type WireUploadPut,
+  fromAssistantHit,
+  type WireAssistantHit,
 } from './map';
 
 /**
@@ -81,12 +83,14 @@ const ASSISTANT_STATUS = '/api/assistant/status';
 
 /** One frame of the turn stream; filex carries the kind inside the payload rather than on an `event:` line. */
 interface WireAssistantEvent {
-  type: 'meta' | 'text' | 'tool' | 'card' | 'title' | 'error' | 'done';
+  type: 'meta' | 'text' | 'tool' | 'card' | 'hits' | 'title' | 'error' | 'done';
   conversation_id?: string;
   delta?: string;
   message?: string;
   /** `title`: the name the server gave this conversation. */
   title?: string;
+  /** `hits`: what a search found, for the panel's result cards. */
+  hits?: WireAssistantHit[];
   /** `tool`: which tool, and the path or query it was given. */
   tool?: string;
   target?: string;
@@ -286,6 +290,8 @@ interface WireChatMessage {
   created_at: string;
   /** The questions this turn raised; a plan card is redrawn from the plan row, so its state is current. */
   cards?: WireCard[];
+  /** What the searches in this turn found, stored with the answer. */
+  hits?: WireAssistantHit[];
 }
 
 function fromChatSession(wire: WireChatSession): AssistantSession {
@@ -992,15 +998,16 @@ export class HttpRepository implements Repository {
 
 
   /**
-   * One turn, streamed. The mode chips are not sent: filex’s assistant answers in prose and has no per-mode search
-   * endpoint behind it — the chips narrow what it is asked to look at once it has tools to look with.
+   * One turn, streamed. The scope chip goes with the question: the server turns it into one sentence of guidance for
+   * that turn only — it is not stored with the question and not replayed, the same way the chip is not sticky on
+   * screen.
    *
-   * `hits` never arrives from a live server yet, for the same reason: an answer today is text.
+   * `hits` arrives whenever the assistant ran a search: the same rows the model reads as JSON, for the panel to draw
+   * as cards. They are stored with the answer, so reopening the conversation redraws them.
    */
   async *assistantAsk(prompt: string, mode: AssistantMode, conversationId: string | null, signal: AbortSignal): AsyncIterable<AssistantEvent> {
-    void mode;
     if (!conversationId) throw new Error('assistant: a conversation has to exist before a turn can be stored in it');
-    const stream = streamJSON<WireAssistantEvent>(`${ASSISTANT_SESSIONS}/${conversationId}/turn`, { prompt }, signal);
+    const stream = streamJSON<WireAssistantEvent>(`${ASSISTANT_SESSIONS}/${conversationId}/turn`, { prompt, mode }, signal);
     for await (const event of stream) {
       if (event.type === 'meta') yield { type: 'meta', conversationId: event.conversation_id ?? conversationId };
       else if (event.type === 'text') yield { type: 'text', delta: event.delta ?? '' };
@@ -1009,6 +1016,7 @@ export class HttpRepository implements Repository {
         const card = fromCard(event as WireCard);
         if (card) yield { type: 'card', card };
       }
+      else if (event.type === 'hits' && event.hits?.length) yield { type: 'hits', hits: event.hits.map(fromAssistantHit) };
       else if (event.type === 'title' && event.title) yield { type: 'title', title: event.title };
       else if (event.type === 'error') yield { type: 'error', message: event.message ?? '' };
       else if (event.type === 'done') yield { type: 'done' };
@@ -1054,6 +1062,7 @@ export class HttpRepository implements Repository {
         at: m.created_at,
         ...(m.aborted ? { aborted: true } : {}),
         ...(m.cards?.length ? { cards: m.cards.map(fromCard).filter((c): c is AssistantCard => c !== null) } : {}),
+        ...(m.hits?.length ? { hits: m.hits.map(fromAssistantHit) } : {}),
       })),
       granted: granted ?? [],
     };

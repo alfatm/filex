@@ -151,6 +151,9 @@ func (h *Assistant) Messages(w http.ResponseWriter, r *http.Request) {
 		if cards := storedCards(m.PayloadJSON); len(cards) > 0 {
 			row["cards"] = hydratePlans(cards, plans)
 		}
+		if hits := storedHits(m.PayloadJSON); len(hits) > 0 {
+			row["hits"] = hits
+		}
 		out = append(out, row)
 	}
 	// The approvals given in this conversation travel with it, so a reopened
@@ -259,6 +262,22 @@ func storedCards(payload string) []assistant.Card {
 		return nil
 	}
 	return stored.Cards
+}
+
+// storedHits reads back the search results shown with an answer. They are
+// returned as they were stored — the shape belongs to the panel that draws
+// them, and this handler has no reason to understand a file row.
+func storedHits(payload string) []json.RawMessage {
+	if payload == "" || payload == "{}" {
+		return nil
+	}
+	var stored struct {
+		Hits []json.RawMessage `json:"hits"`
+	}
+	if json.Unmarshal([]byte(payload), &stored) != nil {
+		return nil
+	}
+	return stored.Hits
 }
 
 // hydratePlans replaces each stored plan card with the plan's current state.

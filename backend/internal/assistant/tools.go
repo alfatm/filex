@@ -19,7 +19,10 @@
 // instead of a question they can answer.
 package assistant
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // MaxToolRounds bounds one turn: how many times the model may call tools and
 // look at the results before it has to answer.
@@ -106,6 +109,14 @@ const (
 type ToolOutcome struct {
 	Content string
 	Card    *Card
+	// Hits is what the person should SEE of this tool's result, as opaque JSON
+	// the interface understands — search results, so far.
+	//
+	// ⚠ Opaque on purpose. This package knows about models and tools; the shape
+	// of a file row belongs to the handler that produced it and to the panel
+	// that draws it, and giving this package a file type of its own would mean
+	// two places to change when a column moves.
+	Hits json.RawMessage
 }
 
 // Toolbox is a deployment's set of tools.
@@ -124,6 +135,8 @@ type Event struct {
 	Args string
 	// Card.
 	Card *Card
+	// Hits: what a tool found, for the person to look at rather than read about.
+	Hits json.RawMessage
 }
 
 // Event types.
@@ -131,6 +144,7 @@ const (
 	EventText = "text"
 	EventTool = "tool"
 	EventCard = "card"
+	EventHits = "hits"
 )
 
 // Emit receives events in the order they happen. Returning an error stops the

@@ -357,6 +357,86 @@ func TestAssistantTools_ContentsNeedPermissionForThatExactFile(t *testing.T) {
 }
 
 // A turn that keeps calling tools stops on its own and says so.
+// A search gives the person something to look at, not only something for the
+// model to describe: the rows come down the stream as they are found, and they
+// are still there when the conversation is reopened.
+func TestAssistantTools_SearchSendsTheRowsToTheInterface(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "search_files", map[string]any{"path": "main://", "query": "hello"}),
+		textFrame("I found one."),
+	)
+	srv, client, _ := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+
+	events := turnStream(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", "find hello")
+	hits := eventsOfType(events, "hits")
+	require.Len(t, hits, 1, "one search, one batch of rows: %v", events)
+	rows, _ := hits[0]["hits"].([]any)
+	require.NotEmpty(t, rows)
+	first, _ := rows[0].(map[string]any)
+	assert.Contains(t, first["path"], "hello.txt")
+	assert.Equal(t, "file", first["type"], "the panel draws an icon from this")
+
+	// ⚠ Reopening the conversation redraws them. An answer that pointed at a
+	// file is half missing without the row it pointed at.
+	st, raw := doReq(t, client, http.MethodGet, srv.URL+"/api/assistant/sessions/"+session, nil)
+	require.Equal(t, http.StatusOK, st)
+	var stored struct {
+		Messages []struct {
+			Hits []map[string]any `json:"hits"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &stored))
+	var seen int
+	for _, m := range stored.Messages {
+		seen += len(m.Hits)
+	}
+	assert.Equal(t, len(rows), seen, "every row shown during the turn is still there")
+}
+
+// The scope chip is a hint for the turn it was set on: it reaches the model,
+// and it does not become part of the stored conversation.
+func TestAssistantTurn_ScopeChipIsSentButNotStored(t *testing.T) {
+	provider := newScriptedProvider(t, textFrame("Looked at names."))
+	srv, client, _ := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+
+	body, _ := json.Marshal(map[string]string{"prompt": "find the invoice", "mode": "content"})
+	resp, err := client.Post(srv.URL+"/api/assistant/sessions/"+session+"/turn", "application/json", strings.NewReader(string(body)))
+	require.NoError(t, err)
+	_, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	sent := provider.sent()
+	assert.Contains(t, sent, "find the invoice")
+	assert.Contains(t, sent, "look inside file contents", "the chip reached the model as a scope hint")
+
+	st, raw := doReq(t, client, http.MethodGet, srv.URL+"/api/assistant/sessions/"+session, nil)
+	require.Equal(t, http.StatusOK, st)
+	var stored struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &stored))
+	assert.Equal(t, "find the invoice", stored.Messages[0].Content, "what the person typed is what is kept")
+}
+
+// An unknown chip is ignored rather than refused: a hint is not worth a 400.
+func TestAssistantTurn_AnUnknownScopeIsIgnored(t *testing.T) {
+	provider := newScriptedProvider(t, textFrame("Fine."))
+	srv, client, _ := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+
+	body, _ := json.Marshal(map[string]string{"prompt": "hello", "mode": "nonsense"})
+	resp, err := client.Post(srv.URL+"/api/assistant/sessions/"+session+"/turn", "application/json", strings.NewReader(string(body)))
+	require.NoError(t, err)
+	_, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	assert.NotContains(t, provider.sent(), "Scope chosen in the interface")
+}
+
 func TestAssistantTools_ToolLoopHasACeiling(t *testing.T) {
 	frames := make([]string, 0, 20)
 	for i := 0; i < 20; i++ {

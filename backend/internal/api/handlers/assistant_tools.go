@@ -317,7 +317,14 @@ func (t *assistantTools) searchFiles(ctx context.Context, raw string) assistant.
 	if len(hits) > assistantSearchLimit {
 		hits = hits[:assistantSearchLimit]
 	}
-	return payload(map[string]any{"query": args.Query, "hits": hits})
+	out := payload(map[string]any{"query": args.Query, "hits": hits})
+	// The same rows again, this time for the panel to draw as cards. The model
+	// reads them as JSON; the person gets something clickable, without waiting
+	// for the answer to name every file in prose.
+	if shown, err := json.Marshal(hits); err == nil {
+		out.Hits = shown
+	}
+	return out
 }
 
 // readFile is the gated one.

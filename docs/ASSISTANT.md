@@ -74,7 +74,7 @@ special.
 |---|---|
 | `list_storages` | the drives this person has, so paths can be written `drive://folder/file` |
 | `list_folder` | one folder's entries — names, types, sizes, dates. No contents |
-| `search_files` | name and content search on one drive, with short snippets |
+| `search_files` | name and content search on one drive, with short snippets — the rows also go to the panel as result cards |
 | `list_versions` | the stored revisions of one file, with their ids |
 | `list_shares` | the public links on one item, with their ids — ⚠ never the link token itself |
 | `list_trash` | what is in the trash, with sizes and deletion dates |
@@ -308,6 +308,7 @@ payload rather than in an SSE `event:` line, so a client has one parser:
 ```
 {"type":"meta","conversation_id":"7"}          once, first
 {"type":"tool","tool":"list_folder","target":"main://Reports"}
+{"type":"hits","hits":[{"path":"main://Reports/q1.pdf","name":"q1.pdf","type":"file","snippet":"the «invoice» for March"}]}
 {"type":"text","delta":"…"}                    repeatedly
 {"type":"card","kind":"approval","path":"…","reason":"…"}
 {"type":"card","kind":"plan","plan_id":"3","plan_kind":"tags","summary":"…","items":[…],"status":"pending"}
@@ -318,6 +319,15 @@ payload rather than in an SSE `event:` line, so a client has one parser:
 
 `tool` frames exist so the panel can say what is happening while it happens — a
 panel that shows nothing through twenty seconds of tool calls looks broken.
+`hits` carries what a search found, in the same rows the model is reading, so
+the person gets clickable results rather than a paragraph describing them; they
+are stored with the answer and redrawn when the conversation is reopened.
+
+The turn request may also carry `mode` — the scope chip the person had selected
+(`filename` / `content` / `tags`). The server turns it into one sentence
+appended to that turn's question and nothing else: it is not stored with the
+question and not replayed, so the chip belongs to the turn it was set on. An
+unknown value is ignored rather than refused.
 
 ⚠ Cards on the wire carry **codes**, not sentences: an item's `action` is
 `tag` / `restore_version` / `revoke_share` / `purge`, with `args`, a raw `size`

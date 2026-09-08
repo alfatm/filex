@@ -166,6 +166,14 @@ func (s *Service) Ask(ctx context.Context, cfg Config, box Toolbox, history []Me
 					return err
 				}
 			}
+			// What the tool found, for the person, before the model has said a
+			// word about it. The model reads the same result as text; this is
+			// the same thing to look at.
+			if len(outcome.Hits) > 0 {
+				if err := emit(Event{Type: EventHits, Hits: outcome.Hits}); err != nil {
+					return err
+				}
+			}
 			req.Messages = append(req.Messages, Message{Role: RoleTool, ToolCallID: call.ID, Content: outcome.Content})
 		}
 	}
