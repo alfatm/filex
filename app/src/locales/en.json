@@ -182,6 +182,14 @@
     "done": "{count} upload complete | {count} uploads complete",
     "failed": "{count} upload failed | {count} uploads failed",
     "failedItem": "Upload failed",
+    "interrupted": "{count} upload interrupted | {count} uploads interrupted",
+    "interruptedItem": "Upload interrupted",
+    "stoppedAt": "Stopped at {percent}%.",
+    "resume": "Resume",
+    "discard": "Discard",
+    "wrongFile": "That is a different file. Pick the same one to carry on.",
+    "cancelItem": "Cancel the upload of {name}",
+    "cancelled": "Cancelled",
     "close": "Close"
   },
   "topbar": {

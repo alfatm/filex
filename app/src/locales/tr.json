@@ -182,6 +182,14 @@
     "done": "{count} yükleme tamamlandı",
     "failed": "{count} yükleme başarısız oldu",
     "failedItem": "Yükleme başarısız oldu",
+    "interrupted": "{count} yükleme yarıda kaldı | {count} yükleme yarıda kaldı",
+    "interruptedItem": "Yükleme yarıda kaldı",
+    "stoppedAt": "%{percent} seviyesinde durdu.",
+    "resume": "Devam et",
+    "discard": "Vazgeç",
+    "wrongFile": "Bu farklı bir dosya. Devam etmek için aynısını seçin.",
+    "cancelItem": "{name} yüklemesini iptal et",
+    "cancelled": "İptal edildi",
     "close": "Kapat"
   },
   "topbar": {

@@ -208,6 +208,24 @@ test.describe('File actions', () => {
     await expect(tray).toBeHidden();
   });
 
+  test('an upload can be cancelled while it runs, and the file never lands', async ({ page }) => {
+    await page.goto('files?view=list');
+    await page.getByRole('navigation').getByRole('button', { name: 'New' }).click();
+    const chooser = page.waitForEvent('filechooser');
+    await page.getByRole('menu', { name: 'New' }).getByRole('menuitem', { name: 'Upload files' }).click();
+    await (await chooser).setFiles({ name: 'giant.bin', mimeType: 'application/octet-stream', buffer: Buffer.from('0123456789') });
+
+    const tray = page.getByRole('region', { name: /^Uploading|upload complete$/ });
+    await tray.getByRole('button', { name: 'Cancel the upload of giant.bin' }).click();
+
+    // The row says what happened rather than disappearing: a transfer that stops has to be visible to whoever stopped it.
+    await expect(tray.getByText('Cancelled')).toBeVisible();
+    await expect(row(page, 'giant.bin')).toHaveCount(0);
+    // And it stays gone — a cancelled transfer must not land a moment later.
+    await page.waitForTimeout(2000);
+    await expect(row(page, 'giant.bin')).toHaveCount(0);
+  });
+
   test('right-click opens the context menu on the row under the cursor and selects it', async ({ page }) => {
     await page.goto('files?view=list');
     await row(page, 'Code').click({ button: 'right' });

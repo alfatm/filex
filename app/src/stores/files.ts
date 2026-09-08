@@ -265,6 +265,11 @@ export const useFilesStore = defineStore('files', () => {
     return mutate(() => repository.uploadFile(parentId, file, options));
   }
 
+  /** The same arrival, for a transfer the server had already started before the page was reloaded. */
+  async function addResumed(sessionId: string, parentId: string, file: UploadInput, options?: UploadOptions) {
+    return mutate(() => repository.resumeUpload(sessionId, parentId, file, options));
+  }
+
   async function rename(id: string, name: string) {
     const before = items.value.find((n) => n.id === id);
     await mutate(() => repository.rename(id, name));
@@ -399,6 +404,7 @@ export const useFilesStore = defineStore('files', () => {
     bootstrap,
     createFolder,
     addUploaded,
+    addResumed,
     rename,
     trash,
     restore,

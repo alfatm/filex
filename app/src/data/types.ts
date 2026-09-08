@@ -122,6 +122,23 @@ export interface UploadInput {
  */
 export interface UploadOptions {
   onProgress?: (sent: number, total: number) => void;
+  /** Stops the transfer where it stands. What is already staged stays staged — dropping it is `abortUpload`. */
+  signal?: AbortSignal;
+  /**
+   * The server's id for this transfer, as soon as there is one.
+   *
+   * ⚠ This is the only way a transfer can be picked up again after the page reloads: `POST /upload/begin` always
+   * opens a NEW session at offset 0, so an id that was not written down is a staged upload nobody can continue.
+   */
+  onSession?: (id: string) => void;
+}
+
+/** A staged upload the server is still holding, and how far into it that server got. */
+export interface UploadSession {
+  id: string;
+  /** Bytes the server has accepted. */
+  offset: number;
+  size: number;
 }
 
 /**

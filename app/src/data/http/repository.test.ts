@@ -363,6 +363,67 @@ describe('HttpRepository', () => {
     expect(node).toMatchObject({ id: 'main://Docs/notes.md', name: 'notes.md' });
   });
 
+  // ⚠ The session id is the only thing that can bring a transfer back after a reload: `begin` always opens a NEW
+  // session at offset 0, so an id nobody wrote down is staged bytes nobody can continue.
+  it('hands the session id to the caller before any byte moves', async () => {
+    routes = [
+      ['/upload/begin', { id: 'u3', chunk_size: 16, offset: 0 }],
+      ['/upload/u3/commit', { op_id: 13 }],
+      ['/upload/u3', { offset: 3 }],
+      ['/api/files/ops/13', { id: 13, kind: 'upload-commit', status: 'ok' }],
+      ['/star/list', { nodes: [] }],
+      ['q=index', index(row({ id: 6, path: 'main://Docs/a.txt', basename: 'a.txt', type: 'file', size: 3 }))],
+    ];
+    const order: string[] = [];
+    await new HttpRepository().uploadFile(
+      'main://Docs',
+      { name: 'a.txt', size: 3, blob: new Blob(['abc']) },
+      { onSession: (id) => order.push(`session:${id}`), onProgress: (sent) => order.push(`sent:${sent}`) },
+    );
+    expect(order[0]).toBe('session:u3');
+  });
+
+  it('resumes a staged upload from the offset the server reports, not from the start', async () => {
+    routes = [
+      ['/upload/u4/commit', { op_id: 14 }],
+      // Asked first for the offset, then sent the rest.
+      ['/upload/u4', (call: Call) =>
+        call.method === 'PUT'
+          ? { offset: Number(/bytes \d+-(\d+)\//.exec(String(call.headers?.['content-range']))![1]) + 1 }
+          : { offset: 8, total_size: 10, chunk_size: 4, state: 'staging' }],
+      ['/api/files/ops/14', { id: 14, kind: 'upload-commit', status: 'ok' }],
+      ['/star/list', { nodes: [] }],
+      ['q=index', index(row({ id: 7, path: 'main://Docs/notes.md', basename: 'notes.md', type: 'file', size: 10 }))],
+    ];
+    const seen: number[] = [];
+    await new HttpRepository().resumeUpload(
+      'u4',
+      'main://Docs',
+      { name: 'notes.md', size: 10, blob: new Blob(['0123456789']) },
+      { onProgress: (sent) => seen.push(sent) },
+    );
+    const puts = calls.filter((c) => c.method === 'PUT');
+    // Only the tail: the first 8 bytes are already the server's.
+    expect(puts.map((c) => c.headers?.['content-range'])).toEqual(['bytes 8-9/10']);
+    expect(seen).toEqual([8, 10]);
+    expect(calls.some((c) => c.url.includes('/upload/begin'))).toBe(false);
+  });
+
+  it('reads a session back, and reports one the server has finished with as gone', async () => {
+    routes = [['/upload/u5', { offset: 4, total_size: 10, state: 'staging' }]];
+    await expect(new HttpRepository().uploadSession('u5')).resolves.toEqual({ id: 'u5', offset: 4, size: 10 });
+
+    routes = [['/upload/u6', { offset: 10, total_size: 10, state: 'committed' }]];
+    // Committed, expired or unknown are one answer to the caller: there is nothing here to carry on.
+    await expect(new HttpRepository().uploadSession('u6')).resolves.toBeNull();
+  });
+
+  it('aborts a staged upload so the staging area and the quota reservation go with it', async () => {
+    routes = [['/upload/u7', {}]];
+    await new HttpRepository().abortUpload('u7');
+    expect(calls.at(-1)).toMatchObject({ method: 'DELETE', url: expect.stringContaining('/upload/u7') });
+  });
+
   it('fails the upload when the transfer to the storage fails, not when filex has merely staged it', async () => {
     routes = [
       ['/upload/begin', { id: 'u2', chunk_size: 16, offset: 0 }],

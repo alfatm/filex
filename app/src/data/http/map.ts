@@ -196,6 +196,17 @@ export interface WireUploadBegin {
   offset?: number;
 }
 
+/** `GET /api/files/upload/{id}` — how far a staged upload got, and whether it is still open. */
+export interface WireUploadStatus {
+  offset?: number;
+  total_size?: number;
+  totalSize?: number;
+  chunk_size?: number;
+  chunkSize?: number;
+  /** "staging" while it can still be continued; anything else means it is over. */
+  state?: string;
+}
+
 export interface WireUploadPut {
   /** Authoritative resume point — a refused chunk leaves it where it was. */
   offset?: number;

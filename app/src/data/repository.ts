@@ -19,6 +19,7 @@ import type {
   Storage,
   UploadInput,
   UploadOptions,
+  UploadSession,
   User,
   Version,
 } from './types';
@@ -135,6 +136,12 @@ export interface Repository {
    * `onProgress` fires per accepted chunk, so a caller can draw a bar that means something.
    */
   uploadFile(parentId: string, file: UploadInput, options?: UploadOptions): Promise<Node>;
+  /** What the server still holds for a staged upload, or null once it has forgotten it (committed, aborted, expired). */
+  uploadSession(id: string): Promise<UploadSession | null>;
+  /** Carries a staged upload on from the offset the server reports. The bytes must be the same file it was begun for. */
+  resumeUpload(id: string, parentId: string, file: UploadInput, options?: UploadOptions): Promise<Node>;
+  /** Drops a staged upload: its staging area and its quota reservation go with it. */
+  abortUpload(id: string): Promise<void>;
   rename(id: string, name: string): Promise<Node>;
   moveToTrash(ids: string[]): Promise<void>;
   restore(ids: string[]): Promise<void>;

@@ -76,12 +76,13 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
  * One chunk of a staged upload. It bypasses `request` too: the body is bytes rather than JSON, and `Content-Range`
  * is what tells the server where they belong — the offset is not in the URL.
  */
-export async function putChunk<T>(path: string, range: string, chunk: Blob): Promise<T> {
+export async function putChunk<T>(path: string, range: string, chunk: Blob, signal?: AbortSignal): Promise<T> {
   const response = await fetch(path, {
     method: 'PUT',
     credentials: 'include',
     headers: { 'content-range': range },
     body: chunk,
+    signal,
   });
   return settle<T>(response);
 }

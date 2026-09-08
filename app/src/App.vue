@@ -10,6 +10,7 @@ import { useSettingsStore } from './features/settings/settingsStore';
 import { LOCALES, setLocale, type Locale } from './i18n';
 import { useCapabilitiesStore } from './stores/capabilities';
 import { useFilesStore } from './stores/files';
+import { useUploadStore } from './features/files/uploadStore';
 
 const { locale } = useI18n();
 const files = useFilesStore();
@@ -25,6 +26,9 @@ void files.bootstrap().then(() => {
   if (account.timeZone) settings.apply({ ...settings.settings, timeZone: account.timeZone });
 });
 void useCapabilitiesStore().load();
+// A reload leaves the server holding whatever a transfer had staged. Asking about those sessions is what turns
+// them back into rows the person can carry on or throw away, instead of bytes that sit there until they expire.
+void useUploadStore().restore();
 
 // Screenshot / e2e URL hooks (`?view`, `?select`, `?panel`, `?modal`, `?menu`, `?demo`); dev builds only.
 if (import.meta.env.DEV) void import('./dev/screenshotQuery').then(({ installScreenshotQuery }) => installScreenshotQuery());

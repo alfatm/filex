@@ -1,7 +1,7 @@
 import { DUPLICATE_NAME, OPERATION_PENDING, WRONG_PASSWORD, type Repository } from '../repository';
 import { matchesFilter, MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
-import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantConversation, type AssistantMode, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type User, type Version } from '../types';
+import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantConversation, type AssistantMode, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
 import { HttpError, putChunk, request, streamJSON } from './client';
 import {
   fromFileNode,
@@ -30,6 +30,7 @@ import {
   type WireUploadBegin,
   type WireUploadCommit,
   type WireUploadPut,
+  type WireUploadStatus,
   fromAssistantHit,
   type WireAssistantHit,
 } from './map';
@@ -686,21 +687,65 @@ export class HttpRepository implements Repository {
     const session = await request<WireUploadBegin>(`${UPLOAD}/begin`, {
       method: 'POST',
       body: { path: parentId, name: file.name, size: blob.size, mime: blob.type || undefined, chunk_size: CHUNK_BYTES },
+      signal: options?.signal,
     }).catch(asRepositoryError);
+    // ⚠ Told to the caller BEFORE a byte moves. `begin` always opens a new
+    // session at offset 0 — it never picks up an old one — so an id nobody
+    // wrote down is a staged upload nobody can ever continue, only expire.
+    options?.onSession?.(session.id);
+    return this.pump(session.id, parentId, file, blob, session.offset ?? 0, session.chunk_size ?? session.chunkSize ?? CHUNK_BYTES, options);
+  }
 
-    const chunk = session.chunk_size ?? session.chunkSize ?? CHUNK_BYTES;
-    // `begin` answers with the offset it already holds, which is 0 for a fresh session and more for a resumed one.
-    let sent = session.offset ?? 0;
+  async uploadSession(id: string): Promise<UploadSession | null> {
+    try {
+      const wire = await request<WireUploadStatus>(`${UPLOAD}/${id}`);
+      // A session the server has finished with is not one to carry on.
+      if (wire.state && wire.state !== 'staging') return null;
+      return { id, offset: wire.offset ?? 0, size: wire.total_size ?? wire.totalSize ?? 0 };
+    } catch {
+      // Gone, expired, or never ours. Either way there is nothing to resume.
+      return null;
+    }
+  }
+
+  /**
+   * ⚠ The bytes are not checked against the ones the session was begun for — the server knows only sizes, and the
+   * browser cannot hold a `File` across a reload. The caller compares the name and the size before calling this;
+   * that is as much as either side can do, and it is why the resume flow asks the person to pick the file again
+   * rather than resuming something it merely hopes is the same.
+   */
+  async resumeUpload(id: string, parentId: string, file: UploadInput, options?: UploadOptions): Promise<Node> {
+    const blob = file.blob;
+    if (!blob) throw new Error('upload without bytes');
+    const wire = await request<WireUploadStatus>(`${UPLOAD}/${id}`).catch(asRepositoryError);
+    return this.pump(id, parentId, file, blob, wire.offset ?? 0, wire.chunk_size ?? wire.chunkSize ?? CHUNK_BYTES, options);
+  }
+
+  async abortUpload(id: string): Promise<void> {
+    await request(`${UPLOAD}/${id}`, { method: 'DELETE' }).catch(asRepositoryError);
+  }
+
+  /** The chunk loop, from `from` to the end, then the commit. Shared by a fresh upload and a resumed one. */
+  private async pump(
+    id: string,
+    parentId: string,
+    file: UploadInput,
+    blob: Blob,
+    from: number,
+    chunk: number,
+    options?: UploadOptions,
+  ): Promise<Node> {
+    let sent = from;
     options?.onProgress?.(sent, blob.size);
     while (sent < blob.size) {
       const end = Math.min(sent + chunk, blob.size);
       // The server's offset wins over the arithmetic: a short chunk is refused and leaves the offset where it was.
-      const accepted = await putChunk<WireUploadPut>(`${UPLOAD}/${session.id}`, `bytes ${sent}-${end - 1}/${blob.size}`, blob.slice(sent, end));
+      const accepted = await putChunk<WireUploadPut>(`${UPLOAD}/${id}`, `bytes ${sent}-${end - 1}/${blob.size}`, blob.slice(sent, end), options?.signal);
       sent = accepted.offset ?? end;
       options?.onProgress?.(sent, blob.size);
     }
 
-    const commit = await request<WireUploadCommit>(`${UPLOAD}/${session.id}/commit`, { method: 'POST' }).catch(asRepositoryError);
+    const commit = await request<WireUploadCommit>(`${UPLOAD}/${id}/commit`, { method: 'POST', signal: options?.signal }).catch(asRepositoryError);
     await this.awaitOpId(commit.op_id ?? commit.opId);
     return this.getNode(childPath(parentId, file.name));
   }

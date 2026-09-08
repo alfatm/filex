@@ -349,6 +349,17 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
   storage has the file — filex answering "staged" is not yet an arrival. A
   transfer that fails marks its row with a red alert icon and the header says
   how many failed, because a bar frozen at 60% says nothing.
+  A running row carries a 24px ✕ that **cancels that transfer alone** and drops
+  what the server had staged for it; the row then reads "Cancelled" rather than
+  vanishing, so whoever pressed it sees that it worked.
+  ⚠ A transfer interrupted by a **reload** comes back: the session id is kept in
+  `localStorage`, the server is asked at startup how far it got, and the row
+  returns as "Stopped at N%" with **Resume** and **Discard**. Resume asks for
+  the file again — the page has no bytes after a reload and a `File` cannot be
+  stored — and refuses anything whose name or size is not the one the session
+  was begun for. A session the server has forgotten is dropped silently rather
+  than offered as a button that cannot work.
+  Not in the reference, which was drawn before any of this existed.
 
 ## 7a. Filter chips
 

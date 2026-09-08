@@ -135,16 +135,27 @@ let sessions: Session[] = [
   },
 ];
 
-function fakeTransfer(size: number, onProgress?: (sent: number, total: number) => void): Promise<void> {
-  if (!onProgress) return Promise.resolve();
-  return new Promise((resolve) => {
+/** The demo's transfer: a timer with progress. Abortable, because the tray's cancel button has to do something here too. */
+function fakeTransfer(size: number, onProgress?: (sent: number, total: number) => void, signal?: AbortSignal): Promise<void> {
+  if (!onProgress && !signal) return Promise.resolve();
+  return new Promise((resolve, reject) => {
     let step = 0;
-    onProgress(0, size);
+    onProgress?.(0, size);
+    const stop = () => {
+      clearInterval(timer);
+      signal?.removeEventListener('abort', onAbort);
+    };
+    const onAbort = () => {
+      stop();
+      reject(new DOMException('aborted', 'AbortError'));
+    };
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener('abort', onAbort);
     const timer = setInterval(() => {
       step += 1;
-      onProgress(Math.round((size * step) / MOCK_UPLOAD_STEPS), size);
+      onProgress?.(Math.round((size * step) / MOCK_UPLOAD_STEPS), size);
       if (step < MOCK_UPLOAD_STEPS) return;
-      clearInterval(timer);
+      stop();
       resolve();
     }, MOCK_UPLOAD_MS / MOCK_UPLOAD_STEPS);
   });
@@ -394,9 +405,21 @@ export const mockRepository: Repository = {
     bumpItemCount(parent.id, 1);
     return { ...node };
   },
+  // Nothing is staged in the demo: a transfer here is a timer over an in-memory tree, so there is no session for a
+  // reload to pick up and nothing for an abort to release. The three methods answer the contract's shape so the
+  // upload tray runs the same code path it will run against a server.
+  async uploadSession() {
+    return null;
+  },
+  async resumeUpload(_id, parentId, file, options) {
+    return this.uploadFile(parentId, file, options);
+  },
+  async abortUpload() {
+    // Nothing staged, nothing to drop.
+  },
   async uploadFile(parentId, file, options) {
     const parent = byId(parentId);
-    await fakeTransfer(file.size, options?.onProgress);
+    await fakeTransfer(file.size, options?.onProgress, options?.signal);
     const now = new Date().toISOString();
     const fileType = fileTypeOf(file.name);
     const thumbnail = TYPE_THUMBNAILS[fileType];
