@@ -69,14 +69,14 @@ describe('AdvancedSearchModal', () => {
     expect(document.body.textContent).toContain('Current folder: Assets');
 
     const checkbox = [...document.body.querySelectorAll<HTMLElement>('[role="checkbox"]')].find(
-      (el) => el.closest('label')?.textContent?.includes('Case sensitive'),
+      (el) => el.closest('label')?.textContent?.includes('Match whole phrase'),
     )!;
     expect(checkbox.getAttribute('aria-checked')).toBe('false');
     // The visible text is the control's <label>, so it names the box (and, in browsers, toggles it).
     expect(checkbox.hasAttribute('aria-label')).toBe(false);
     checkbox.click();
     await nextTick();
-    expect(store.query.caseSensitive).toBe(true);
+    expect(store.query.wholePhrase).toBe(true);
     expect(checkbox.getAttribute('aria-checked')).toBe('true');
   });
 

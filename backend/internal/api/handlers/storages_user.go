@@ -23,6 +23,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/confine"
 	"github.com/brf-tech/filex/backend/internal/db"
+	"github.com/brf-tech/filex/backend/internal/model"
 )
 
 // StoragesUser handles the user-facing storage list.
@@ -45,6 +46,10 @@ func (h *StoragesUser) AttachACL(r *acl.Resolver) { h.ACL = r }
 type userStorage struct {
 	Name     string `json:"name"`
 	ReadOnly bool   `json:"read_only"`
+	// UsedBytes is what THIS drive holds. The quota endpoint next to it meters
+	// the ACCOUNT, so a client drawing a figure per drive from it was repeating
+	// one number under every drive and calling each of them that drive's.
+	UsedBytes int64 `json:"used_bytes"`
 }
 
 // List returns the enabled storages the caller can see, in store order.
@@ -64,7 +69,7 @@ func (h *StoragesUser) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	root, confined := confine.RootFrom(r.Context())
-	out := make([]userStorage, 0, len(storages))
+	visible := make([]*model.Storage, 0, len(storages))
 	user := auth.UserFrom(r.Context())
 	for _, s := range storages {
 		if confined && root.Adapter != "" && root.Adapter != s.Name {
@@ -80,7 +85,25 @@ func (h *StoragesUser) List(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		out = append(out, userStorage{Name: s.Name, ReadOnly: s.ReadOnly})
+		visible = append(visible, s)
+	}
+	usage, err := h.Store.StorageUsage(r.Context(), storageIDs(visible))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	out := make([]userStorage, 0, len(visible))
+	for _, s := range visible {
+		out = append(out, userStorage{Name: s.Name, ReadOnly: s.ReadOnly, UsedBytes: usage[s.ID]})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"storages": out})
+}
+
+// storageIDs is the id list for the usage query.
+func storageIDs(storages []*model.Storage) []int64 {
+	ids := make([]int64, len(storages))
+	for i, s := range storages {
+		ids[i] = s.ID
+	}
+	return ids
 }

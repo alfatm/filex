@@ -555,15 +555,26 @@ func (i *Index) SearchFiltered(_ context.Context, q string, limit int, scope Sco
 	}
 
 	if scope != ScopeName {
-		cq := bleve.NewMatchQuery(q)
+		var cq query.FieldableQuery
+		if phrase, exact := QuotedPhrase(q); exact {
+			// The words in that order, adjacent — which is the one thing the AND
+			// match below cannot say. `"annual report"` stops matching a document
+			// that mentions the annual meeting and a report in different
+			// paragraphs. Costs nothing to ask for: the default text mapping
+			// already indexes term positions, so no index change is involved.
+			cq = bleve.NewMatchPhraseQuery(phrase)
+		} else {
+			// Every word, not any word. The name side has narrowed on extra
+			// words since v0.29.0 but the content side was still a default-OR
+			// match, so on demo.filex.sh `Code main` returned nine results,
+			// seven of them files that merely contained the word "code". A
+			// query where extra words WIDEN the result set is the opposite of
+			// what anybody types them for.
+			mq := bleve.NewMatchQuery(q)
+			mq.SetOperator(query.MatchQueryOperatorAnd)
+			cq = mq
+		}
 		cq.SetField("content")
-		// Every word, not any word. The name side has narrowed on extra
-		// words since v0.29.0 but the content side was still a default-OR
-		// match, so on demo.filex.sh `Code main` returned nine results,
-		// seven of them files that merely contained the word "code". A
-		// query where extra words WIDEN the result set is the opposite of
-		// what anybody types them for.
-		cq.SetOperator(query.MatchQueryOperatorAnd)
 		req := bleve.NewSearchRequest(applyFilter(cq, f))
 		req.Size = fetch
 		req.Highlight = bleve.NewHighlight()

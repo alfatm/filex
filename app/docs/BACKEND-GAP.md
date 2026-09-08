@@ -8,11 +8,11 @@ Decide each row before writing the HTTP repository (stage 7).
 
 | Repository method | filex today | Status | Decision needed |
 |---|---|---|---|
-| `listStorages` / `getStorage` | `GET /manager?q=index` returns storages; quota is per user (`GET /quota/me`) | ⚠️ | quota shown per storage in the UI → show the user quota instead, or add per-storage usage |
+| `listStorages` / `getStorage` | `GET /api/files/storages` now carries `used_bytes`; the ceiling is still the account's (`GET /quota/me`) | ✅ | **added to the backend**: every drive card repeated the ACCOUNT's figure and called it that drive's. Each drive now answers for itself, measured against the one ceiling filex has |
 | `listFolder`, `resolvePath`, `getNode` | `GET /manager?storage&parent`, `?q=index&path`, `/stat` | ✅ | app `Node` needs `path`, `storageId`, `mime`; ids are int64 |
 | `getPath` | none | ⚠️ | derive from `node.path` |
-| `listPeople` | `GET /permissions` owner/admin only | ⚠️ | viewers get 403 → panel degrades to owner only |
-| `search` | `POST /search {storage_id, query, limit, scope}` plus the facets `path_prefix`, `ext`, `modified_after`, `size_min`, `size_max`, `owner_id`; tags via `tag:` syntax; snippet with `«»` markers | ⚠️ | **added to the backend**: the date window, type group, size band, owner and current-folder scope are the server's work now, resolved against the node table and applied as an index restriction rather than sieved out of the first 100 hits. Still client-side or absent: the hand-typed custom size range, the free-text path prefix (it is typed in the FULL address space, `/demo/design/`, which the server has no form of), whole phrase, case sensitive, the OCR toggle, and a true total |
+| `listPeople` | `GET /permissions`, ≥viewer to read, owner to change | ✅ | **added to the backend**: reading the list was gated at owner, so everyone else opened "People with access" and saw themselves alone. The answer carries `can_manage`, and the modal renders read-only for anybody who does not have it |
+| `search` | `POST /search {storage_id, query, limit, scope}` plus the facets `path_prefix`, `ext`, `modified_after`, `size_min`, `size_max`, `owner_id`; tags via `tag:` syntax; snippet with `«»` markers | ⚠️ | **added to the backend**: the date window, type group, size band, owner and current-folder scope are the server's work now, resolved against the node table and applied as an index restriction rather than sieved out of the first 100 hits. Still client-side or absent: the hand-typed custom size range, the free-text path prefix (it is typed in the FULL address space, `/demo/design/`, which the server has no form of), and a true total. Whole phrase is the server's work now (a quoted query); the case and OCR boxes were REMOVED rather than implemented — see the design spec §7 |
 | `assistantAsk` | none (only MCP `file_search` behind token scope) | ❌ | new endpoint: `POST /api/ai/assistant` SSE stream, server-side provider (OpenAI-compatible or Claude), tool-calling over the search index, conversation id; admin settings page for provider/key |
 | `listRecent` | `GET /manager/recent` fed by `POST /manager/recent` on open | ⚠️ | UI must call `recordOpen(id)` on open/preview |
 | `listActivity` | `GET /api/files/activity?path=…` | ✅ | **added to the backend**: the events were all being recorded already, as bell entries with the file buried in `meta_json`. Two indexed columns make them findable per node. Readable by whoever may read the file (≥viewer). Keyed by path, so a rename splits a file's history across its two names — and there is no backfill, so history starts at the upgrade |
@@ -85,6 +85,11 @@ is accepted behaviour, not a gap.
 | `GET /api/auth/methods` | an ordinary user could not find out how they sign in: `/api/auth/me` carries a numeric `provider_id` and nothing else, and `/api/admin/auth-providers` is supertenant-only because it holds issuers and bind credentials. This one is scoped to the caller and carries a name and two flags — realm, whether it allows a password change, and their own TOTP state |
 | read-only is checked on the ops queue's SOURCE | the flag meant two different things depending on which door the request came through: `?q=move\|delete` refused a read-only storage from the start, the queue never asked. So the same delete answered 403 in one place and 202 in the other — and the 202 was the one that emptied the depo into its trash. Copy is deliberately still allowed: it only reads its source |
 | a move INTO A STORAGE ROOT no longer soft-deletes the node | `applyDBMove` stripped the leading slash before taking `path.Dir`, so a destination at the root came out as `"."` — a directory in no index — and the miss fell into the branch that flags the row deleted. The bytes arrived; the folder left every listing and appeared in the trash as a row whose bytes were never in `.filex-trash`, so Restore could not undo it either. Both callers shared the helper, so the synchronous move was breaking the same way |
+| a fully quoted query is a phrase search inside files | the advanced form's "whole phrase" box had nothing behind it: the app never sent it and the content side ran an AND match, which finds a document that says "annual" in one paragraph and "report" in another. A quoted query now becomes a Bleve `match_phrase` — no index change, because the default text mapping already records term positions (measured before writing it). Deliberately content-only: `PrepareQuery` strips quotes before the NAME side sees them, and it must, since filename matching is subsequence matching by design (`invoice 2026` → `invoice_2026.pdf`, issue #15) |
+| reading `GET /api/files/permissions` needs viewer, not owner | "who else can see this file" is a question anybody who can open the file may ask, and it was answered only to owners — so a shared folder's access panel showed a non-owner nothing but their own row. The mutating verbs keep the owner bar, and the answer says `can_manage` so the client renders a list instead of controls that would 403. Below viewer it is still refused: naming people to somebody who cannot open the file is a leak of its own |
+| `used_bytes` per drive on `GET /api/files/storages` | the drive cards drew their figure from `/quota/me`, which meters the ACCOUNT — so two drives showed one number twice, each labelled as that drive's. One grouped SUM over the node table answers per drive; the ceiling stays the account's, because that is the only ceiling filex has. Trashed files count (the bytes are still on the driver), directory rows do not (they carry an aggregate of their subtree) |
+| `node_versions.created_by` (migration 00036) | the versions panel named the person LOOKING at it as the author of every revision, including ones somebody else wrote — the client had no author to show and filled the column with the current user. Recorded from the request's principal at snapshot time; a background snapshot has no principal and records none. No backfill, so older revisions show a date and a size and no name |
+| `created_at`, `item_count` and `shared` on listing rows | three columns the app drew from nothing. The creation date was in `model.Node` all along and the listing projection simply did not carry it. The item count did not exist: a folder showed the word "Folder" where the design shows "12 items", and counting client-side is impossible — the listing holds the folder, not its contents. `shared` was hard-coded `false` on every row, so the folder badge that says "this is reachable by link" never lit and the only way to find out was to open the share modal file by file. Two grouped queries per page (`ChildCounts`, `SharedNodeIDs`), the shape `attachOwners` already established, not a query per row |
 | `GET /api/files/manager/trash?top_level_only=1` | the trash listing is flat by construction: a deleted folder drags its cached descendants in as rows of their own, so the user saw the folder and every file inside it, each offering a Restore only the folder's own restore performs. Collapsing them client-side would mean guessing parentage from path prefixes; the server knows it. Opt-in, so the admin trash screen and the purge scan still see every row |
 
 ### Still applied client-side
@@ -92,19 +97,17 @@ is accepted behaviour, not a gap.
 | Question | What exists | Consequence |
 |---|---|---|
 | Listing filters | no query params | `HttpRepository` post-filters through `data/listingFilter.ts`, the same predicate the mock uses |
-| Advanced search facets | `q`, `scope`, `limit`, and the six facet fields | what remains here is the hand-typed size range and the free-text path prefix; whole phrase, case sensitivity and OCR have no server form at all |
-| Item count per folder | not returned | known only for the folder currently open (its own listing length); everywhere else a folder shows its TYPE instead of a count, because "0 items" for a folder nobody counted is a lie |
-| Creation date | absent from the listing projection (`FileNode` carries `last_modified` only) | `Node.createdAt` is optional; the details panel omits the row rather than showing an invented date |
+| Advanced search facets | `q`, `scope`, `limit`, the six facet fields, and a quoted query for the phrase box | what remains here is the hand-typed size range and the free-text path prefix |
+| Item count per folder on an RBAC storage | one grouped query cannot apply `CanSee` per child | counted for admins and RBAC-off storages; a caller holding grants gets no count at all, because a traversal folder would otherwise advertise entries opening it does not show |
 | Modification date of a folder ROOT | a storage root is not a node and has none | `Node.modifiedAt` is optional too; the formatters render an em dash. Anything filex did date keeps its date |
-| Per-drive usage | `/api/files/quota/me` meters the ACCOUNT, not the drive | every drive reports the same figure. An account with no ceiling (`unlimited`) shows what it has used and no progress bar — a bar that can never fill says nothing |
-| `shared` per row | `/api/files/share` is per node | listing rows report `false`; the share modal reads the real state when it opens |
+| The link BEHIND a shared row | `GET /share` is per node and refuses below editor | the row says THAT a node is shared; the URL is a credential, so the details panel and the share modal ask for it per node when they open. filex lists a non-admin only the links they minted, so somebody else's link reads as "none of yours" |
 
 ### No endpoint at all
 
 | Repository method | State |
 |---|---|
 | `assistantAsk` | no assistant endpoint; the capability is off, so the panel is unreachable |
-| version authorship | `model.NodeVersion` records size and instant, not who wrote it |
+| version authorship | recorded from migration 00036 on. Revisions taken before it have no author and are shown without a name — there is no backfill, because nobody wrote one down |
 
 ## Capability snapshot
 
@@ -134,8 +137,9 @@ client.
   falls back to the caller, which is the honest reading of "everything you can
   see, you can see".
 - **Shared drives with a group owner** do not exist in filex yet.
-- **Folder item count** ("12 items") is not returned by the listing.
 - **Activity tab**: audit is admin-only; per-node activity needs a user-visible
   endpoint (versions + comments + recent actions).
 - **Capabilities**: the UI should read `GET /capabilities` to hide assistant,
-  content search, OCR, delete-forever when the server lacks them.
+  content search, delete-forever when the server lacks them. OCR is no longer
+  among them: it is an extraction-time property (text found in an image is
+  content like any other), so there is no OCR surface for a flag to hide.

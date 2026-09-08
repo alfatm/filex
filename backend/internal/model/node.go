@@ -62,6 +62,14 @@ type Node struct {
 	// multi-storage mode cannot build the `name://path` it needs to open one —
 	// so the recently-opened tray listed files that did nothing when clicked.
 	Storage string `json:"storage,omitempty"`
+	// Shared reports that a public link to this node exists and still opens.
+	// Filled per listing page, because a share lives in its own table and a
+	// node row cannot know about it.
+	Shared bool `json:"shared,omitempty"`
+	// ItemCount is how many entries a folder holds, counted the way the listing
+	// counts them. A pointer, because "not counted" and "empty" are different
+	// statements and a folder nobody counted must not render as "0 items".
+	ItemCount *int64 `json:"item_count,omitempty"`
 }
 
 // Thumbnail references a generated thumbnail asset.
@@ -84,4 +92,10 @@ type NodeVersion struct {
 	Size       int64     `json:"size"`
 	Etag       string    `json:"etag,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
+	// CreatedBy is who wrote this revision, when filex was told. Nil for every
+	// revision taken before the column existed and for anything a background job
+	// snapshotted with no principal on its context.
+	CreatedBy *int64 `json:"created_by,omitempty"`
+	// AuthorName is filled by the API layer from CreatedBy, never persisted.
+	AuthorName string `json:"author_name,omitempty"`
 }

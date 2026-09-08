@@ -29,15 +29,16 @@ function folderPath(node: Node): string {
   return segments.join('/');
 }
 
-function fold(text: string, caseSensitive: boolean): string {
-  return caseSensitive ? text : text.toLowerCase();
+/** Case is folded away everywhere, exactly as the server's index does it: it lowercases every token it stores. */
+function fold(text: string): string {
+  return text.toLowerCase();
 }
 
-function ranges(text: string, terms: string[], caseSensitive: boolean): MatchRange[] {
-  const haystack = fold(text, caseSensitive);
+function ranges(text: string, terms: string[]): MatchRange[] {
+  const haystack = fold(text);
   const found: MatchRange[] = [];
   for (const term of terms) {
-    const needle = fold(term, caseSensitive);
+    const needle = fold(term);
     if (!needle) continue;
     let from = 0;
     for (let at = haystack.indexOf(needle, from); at !== -1; at = haystack.indexOf(needle, from)) {
@@ -49,20 +50,20 @@ function ranges(text: string, terms: string[], caseSensitive: boolean): MatchRan
 }
 
 /** "… <window of the text around the first highlighted term> …" with the highlight ranges inside it. */
-function snippetOf(text: string, highlight: string[], caseSensitive: boolean): { text: string; ranges: MatchRange[] } {
+function snippetOf(text: string, highlight: string[]): { text: string; ranges: MatchRange[] } {
   const flat = text.replace(/\s+/g, ' ').trim();
-  const first = ranges(flat, highlight, caseSensitive)[0]?.start ?? 0;
+  const first = ranges(flat, highlight)[0]?.start ?? 0;
   let start = Math.min(Math.max(0, first - SNIPPET_LEAD), Math.max(0, flat.length - SNIPPET_CHARS));
   // Open on a word boundary rather than mid-word.
   if (start > 0) start = flat.indexOf(' ', start) + 1 || start;
   const shown = `… ${flat.slice(start, start + SNIPPET_CHARS)} …`;
-  return { text: shown, ranges: ranges(shown, highlight, caseSensitive) };
+  return { text: shown, ranges: ranges(shown, highlight) };
 }
 
 export function search(query: SearchQuery, now = Date.now()): SearchResult {
   // Whole-phrase keeps the text as one term; otherwise every word must be found somewhere.
   const terms = query.wholePhrase ? [query.text.trim()].filter(Boolean) : query.text.split(/\s+/).filter(Boolean);
-  const matchesText = (value: string) => terms.every((term) => fold(value, query.caseSensitive).includes(fold(term, query.caseSensitive)));
+  const matchesText = (value: string) => terms.every((term) => fold(value).includes(fold(term)));
   const pathFilter = query.path.trim().replace(/\/+$/, '').toLowerCase();
   const tagsWanted = query.tags.map((t) => t.toLowerCase());
   const scopeRoot = `/${joinPath([rootNode.name, ...segments(query.folderPath)])}/`.toLowerCase();
@@ -77,7 +78,7 @@ export function search(query: SearchQuery, now = Date.now()): SearchResult {
     const folderAbs = `/${joinPath([rootNode.name, ...segments(folder)])}`;
     const fullPath = `${folderAbs}/${node.name}`;
     const content = contentIndex[node.id];
-    const contentText = content && (!content.ocr || query.ocr) ? content.text : null;
+    const contentText = content ? content.text : null;
     const tags = (node.tags ?? []).map((t) => t.toLowerCase());
 
     if (query.searchIn === 'shared' && !node.shared) continue;
@@ -109,7 +110,7 @@ export function search(query: SearchQuery, now = Date.now()): SearchResult {
     // Highlight the typed words and the selected tags, so a tag-only query still shows why a row matched.
     const highlight = [...terms, ...query.tags];
     const snippet =
-      contentText !== null && (query.scope === 'all' || query.scope === 'content') ? snippetOf(contentText, highlight, query.caseSensitive) : undefined;
+      contentText !== null && (query.scope === 'all' || query.scope === 'content') ? snippetOf(contentText, highlight) : undefined;
     hits.push({ node, storageId, folderPath: folder, snippet });
   }
   return { hits, total: hits.length };

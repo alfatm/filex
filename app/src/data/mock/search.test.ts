@@ -16,8 +16,6 @@ function query(overrides: Partial<SearchQuery> = {}): SearchQuery {
     size: { preset: 'any', min: null, max: null, unit: 'MB' },
     path: '',
     wholePhrase: false,
-    caseSensitive: false,
-    ocr: true,
     ...overrides,
   };
 }
@@ -79,10 +77,10 @@ describe('mock search', () => {
     expect(hits[2].snippet?.ranges).toEqual([{ start: 18, end: 24 }]);
   });
 
-  it('respects scope, OCR and path filters', () => {
+  it('respects scope and path filters', () => {
     const names = (hits: { node: { name: string } }[]) => hits.map((h) => h.node.name);
+    // beach.png is in there because the server recognised text inside the image; that text is content like any other.
     expect(names(search(query({ text: 'design', scope: 'content' })).hits)).toEqual(['overview.pdf', 'beach.png', 'README.md', 'contacts.csv']);
-    expect(names(search(query({ text: 'design', scope: 'content', ocr: false })).hits)).toEqual(['overview.pdf', 'README.md', 'contacts.csv']);
     const paths = names(search(query({ text: 'design', scope: 'paths' })).hits);
     expect(paths.slice(0, 4)).toEqual(['Design', 'overview.pdf', 'beach.png', 'UI Design.fig']);
     expect(paths).toHaveLength(12);
@@ -125,13 +123,7 @@ describe('mock search', () => {
       'UI Design.fig',
     ]);
     expect(search(query({ ownerId: 'someone-else' })).hits).toHaveLength(0);
-    expect(search(query({ text: 'design', caseSensitive: true })).hits.map((h) => h.node.name)).toEqual([
-      'Design',
-      'overview.pdf',
-      'beach.png',
-      'README.md',
-      'source-design.psd',
-    ]);
+
     expect(search(query({ text: 'brand assets', wholePhrase: true, scope: 'content' })).hits.map((h) => h.node.name)).toEqual(['overview.pdf']);
     expect(search(query({ text: 'assets brand', scope: 'content' })).hits.map((h) => h.node.name)).toEqual(['overview.pdf']);
     expect(search(query({ text: 'assets brand', wholePhrase: true, scope: 'content' })).hits).toHaveLength(0);

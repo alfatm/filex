@@ -61,7 +61,7 @@ async function restore(version: Version) {
             </span>
           </p>
           <p class="mt-1.5 truncate-safe text-13 leading-none text-text-3">
-            {{ t('modal.versions.by', { name: version.authorName, size: formatSize(version.size) }) }}
+            {{ version.authorName ? t('modal.versions.by', { name: version.authorName, size: formatSize(version.size) }) : formatSize(version.size) }}
           </p>
         </div>
         <Button v-if="!version.current" variant="outline" :disabled="busy" class="ml-3 shrink-0 disabled:opacity-50" @click="restore(version)">

@@ -57,6 +57,12 @@ export interface WireFileNode {
   /** Who owns the node, named. Absent for anything a storage sync found rather than a person uploading it. */
   owner_id?: number;
   owner_name?: string;
+  /** Epoch milliseconds; when filex first saw the node. */
+  created_at?: number;
+  /** True while a public link to this node still opens. */
+  shared?: boolean;
+  /** Entries in a folder, counted the way this listing counts them. Absent when the server did not count. */
+  item_count?: number;
 }
 
 /** The `?q=index` envelope. `storages` is the caller's visible drive list, already RBAC-filtered. */
@@ -85,6 +91,8 @@ export interface WireNode {
   deleted_at?: string | null;
   /** Storage NAME, filled in by the handlers that return rows from outside a folder listing. */
   storage?: string;
+  /** True while a public link to this node still opens. */
+  shared?: boolean;
 }
 
 /** One row of `/api/files/manager/trash` — `trash.TrashEntry`, a projection of its own. */
@@ -229,6 +237,8 @@ export function fromSession(wire: WireSession): Session {
 export interface WireStorage {
   name: string;
   read_only: boolean;
+  /** What THIS drive holds. The quota endpoint beside it meters the account, which is a different number. */
+  used_bytes?: number;
 }
 
 /** `quota.Snapshot` from `/api/files/quota/me`; `unlimited` means the account has no ceiling. */
@@ -258,8 +268,9 @@ function typed(name: string, kind: Node['kind']): Pick<Node, 'fileType' | 'thumb
 }
 
 /**
- * A listing row. `shared` and `starred` are false here on purpose: both are separate calls (`/share`,
- * `/manager/star/list`), and the repository folds their answers in — a row cannot know on its own.
+ * A listing row. `starred` is false here on purpose: it is a separate call (`/manager/star/list`) and the
+ * repository folds the answer in. `shared` the row does carry — the listing counts the live public links for
+ * its whole page in one query, so a badge no longer means "open the share modal and find out".
  */
 export function fromFileNode(wire: WireFileNode): Node {
   const kind = wire.type === 'dir' ? 'folder' : 'file';
@@ -271,9 +282,12 @@ export function fromFileNode(wire: WireFileNode): Node {
     size: kind === 'folder' ? 0 : wire.size,
     // A row filex could not date at all keeps none, rather than being stamped with the epoch.
     modifiedAt: wire.last_modified === undefined ? undefined : new Date(wire.last_modified).toISOString(),
+    // A row filex could not date at all keeps none here too.
+    createdAt: wire.created_at === undefined ? undefined : new Date(wire.created_at).toISOString(),
     ...typed(wire.basename, kind),
     assetUrl: kind === 'file' ? previewUrl(wire.path) : undefined,
-    shared: false,
+    shared: wire.shared ?? false,
+    ...(wire.item_count === undefined ? {} : { itemCount: wire.item_count }),
     starred: false,
     // `typed` fills ownerId with SELF; a row filex could name an owner for overrides that with the real one.
     ...(wire.owner_id === undefined ? {} : { ownerId: String(wire.owner_id), ownerName: wire.owner_name }),
@@ -299,7 +313,7 @@ export function fromModelNode(wire: WireNode, adapter: string): Node {
     createdAt: wire.created_at,
     ...typed(wire.name, kind),
     assetUrl: kind === 'file' ? previewUrl(id) : undefined,
-    shared: false,
+    shared: wire.shared ?? false,
     starred: false,
     ...(wire.deleted_at ? { deletedAt: wire.deleted_at } : {}),
   };
@@ -335,8 +349,17 @@ export function fromTrashEntry(wire: WireTrashEntry): Node {
  *
  * The quota is the ACCOUNT's, not the drive's: filex meters per user, so every drive reports the same figure.
  */
-export function toStorage(wire: WireStorage, quota: Quota): Storage {
-  return { id: wire.name, name: wire.name, rootId: joinPath(wire.name, ''), quota };
+/**
+ * A drive's own usage, measured against the ACCOUNT's ceiling — the only ceiling filex has. Two drives therefore
+ * draw two bars against the same limit, each showing the share it takes of it, which is what both numbers mean.
+ */
+export function toStorage(wire: WireStorage, limitBytes: number): Storage {
+  return {
+    id: wire.name,
+    name: wire.name,
+    rootId: joinPath(wire.name, ''),
+    quota: { usedBytes: wire.used_bytes ?? 0, totalBytes: limitBytes },
+  };
 }
 
 /** An unlimited account is shown as an empty ceiling rather than a bar that can never fill. */

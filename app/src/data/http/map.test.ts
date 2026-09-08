@@ -67,8 +67,25 @@ describe('listing rows → app model', () => {
     expect(fromFileNode(listed({ last_modified: undefined })).modifiedAt).toBeUndefined();
   });
 
-  it('leaves shared and starred off: neither is knowable from a listing row', () => {
-    expect(fromFileNode(listed())).toMatchObject({ shared: false, starred: false });
+  it('leaves starred off: it is per-user metadata a listing row does not carry', () => {
+    expect(fromFileNode(listed())).toMatchObject({ starred: false });
+  });
+
+  it('takes shared from the row, and reads a missing flag as not shared', () => {
+    expect(fromFileNode(listed({ shared: true })).shared).toBe(true);
+    expect(fromFileNode(listed()).shared).toBe(false);
+  });
+
+  it('counts a folder only when the server counted it: no count is not zero items', () => {
+    const dir = listed({ type: 'dir', path: 'main://Docs', basename: 'Docs' });
+    expect(fromFileNode({ ...dir, item_count: 12 }).itemCount).toBe(12);
+    expect(fromFileNode({ ...dir, item_count: 0 }).itemCount).toBe(0);
+    expect(fromFileNode(dir).itemCount).toBeUndefined();
+  });
+
+  it('dates the row from created_at, and omits the field where the server sent none', () => {
+    expect(fromFileNode(listed({ created_at: Date.parse('2026-06-02T08:30:00Z') })).createdAt).toBe('2026-06-02T08:30:00.000Z');
+    expect(fromFileNode(listed()).createdAt).toBeUndefined();
   });
 });
 
@@ -103,6 +120,11 @@ describe('metadata rows → app model', () => {
     expect(fromModelNode(model(), 'main').deletedAt).toBeUndefined();
     expect(fromModelNode(model({ deleted_at: '2026-07-10T12:00:00Z' }), 'main').deletedAt).toBe('2026-07-10T12:00:00Z');
   });
+
+  it('carries the share flag, so a starred or recently-opened row badges like a listed one', () => {
+    expect(fromModelNode(model({ shared: true }), 'main').shared).toBe(true);
+    expect(fromModelNode(model(), 'main').shared).toBe(false);
+  });
 });
 
 describe('trash rows → app model', () => {
@@ -127,8 +149,18 @@ describe('trash rows → app model', () => {
 
 describe('storages', () => {
   it('is addressed by its name, and its root is the bare adapter form', () => {
-    const storage = toStorage({ name: 'main', read_only: false }, { usedBytes: 100, totalBytes: 1000 });
+    const storage = toStorage({ name: 'main', read_only: false, used_bytes: 100 }, 1000);
     expect(storage).toEqual({ id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 100, totalBytes: 1000 } });
+  });
+
+  it('measures the drive’s own bytes against the account ceiling, not the account’s bytes against it', () => {
+    const [main, backup] = [
+      toStorage({ name: 'main', read_only: false, used_bytes: 300 }, 1000),
+      toStorage({ name: 'backup', read_only: true, used_bytes: 700 }, 1000),
+    ];
+    expect([main.quota.usedBytes, backup.quota.usedBytes]).toEqual([300, 700]);
+    // A server too old to report it says nothing rather than repeating the account's figure under every drive.
+    expect(toStorage({ name: 'old', read_only: false }, 1000).quota.usedBytes).toBe(0);
   });
 
   it('shows an unlimited account as no ceiling rather than a bar that never fills', () => {

@@ -639,6 +639,8 @@ func (h *Manager) vfIndex(w http.ResponseWriter, r *http.Request, s *model.Stora
 			n.Thumb = t
 		}
 	}
+	attachShared(r.Context(), h.Store, nodes)
+	attachItemCounts(r.Context(), h.Store, nodes, set)
 	files := projectFileNodes(s.Name, nodes, dirsOnly, set)
 	attachOwners(r.Context(), h.Store, files)
 	if dirsOnly {
@@ -971,6 +973,9 @@ func (h *Manager) vfSearch(w http.ResponseWriter, r *http.Request, s *model.Stor
 		}
 	}
 
+	// No item counts here: the hits span storages, so there is no single ACL set
+	// to decide whether a count would be honest. A folder hit shows its type.
+	attachShared(r.Context(), h.Store, nodes)
 	files := projectFileNodes(s.Name, nodes, false, nil)
 	attachOwners(r.Context(), h.Store, files)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -1255,6 +1260,65 @@ func attachOwners(ctx context.Context, store db.Store, files []map[string]any) {
 	}
 }
 
+// attachShared stamps Shared onto the nodes a public link currently points at.
+//
+// One query per listing page, like attachOwners. Without it every row reported
+// "not shared" and the only way to learn otherwise was to open the share modal
+// on the file — which is a question the listing was already claiming to answer.
+func attachShared(ctx context.Context, store db.Store, nodes []*model.Node) {
+	if store == nil || len(nodes) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.ID)
+	}
+	shared, err := store.SharedNodeIDs(ctx, ids)
+	if err != nil || len(shared) == 0 {
+		return
+	}
+	set := make(map[int64]struct{}, len(shared))
+	for _, id := range shared {
+		set[id] = struct{}{}
+	}
+	for _, n := range nodes {
+		if _, ok := set[n.ID]; ok {
+			n.Shared = true
+		}
+	}
+}
+
+// attachItemCounts stamps ItemCount onto the folders of a listing page.
+//
+// Skipped entirely when RBAC could hide some of those children from this
+// caller: the count comes from one grouped query and cannot apply CanSee per
+// child, so on a storage where the caller holds grants a traversal folder would
+// advertise more entries than opening it shows. A folder with no count renders
+// its type, which is what every folder did before this existed. Admins and
+// RBAC-off storages load no grants, so they are counted.
+func attachItemCounts(ctx context.Context, store db.Store, nodes []*model.Node, set *acl.Set) {
+	if store == nil || len(nodes) == 0 || len(set.Grants()) > 0 {
+		return
+	}
+	ids := make([]int64, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Type == model.NodeTypeDirectory {
+			ids = append(ids, n.ID)
+		}
+	}
+	counts, err := store.ChildCounts(ctx, ids)
+	if err != nil {
+		return
+	}
+	for _, n := range nodes {
+		if n.Type != model.NodeTypeDirectory {
+			continue
+		}
+		count := counts[n.ID] // absent means no children, which is a real zero
+		n.ItemCount = &count
+	}
+}
+
 // projectFileNodes shapes DB nodes into the FileExplorer FileNode
 // contract. The frontend keys it cares about: id, path, basename,
 // type, extension, size, last_modified, mime_type, thumb_url. We
@@ -1320,6 +1384,15 @@ func projectFileNodes(adapter string, nodes []*model.Node, dirsOnly bool, set *a
 		// thumb endpoint 404s and the SFC falls back to its icon.
 		if !isDir && n.Thumb != nil && (n.Thumb.State == "ready" || n.Thumb.State == "") && n.Thumb.StorageKey != "" {
 			entry["thumb_url"] = "/api/files/thumb/" + strconv.FormatInt(n.ID, 10)
+		}
+		if !n.CreatedAt.IsZero() {
+			entry["created_at"] = n.CreatedAt.UnixMilli()
+		}
+		if n.Shared {
+			entry["shared"] = true
+		}
+		if n.ItemCount != nil {
+			entry["item_count"] = *n.ItemCount
 		}
 		if n.BackendMtime != nil {
 			entry["last_modified"] = n.BackendMtime.UnixMilli()

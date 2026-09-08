@@ -29,6 +29,7 @@ import (
 	"path"
 	"strconv"
 
+	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/filebody"
 	"github.com/brf-tech/filex/backend/internal/model"
@@ -120,6 +121,10 @@ func (s *Service) Snapshot(ctx context.Context, nodeID int64) (*model.NodeVersio
 		StorageKey: snapshotKey,
 		Size:       node.Size,
 		Etag:       node.Etag,
+		// Whoever's request caused the write. A background job (sync, retention)
+		// runs on a server-lifetime context with no principal and leaves it nil,
+		// which is the honest answer: nobody did it.
+		CreatedBy: actorID(ctx),
 	}
 	created, err := s.Store.CreateNodeVersion(ctx, v)
 	if err != nil {
@@ -311,3 +316,12 @@ var _ io.Reader = (*nopReader)(nil)
 type nopReader struct{}
 
 func (nopReader) Read([]byte) (int, error) { return 0, io.EOF }
+
+// actorID is the account behind the request that triggered this snapshot, or nil.
+func actorID(ctx context.Context) *int64 {
+	if u := auth.UserFrom(ctx); u != nil {
+		id := u.ID
+		return &id
+	}
+	return nil
+}

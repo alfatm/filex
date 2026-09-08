@@ -45,7 +45,6 @@ const chips = computed(() => {
   if (q.tags.length) out.push(t('search.chipTags', { tags: q.tags.join(', ') }));
   if (q.size.preset !== 'any') out.push(t(`search.sizeOptions.${q.size.preset}`));
   if (q.path) out.push(t('search.chipPath', { path: q.path }));
-  if (!q.ocr) out.push(t('search.chipNoOcr'));
   return out;
 });
 

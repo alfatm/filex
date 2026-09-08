@@ -1,4 +1,5 @@
 import type {
+  Access,
   ActivityEvent,
   AssistantEvent,
   AuthMethods,
@@ -45,7 +46,8 @@ export interface Repository {
   getNode(id: string): Promise<Node>;
   /** Root-to-node chain, root first, excluding the node itself. */
   getPath(id: string): Promise<Node[]>;
-  listPeople(nodeId: string): Promise<Person[]>;
+  /** Everyone who can reach the node, plus whether this caller may change the list. */
+  listPeople(nodeId: string): Promise<Access>;
   /** Adds someone by email address; the display name is derived server-side. */
   addPerson(nodeId: string, email: string, role: Person['role']): Promise<void>;
   setPersonRole(nodeId: string, personId: string, role: Person['role']): Promise<void>;
@@ -122,6 +124,12 @@ export interface Repository {
    */
   copy(ids: string[], targetFolderId: string): Promise<void>;
   createShareLink(id: string): Promise<string>;
+  /**
+   * The caller's own live public link to this node, or null when they have none. A listing row says THAT a node
+   * is shared; the link itself is a credential the server hands out at a higher bar, so it is asked for per node,
+   * when a panel that shows it opens.
+   */
+  shareLink(id: string): Promise<string | null>;
   removeShareLink(id: string): Promise<void>;
   /** Marks the file as opened now (`openedAt`), which moves it to the top of Recent. */
   recordOpen(id: string): Promise<void>;

@@ -203,8 +203,12 @@ white, shadow-modal, padding 26 26 22.
     size" w 94, input "Min" w 70, "–", input "Max" w 70, select "MB" w 62, all
     h 40, gap 8. "Path" + help → input "/demo/design/" h 40, hint "Example:
     /demo/design/" 13 gray. "Content search options" 15/600 with `FileText`
-    icon 18; checkboxes 20 radius 5: "Match whole phrase", "Case sensitive",
-    "Include document OCR" (checked, + `Info` 16 gray). Row gap 12.
+    icon 18; one checkbox 20 radius 5: "Match whole phrase". The reference drew
+    two more — "Case sensitive" and "Include document OCR" — and they are gone
+    on purpose: the index lowercases every token it stores, so case cannot be
+    asked of it without a second field and a full rebuild, and OCR'd text is
+    part of a document's content already, so there is nothing for a switch to
+    turn on. A box that changes no result is worse than no box.
 - Divider y 678. "24 matching items" 17/600 left; "View all results →" 14
   primary right.
 - Result rows h 36: icon 24 (folder amber / pdf red tile / image thumb),

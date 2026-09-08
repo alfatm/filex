@@ -29,8 +29,6 @@ export function emptyQuery(): SearchQuery {
     size: { preset: 'any', min: null, max: null, unit: 'MB' },
     path: '',
     wholePhrase: false,
-    caseSensitive: false,
-    ocr: true,
   };
 }
 
@@ -71,8 +69,6 @@ export function toUrlQuery(query: SearchQuery): Record<string, string | string[]
   if (query.size.unit !== neutral.size.unit) out.unit = query.size.unit;
   if (query.path) out.path = query.path;
   if (query.wholePhrase) out.phrase = '1';
-  if (query.caseSensitive) out.case = '1';
-  if (!query.ocr) out.ocr = '0';
   return out;
 }
 
@@ -95,8 +91,6 @@ export function fromUrlQuery(raw: LocationQuery): SearchQuery {
     },
     path: first(raw.path) ?? '',
     wholePhrase: first(raw.phrase) === '1',
-    caseSensitive: first(raw.case) === '1',
-    ocr: first(raw.ocr) !== '0',
   };
 }
 

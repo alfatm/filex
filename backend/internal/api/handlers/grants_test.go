@@ -135,8 +135,27 @@ func TestRBAC_Grants_And_SelfTokens(t *testing.T) {
 	st, _ = doReq(t, viewClient, http.MethodPost, srv.URL+"/api/tokens",
 		map[string]any{"label": "vr", "scopes": "read"})
 	assert.Equal(t, http.StatusCreated, st, "viewer read token ok")
-	st, _ = doReq(t, viewClient, http.MethodGet, srv.URL+"/api/files/permissions?path=s1://beta", nil)
-	assert.Equal(t, http.StatusForbidden, st, "viewer cannot manage permissions")
+	// A viewer holding a grant on beta may now READ who else has access there —
+	// the question is about the file, not about administering it — and the answer
+	// says plainly that they may not change the list.
+	st, raw = doReq(t, viewClient, http.MethodGet, srv.URL+"/api/files/permissions?path=s1://beta", nil)
+	require.Equal(t, http.StatusOK, st, "viewer reads the access list: %s", raw)
+	var panel struct {
+		Effective string           `json:"effective"`
+		CanManage bool             `json:"can_manage"`
+		Direct    []map[string]any `json:"direct"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &panel))
+	assert.Equal(t, "viewer", panel.Effective)
+	assert.False(t, panel.CanManage, "reading the list is not managing it")
+	assert.NotEmpty(t, panel.Direct, "their own grant is on the list they are shown")
+	// Changing it is still refused.
+	st, _ = doReq(t, viewClient, http.MethodPost, srv.URL+"/api/files/permissions",
+		map[string]any{"path": "s1://beta", "user_id": vid, "level": "owner"})
+	assert.Equal(t, http.StatusForbidden, st, "a viewer cannot grant themselves anything")
+	// A path they hold nothing on stays invisible.
+	st, _ = doReq(t, viewClient, http.MethodGet, srv.URL+"/api/files/permissions?path=s1://alfa", nil)
+	assert.Equal(t, http.StatusForbidden, st, "no access to the path, no list of who has it")
 
 	// Non-admin cannot hit the admin grants overview.
 	st, _ = doReq(t, userClient, http.MethodGet, srv.URL+"/api/admin/grants", nil)

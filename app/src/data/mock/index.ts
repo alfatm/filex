@@ -173,7 +173,8 @@ export const mockRepository: Repository = {
     return chain;
   },
   async listPeople(nodeId) {
-    return history.listAccess(nodeId);
+    // The demo account owns everything it can see, so it may always change the list.
+    return { people: history.listAccess(nodeId), canManage: true };
   },
   async addPerson(nodeId, email, role) {
     history.addPerson(nodeId, email, role);
@@ -255,7 +256,6 @@ export const mockRepository: Repository = {
       mkdir: true,
       search: true,
       versions: true,
-      ocr: true,
       assistant: true,
       tags: true,
       activity: true,
@@ -439,6 +439,9 @@ export const mockRepository: Repository = {
     node.shared = true;
     history.record(id, 'linkShared');
     return node.shareUrl;
+  },
+  async shareLink(id) {
+    return byId(id).shareUrl ?? null;
   },
   async removeShareLink(id) {
     const node = byId(id);

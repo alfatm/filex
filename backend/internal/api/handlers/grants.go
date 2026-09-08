@@ -27,9 +27,11 @@ import (
 // /api/files/permissions inside the authenticated group (session OR token),
 // so confine.Middleware still applies to any path fields.
 //
-// Authorization for every endpoint: the caller must be an admin OR hold
-// owner-level (acl.LevelOwner) on the target path. Viewer/editor accounts and
-// non-owning users get 403 and never see the panel.
+// Authorization: CHANGING the list (create, update, delete, invite) needs an
+// admin or owner-level (acl.LevelOwner) on the target path. READING it needs
+// only viewer — "who else can see this" is a question anybody who can open the
+// file may ask, and the answer carries `can_manage` so the client knows which
+// of the two it is holding.
 type Grants struct {
 	Store     db.Store
 	ACL       *acl.Resolver
@@ -175,7 +177,13 @@ func (h *Grants) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.requireOwner(w, r, st, rel) {
+	// Reading the list is a viewer's business, not an owner's: "who else can see
+	// this" is a question anybody who can see the file may ask, and answering it
+	// only to owners left every non-owner staring at a panel that listed them
+	// alone. Changing the list stays owner-only — that guard is on the mutating
+	// verbs below, and `can_manage` tells the client which of the two it is.
+	level, ok := h.readLevel(w, r, st, rel)
+	if !ok {
 		return
 	}
 	all, err := h.Store.ListFileGrantsByStorage(r.Context(), st.ID)
@@ -201,19 +209,44 @@ func (h *Grants) List(w http.ResponseWriter, r *http.Request) {
 			inherited = append(inherited, gv)
 		}
 	}
-	effective := ""
-	if u := auth.UserFrom(r.Context()); u != nil && h.ACL != nil {
-		if set, _ := h.ACL.LoadSet(r.Context(), u, st); set != nil {
-			effective = set.Effective(rel).String()
-		}
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"path":         st.Name + "://" + rel,
 		"storage_rbac": st.RBACEnabled,
 		"direct":       direct,
 		"inherited":    inherited,
-		"effective":    effective,
+		"effective":    level.String(),
+		"can_manage":   level >= acl.LevelOwner,
 	})
+}
+
+// readLevel authorises a READ of the permission list and hands back the level it
+// authorised with, so the answer can say whether the same caller may also change
+// it. Anything below viewer is refused: the list names people, and naming them
+// to somebody who cannot open the file would be a leak of its own.
+func (h *Grants) readLevel(w http.ResponseWriter, r *http.Request, st *model.Storage, rel string) (acl.Level, bool) {
+	u := auth.UserFrom(r.Context())
+	if u == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return acl.LevelNone, false
+	}
+	if u.IsAdmin() {
+		return acl.LevelOwner, true
+	}
+	if h.ACL == nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return acl.LevelNone, false
+	}
+	set, err := h.ACL.LoadSet(r.Context(), u, st)
+	if err != nil || set == nil {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+		return acl.LevelNone, false
+	}
+	level := set.Effective(rel)
+	if level < acl.LevelViewer {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "no access to this path"})
+		return acl.LevelNone, false
+	}
+	return level, true
 }
 
 type grantCreateReq struct {

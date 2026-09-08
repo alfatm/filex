@@ -250,9 +250,12 @@ export function filterPeople(): Person[] {
   ];
 }
 
-/** Indexed text per node id; `ocr` marks text recognised from images/scans (searched only when the query asks for OCR). */
-export const contentIndex: Record<string, { text: string; ocr?: boolean }> = {
+/**
+ * Indexed text per node id. Text the server recognised inside an image is part of a document's content like any
+ * other text — there is no separate OCR corpus to search or skip.
+ */
+export const contentIndex: Record<string, { text: string }> = {
   ...Object.fromEntries(entries.filter((e) => e.text).map((e) => [idOf(e.path), { text: e.text! }])),
   'design/overview-pdf': { text: 'product design guidelines and brand assets' },
-  'design/beach-png': { text: 'summer campaign design concept', ocr: true },
+  'design/beach-png': { text: 'summer campaign design concept' },
 };

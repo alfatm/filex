@@ -31,6 +31,8 @@ export const useFilesStore = defineStore('files', () => {
   const path = ref<Node[]>([]);
   const items = ref<Node[]>([]);
   const people = ref<Person[]>([]);
+  /** Whether this account may CHANGE the access list of the focused node; reading it needs far less. */
+  const canManagePeople = ref(false);
   const focusPath = ref<Node[]>([]);
   /** Chips above the listing. The repository applies them, so every change is a fresh load, as it will be over HTTP. */
   const filter = ref<ListingFilter>(emptyFilter());
@@ -86,10 +88,13 @@ export const useFilesStore = defineStore('files', () => {
   // here rather than derived from `path`, because the listings beside the tree (Recent, Starred, Shared) describe
   // nodes that are not in the open folder at all — their location has to come from the node.
   watch(focusNode, async (node) => {
-    const [list, chain] = node ? await Promise.all([repository.listPeople(node.id), repository.getPath(node.id)]) : [[], []];
+    const [access, chain] = node
+      ? await Promise.all([repository.listPeople(node.id), repository.getPath(node.id)])
+      : [{ people: [], canManage: false }, []];
     // A faster selection change may have resolved meanwhile; keep the newest node's answers.
     if (focusNode.value?.id !== node?.id) return;
-    people.value = list;
+    people.value = access.people;
+    canManagePeople.value = access.canManage;
     focusPath.value = chain;
   }, { immediate: true });
 
@@ -365,6 +370,7 @@ export const useFilesStore = defineStore('files', () => {
     path,
     items,
     people,
+    canManagePeople,
     focusPath,
     loading,
     error,

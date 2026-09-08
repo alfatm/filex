@@ -70,8 +70,6 @@ function promptQuery(parsed: ParsedPrompt, mode: AssistantMode): SearchQuery {
     size: { preset: 'any', min: null, max: null, unit: 'MB' },
     path: '',
     wholePhrase: false,
-    caseSensitive: false,
-    ocr: true,
   };
 }
 

@@ -9,7 +9,6 @@ import {
   FileText,
   Folder,
   HelpCircle,
-  Info,
   RotateCcw,
   Search,
   Tag,
@@ -27,7 +26,6 @@ import {
 } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
 import { segments } from '@/lib/path';
-import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 import { Button, Checkbox, IconButton, Input, Radio, Select } from '@/ui';
 import HitIcon from './HitIcon.vue';
@@ -36,9 +34,14 @@ import { fromUrlQuery, hitFolderLabel, toUrlQuery, useSearchStore } from './sear
 
 const LIVE_ROWS = 3;
 const DEBOUNCE_MS = 250;
-const CONTENT_OPTIONS = ['wholePhrase', 'caseSensitive', 'ocr'] as const;
-/** OCR is a server-side index: without `tesseract` the toggle would promise something the index cannot answer. */
-const contentOptions = computed(() => CONTENT_OPTIONS.filter((option) => option !== 'ocr' || capabilities.can.ocr));
+/**
+ * One box, because one is all the index can answer. Case sensitivity is decided when a document is INDEXED — the
+ * analyser lowercases every token — so a case-sensitive query would have to sieve the answer, and on a common word
+ * it would report "nothing" while the matches sat past the window. OCR is not a query option either: where the
+ * server has `tesseract`, text recognised in images is part of a document's content already and is searched like
+ * any other text, so a switch could only ever turn OFF something the user has no reason to turn off.
+ */
+const CONTENT_OPTIONS = ['wholePhrase'] as const;
 const ARROW_STEP: Record<string, 1 | -1> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
 
 const { t } = useI18n();
@@ -46,7 +49,6 @@ const { formatDate, formatSize } = useFormat();
 const route = useRoute();
 const router = useRouter();
 const files = useFilesStore();
-const capabilities = useCapabilitiesStore();
 const store = useSearchStore();
 const { query } = store;
 
@@ -269,11 +271,7 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
                 {{ t('search.contentOptions') }}
               </h3>
               <div class="mt-3 flex flex-col gap-3">
-                <Checkbox v-for="option in contentOptions" :key="option" v-model="query[option]" :label="t(`search.${option}`)" show-label>
-                  <Info v-if="option === 'ocr'" :size="16" class="text-text-3" :aria-label="t('search.ocrInfo')" role="img">
-                    <title>{{ t('search.ocrInfo') }}</title>
-                  </Info>
-                </Checkbox>
+                <Checkbox v-for="option in CONTENT_OPTIONS" :key="option" v-model="query[option]" :label="t(`search.${option}`)" show-label />
               </div>
             </section>
           </div>

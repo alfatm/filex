@@ -385,6 +385,23 @@ type Store interface {
 	// would still leave the caller holding a number nobody can read.
 	NodeOwners(ctx context.Context, nodeIDs []int64) ([]NodeOwner, error)
 
+	// Listing enrichment — one query for a whole page, keyed by node id.
+	//
+	// ChildCounts counts the LIVE children of each parent, minus the internal
+	// buckets a listing hides (.filex-trash, .versions, .thumbs, the E2E
+	// marker), so the number matches what the same listing would show. Parents
+	// with no children are absent rather than carried as a zero.
+	ChildCounts(ctx context.Context, parentIDs []int64) (map[int64]int64, error)
+	// SharedNodeIDs answers which of these nodes currently have a public link
+	// somebody could still open — the same liveness test model.Share.IsExpired
+	// applies to one share, asked of many nodes at once.
+	SharedNodeIDs(ctx context.Context, nodeIDs []int64) ([]int64, error)
+	// StorageUsage sums the bytes each of these drives holds, as the index knows
+	// them: every file row, trashed ones included, because a file in the trash is
+	// still on the driver. Directory rows are excluded — they carry an aggregate
+	// of their subtree and would count everything twice.
+	StorageUsage(ctx context.Context, storageIDs []int64) (map[int64]int64, error)
+
 	// Trash retention
 	ListTrashedExpired(ctx context.Context, before time.Time, limit int) ([]*model.Node, error)
 	// ListTrashed returns soft-deleted nodes (paginated). storage filter optional.

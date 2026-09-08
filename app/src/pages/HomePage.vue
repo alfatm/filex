@@ -71,9 +71,19 @@ watch(() => files.revision, load);
         <span class="ml-4 min-w-0 flex-1">
           <span class="block truncate-safe text-16 font-medium leading-none">{{ storage.name }}</span>
           <span class="mt-1.5 block text-13 leading-none text-text-3">
-            {{ t('quota.used', { used: formatSize(storage.quota.usedBytes), total: formatSize(storage.quota.totalBytes) }) }}
+            {{
+              storage.quota.totalBytes
+                ? t('quota.used', { used: formatSize(storage.quota.usedBytes), total: formatSize(storage.quota.totalBytes) })
+                : t('quota.usedUnlimited', { used: formatSize(storage.quota.usedBytes) })
+            }}
           </span>
-          <ProgressBar class="mt-2.5" :value="storage.quota.usedBytes" :max="storage.quota.totalBytes" />
+          <!-- Same rule as the sidebar: an account with no ceiling gets the figure without a bar that cannot fill. -->
+          <ProgressBar
+            v-if="storage.quota.totalBytes"
+            class="mt-2.5"
+            :value="storage.quota.usedBytes"
+            :max="storage.quota.totalBytes"
+          />
         </span>
       </RouterLink>
     </div>

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Switch } from '@headlessui/vue';
 import { Copy, Link } from 'lucide-vue-next';
+import { repository } from '@/data';
 import type { Node } from '@/data/types';
 import { useFilesStore } from '@/stores/files';
 import { Button, IconButton } from '@/ui';
@@ -15,14 +16,18 @@ const { t } = useI18n();
 const files = useFilesStore();
 const actions = useFileActions();
 
-// The URL is held here from the mutation result; the listing refresh keeps the details panel in sync on its own.
-const url = ref(props.node.shareUrl);
+// Read once when the modal opens, then held from the mutation results: a listing row knows THAT a node is shared,
+// not what the link is — filex hands the URL out per node, and only to the person who minted it.
+const url = ref<string | null>(null);
+onMounted(async () => {
+  url.value = await repository.shareLink(props.node.id);
+});
 
 async function toggle(on: boolean) {
   if (on) url.value = await files.createShareLink(props.node.id);
   else {
     await files.removeShareLink(props.node.id);
-    url.value = undefined;
+    url.value = null;
   }
 }
 </script>

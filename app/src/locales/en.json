@@ -387,9 +387,6 @@
     "pathHint": "Example: /demo/design/",
     "contentOptions": "Content search options",
     "wholePhrase": "Match whole phrase",
-    "caseSensitive": "Case sensitive",
-    "ocr": "Include document OCR",
-    "ocrInfo": "Also searches text recognised in scanned documents and images.",
     "matching": "{count} matching item | {count} matching items",
     "viewAll": "View all results →",
     "updated": "Updated {date}",
@@ -406,7 +403,6 @@
     "chipQuery": "“{text}”",
     "chipTags": "Tags: {tags}",
     "chipPath": "Path: {path}",
-    "chipNoOcr": "OCR off",
     "refine": "Refine"
   },
   "assistant": {

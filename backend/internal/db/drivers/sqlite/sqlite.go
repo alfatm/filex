@@ -2390,8 +2390,8 @@ func (s *Store) ExistingNodeIDs(ctx context.Context, ids []int64) (map[int64]boo
 
 func (s *Store) CreateNodeVersion(ctx context.Context, v *model.NodeVersion) (*model.NodeVersion, error) {
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO node_versions (node_id, version_n, storage_key, size, etag) VALUES (?,?,?,?,?)`,
-		v.NodeID, v.VersionN, v.StorageKey, v.Size, v.Etag)
+		`INSERT INTO node_versions (node_id, version_n, storage_key, size, etag, created_by) VALUES (?,?,?,?,?,?)`,
+		v.NodeID, v.VersionN, v.StorageKey, v.Size, v.Etag, v.CreatedBy)
 	if err != nil {
 		return nil, err
 	}
@@ -2402,7 +2402,7 @@ func (s *Store) CreateNodeVersion(ctx context.Context, v *model.NodeVersion) (*m
 }
 
 func (s *Store) ListNodeVersions(ctx context.Context, nodeID int64) ([]*model.NodeVersion, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, node_id, version_n, COALESCE(storage_key,''), size, COALESCE(etag,''), created_at FROM node_versions WHERE node_id=? ORDER BY version_n DESC`, nodeID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, node_id, version_n, COALESCE(storage_key,''), size, COALESCE(etag,''), created_at, created_by FROM node_versions WHERE node_id=? ORDER BY version_n DESC`, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -2410,7 +2410,7 @@ func (s *Store) ListNodeVersions(ctx context.Context, nodeID int64) ([]*model.No
 	var out []*model.NodeVersion
 	for rows.Next() {
 		v := &model.NodeVersion{}
-		if err := rows.Scan(&v.ID, &v.NodeID, &v.VersionN, &v.StorageKey, &v.Size, &v.Etag, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.NodeID, &v.VersionN, &v.StorageKey, &v.Size, &v.Etag, &v.CreatedAt, &v.CreatedBy); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -2722,9 +2722,9 @@ func (s *Store) SumNodesBytesByStorage(ctx context.Context, storageID int64) (in
 // GetNodeVersion looks up a single version row by id.
 func (s *Store) GetNodeVersion(ctx context.Context, id int64) (*model.NodeVersion, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, node_id, version_n, COALESCE(storage_key,''), size, COALESCE(etag,''), created_at FROM node_versions WHERE id=?`, id)
+		`SELECT id, node_id, version_n, COALESCE(storage_key,''), size, COALESCE(etag,''), created_at, created_by FROM node_versions WHERE id=?`, id)
 	v := &model.NodeVersion{}
-	if err := row.Scan(&v.ID, &v.NodeID, &v.VersionN, &v.StorageKey, &v.Size, &v.Etag, &v.CreatedAt); err != nil {
+	if err := row.Scan(&v.ID, &v.NodeID, &v.VersionN, &v.StorageKey, &v.Size, &v.Etag, &v.CreatedAt, &v.CreatedBy); err != nil {
 		return nil, err
 	}
 	return v, nil
@@ -2752,7 +2752,7 @@ func (s *Store) DeleteOldNodeVersions(ctx context.Context, nodeID int64, keep in
 		keep = 0
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, node_id, version_n, COALESCE(storage_key,''), size, COALESCE(etag,''), created_at
+		`SELECT id, node_id, version_n, COALESCE(storage_key,''), size, COALESCE(etag,''), created_at, created_by
 		 FROM node_versions
 		 WHERE node_id=?
 		 ORDER BY version_n DESC
@@ -2764,7 +2764,7 @@ func (s *Store) DeleteOldNodeVersions(ctx context.Context, nodeID int64, keep in
 	var doomed []*model.NodeVersion
 	for rows.Next() {
 		v := &model.NodeVersion{}
-		if err := rows.Scan(&v.ID, &v.NodeID, &v.VersionN, &v.StorageKey, &v.Size, &v.Etag, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.NodeID, &v.VersionN, &v.StorageKey, &v.Size, &v.Etag, &v.CreatedAt, &v.CreatedBy); err != nil {
 			return nil, err
 		}
 		doomed = append(doomed, v)
@@ -2915,6 +2915,102 @@ func (s *Store) NodeOwners(ctx context.Context, nodeIDs []int64) ([]db.NodeOwner
 			return nil, err
 		}
 		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// inMarks renders `?,?,?` for an IN clause and the args to go with it.
+func inMarks(ids []int64) (string, []any) {
+	marks := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		marks[i] = "?"
+		args[i] = id
+	}
+	return strings.Join(marks, ","), args
+}
+
+// hiddenNames are the internal buckets every listing projection drops. Counting
+// children without excluding them would make an empty folder that once held a
+// version snapshot report "1 item" nobody can see. Kept in step with
+// projectFileNodes in the manager handler.
+var hiddenNames = []any{".filex-trash", ".versions", ".thumbs", ".filex-e2e.json"}
+
+func (s *Store) ChildCounts(ctx context.Context, parentIDs []int64) (map[int64]int64, error) {
+	if len(parentIDs) == 0 {
+		return nil, nil
+	}
+	marks, args := inMarks(parentIDs)
+	args = append(args, hiddenNames...)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT parent_id, COUNT(*) FROM nodes
+		  WHERE deleted_at IS NULL AND parent_id IN (`+marks+`)
+		    AND name NOT IN (?,?,?,?)
+		  GROUP BY parent_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: child counts: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64]int64, len(parentIDs))
+	for rows.Next() {
+		var parent, n int64
+		if err := rows.Scan(&parent, &n); err != nil {
+			return nil, err
+		}
+		out[parent] = n
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) StorageUsage(ctx context.Context, storageIDs []int64) (map[int64]int64, error) {
+	if len(storageIDs) == 0 {
+		return nil, nil
+	}
+	marks, args := inMarks(storageIDs)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT storage_id, COALESCE(SUM(size),0) FROM nodes
+		  WHERE type='file' AND storage_id IN (`+marks+`)
+		  GROUP BY storage_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: storage usage: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64]int64, len(storageIDs))
+	for rows.Next() {
+		var id, used int64
+		if err := rows.Scan(&id, &used); err != nil {
+			return nil, err
+		}
+		out[id] = used
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SharedNodeIDs(ctx context.Context, nodeIDs []int64) ([]int64, error) {
+	if len(nodeIDs) == 0 {
+		return nil, nil
+	}
+	marks, args := inMarks(nodeIDs)
+	// UTC on both sides, like every other expiry comparison here: the driver
+	// writes a Go time with its zone offset and SQLite compares it as TEXT.
+	args = append(args, time.Now().UTC())
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT node_id FROM shares
+		  WHERE node_id IN (`+marks+`)
+		    AND (expires_at IS NULL OR expires_at > ?)
+		    AND (max_downloads IS NULL OR download_count < max_downloads)
+		    AND (max_uploads IS NULL OR upload_count < max_uploads)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: shared node ids: %w", err)
+	}
+	defer rows.Close()
+	out := make([]int64, 0, len(nodeIDs))
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
 	}
 	return out, rows.Err()
 }

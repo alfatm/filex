@@ -387,9 +387,6 @@
     "pathHint": "Örnek: /demo/design/",
     "contentOptions": "İçerik arama seçenekleri",
     "wholePhrase": "Tam ifadeyle eşleştir",
-    "caseSensitive": "Büyük/küçük harfe duyarlı",
-    "ocr": "Belge OCR'sini dahil et",
-    "ocrInfo": "Taranmış belgelerde ve görsellerde tanınan metinde de arar.",
     "matching": "{count} eşleşen öğe",
     "viewAll": "Tüm sonuçları gör →",
     "updated": "Güncellendi: {date}",
@@ -406,7 +403,6 @@
     "chipQuery": "“{text}”",
     "chipTags": "Etiketler: {tags}",
     "chipPath": "Yol: {path}",
-    "chipNoOcr": "OCR kapalı",
     "refine": "Daralt"
   },
   "assistant": {

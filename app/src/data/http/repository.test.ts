@@ -52,15 +52,19 @@ const row = (patch: Partial<WireFileNode>): WireFileNode => ({
 const index = (...files: WireFileNode[]) => ({ adapter: 'main', storages: ['main'], dirname: 'main://', read_only: false, files });
 
 describe('HttpRepository', () => {
-  it('lists a drive by name and shares the account quota across every drive', async () => {
+  it('gives each drive its own usage, under the one ceiling the account has', async () => {
     routes = [
-      ['/api/files/storages', { storages: [{ name: 'main', read_only: false }, { name: 'archive', read_only: true }] }],
+      [
+        '/api/files/storages',
+        { storages: [{ name: 'main', read_only: false, used_bytes: 200 }, { name: 'archive', read_only: true, used_bytes: 50 }] },
+      ],
       ['/api/files/quota/me', { used_bytes: 250, quota_bytes: 1000 }],
     ];
     const storages = await new HttpRepository().listStorages();
+    // The account's own 250 is the sum, not each drive's figure — which is what every card used to show.
     expect(storages).toEqual([
-      { id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 250, totalBytes: 1000 } },
-      { id: 'archive', name: 'archive', rootId: 'archive://', quota: { usedBytes: 250, totalBytes: 1000 } },
+      { id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 200, totalBytes: 1000 } },
+      { id: 'archive', name: 'archive', rootId: 'archive://', quota: { usedBytes: 50, totalBytes: 1000 } },
     ]);
   });
 
@@ -161,8 +165,6 @@ describe('HttpRepository', () => {
       size: { preset: 'medium', min: null, max: null, unit: 'MB' },
       path: '',
       wholePhrase: false,
-      caseSensitive: false,
-      ocr: false,
     });
 
     const body = calls[0].body as Record<string, unknown>;
@@ -438,6 +440,83 @@ describe('HttpRepository', () => {
 
     await repo.saveNotifyPrefs({ shared: true, comments: true, uploads: false });
     expect(saved).toEqual({ in_app_enabled: true, muted_events: ['replica_fail', 'file.uploaded'] });
+  });
+
+  it('asks for a whole phrase in quotes, and keeps the tag terms outside them', async () => {
+    routes = [['/api/files/search', { results: [] }]];
+    const repo = new HttpRepository();
+    const query = {
+      text: 'annual report', tags: [], scope: 'all', searchIn: 'everywhere', folderPath: '',
+      fileType: 'any', modified: 'any', size: { preset: 'any' }, ownerId: '',
+      wholePhrase: true,
+    } as unknown as Parameters<HttpRepository['search']>[0];
+    await repo.search(query);
+    expect((calls.at(-1)?.body as { query: string }).query).toBe('"annual report"');
+
+    await repo.search({ ...query, tags: ['design'] });
+    expect((calls.at(-1)?.body as { query: string }).query).toBe('"annual report" tag:design');
+
+    await repo.search({ ...query, wholePhrase: false });
+    expect((calls.at(-1)?.body as { query: string }).query).toBe('annual report');
+  });
+
+  it('leaves a revision nobody claimed unattributed instead of signing it with the reader’s name', async () => {
+    routes = [
+      [
+        '/api/files/versions',
+        {
+          versions: [
+            { id: 9, node_id: 2, version_n: 2, size: 20, created_at: '2026-07-02T10:00:00Z', created_by: 4, author_name: 'Ada' },
+            { id: 8, node_id: 2, version_n: 1, size: 10, created_at: '2026-07-01T10:00:00Z' },
+          ],
+        },
+      ],
+      ['star/list', { nodes: [] }],
+      ['q=index', index(row({ id: 2, path: 'main://Docs/notes.md', basename: 'notes.md', type: 'file' }))],
+    ];
+    const repo = new HttpRepository();
+    // The numeric node id the versions endpoint needs comes from having listed the file once.
+    await repo.listFolder('main://Docs');
+    const versions = await repo.listVersions('main://Docs/notes.md');
+    expect(versions.map((v) => [v.authorName, v.current])).toEqual([
+      ['Ada', true],
+      [undefined, false],
+    ]);
+  });
+
+  it('lists who has access to anyone who can open the node, and says whether they may change it', async () => {
+    routes = [
+      [
+        '/api/files/permissions',
+        {
+          direct: [{ id: 1, user_id: 4, user_display_name: 'Ada', level: 'owner' }],
+          inherited: [{ id: 2, user_id: 5, user_email: 'mert@filex.test', level: 'viewer' }],
+          can_manage: false,
+        },
+      ],
+    ];
+    const access = await new HttpRepository().listPeople('main://Docs');
+    expect(access.canManage).toBe(false);
+    // No display name falls back to the address, which is what the owner column already shows everybody.
+    expect(access.people.map((p) => [p.name, p.role])).toEqual([
+      ['Ada', 'owner'],
+      ['mert@filex.test', 'viewer'],
+    ]);
+  });
+
+  it('reads the caller’s own link, and removes it by the id filex actually sends', async () => {
+    routes = [['/api/files/share', { shares: [{ uuid: '2', url: 'https://filex.test/s/abc' }] }]];
+    const repo = new HttpRepository();
+    expect(await repo.shareLink('main://Docs/notes.md')).toBe('https://filex.test/s/abc');
+
+    await repo.removeShareLink('main://Docs/notes.md');
+    // `uuid` is the share id; reading `id` here sent DELETE /share/undefined and left the link open.
+    expect(calls.at(-1)).toMatchObject({ url: '/api/files/share/2', method: 'DELETE' });
+  });
+
+  it('reads a refusal to show the links as “none of yours”, because that is what the panel can act on', async () => {
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 403, text: async () => '{"error":"insufficient permission"}' }) as Response);
+    expect(await new HttpRepository().shareLink('main://Docs/notes.md')).toBeNull();
   });
 
   it('sends the optional profile fields only when they were edited', async () => {

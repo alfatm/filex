@@ -8,6 +8,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"path"
@@ -17,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/brf-tech/filex/backend/internal/db"
+	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/protocolsync"
 	"github.com/brf-tech/filex/backend/internal/realtime"
 	"github.com/brf-tech/filex/backend/internal/search"
@@ -56,9 +58,7 @@ func (h *Versions) List(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if versions == nil {
-		versions = nil
-	}
+	nameAuthors(r.Context(), h.Store, versions)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"versions": versions,
 		"node_id":  nodeID,
@@ -155,4 +155,33 @@ func (h *Versions) HardDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// nameAuthors turns each revision's created_by into a name the panel can print.
+//
+// One lookup per DISTINCT author, not per revision: a file's history is capped
+// at the retention count and is usually the work of one or two people. Rows
+// written before the author was recorded keep no name, and the panel shows the
+// revision without one rather than attributing it to whoever is looking.
+func nameAuthors(ctx context.Context, store db.Store, versions []*model.NodeVersion) {
+	if store == nil {
+		return
+	}
+	names := map[int64]string{}
+	for _, v := range versions {
+		if v.CreatedBy == nil {
+			continue
+		}
+		name, seen := names[*v.CreatedBy]
+		if !seen {
+			if u, err := store.GetUser(ctx, *v.CreatedBy); err == nil && u != nil {
+				name = strings.TrimSpace(u.DisplayName)
+				if name == "" {
+					name = u.Email
+				}
+			}
+			names[*v.CreatedBy] = name
+		}
+		v.AuthorName = name
+	}
 }

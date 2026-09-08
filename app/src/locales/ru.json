@@ -387,9 +387,6 @@
     "pathHint": "Например: /demo/design/",
     "contentOptions": "Параметры поиска по содержимому",
     "wholePhrase": "Точная фраза",
-    "caseSensitive": "Учитывать регистр",
-    "ocr": "Включая OCR документов",
-    "ocrInfo": "Также ищет текст, распознанный в сканах и изображениях.",
     "matching": "{count} совпадение | {count} совпадения | {count} совпадений",
     "viewAll": "Все результаты →",
     "updated": "Обновлено {date}",
@@ -406,7 +403,6 @@
     "chipQuery": "«{text}»",
     "chipTags": "Теги: {tags}",
     "chipPath": "Путь: {path}",
-    "chipNoOcr": "OCR выкл.",
     "refine": "Уточнить"
   },
   "assistant": {

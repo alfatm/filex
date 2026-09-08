@@ -94,3 +94,28 @@ func (f Fallback) Rank(name, path string) Tier {
 // FallbackOverFetch is how many times `limit` rows a caller should ask
 // the database for, since Accepts drops some of them afterwards.
 const FallbackOverFetch = 4
+
+// QuotedPhrase reads a query that is ONE quoted phrase — `"annual report"` —
+// and hands back what is inside the quotes.
+//
+// Only the whole-query form. A mixed query (`report "annual meeting"`) needs a
+// boolean of two clauses and is deliberately not handled: it would be a second
+// query language nobody asked for, and the advanced form's "whole phrase" box
+// quotes the entire text or none of it.
+//
+// The NAME side is untouched by this and must stay that way. PrepareQuery drops
+// quotes before it looks at anything (see scorer.go), because filename matching
+// is subsequence matching by design — `invoice 2026` has to keep finding
+// `invoice_2026.pdf`. Quoting narrows what is read INSIDE files, which is where
+// an exact wording is a question anybody actually asks.
+func QuotedPhrase(q string) (string, bool) {
+	q = strings.TrimSpace(q)
+	if len(q) < 3 || q[0] != '"' || q[len(q)-1] != '"' {
+		return "", false
+	}
+	inner := q[1 : len(q)-1]
+	if strings.Contains(inner, `"`) || strings.TrimSpace(inner) == "" {
+		return "", false
+	}
+	return inner, true
+}

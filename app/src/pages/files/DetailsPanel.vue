@@ -63,6 +63,18 @@ watch(
   { immediate: true },
 );
 
+// The link is not part of a listing row: a viewer may see that a node is shared, but the URL itself is editor+
+// business, so it is fetched per node. `files.revision` is in the key so creating or removing one refreshes it.
+const shareUrl = ref<string | null>(null);
+watch(
+  [() => props.node.id, () => files.revision] as const,
+  async ([id]) => {
+    const url = await repository.shareLink(id);
+    if (props.node.id === id) shareUrl.value = url;
+  },
+  { immediate: true },
+);
+
 /**
  * "You renamed it from “notes.md”" — the actor, the verb, and at most one variable part.
  *
@@ -137,9 +149,9 @@ function sentence(event: ActivityEvent): string {
         <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-bg-muted text-text-2">
           <Link :size="16" />
         </span>
-        <template v-if="node.shareUrl">
-          <p class="ml-3 min-w-0 flex-1 truncate-safe text-15 leading-none">{{ node.shareUrl }}</p>
-          <IconButton :label="t('panel.copy')" :size="36" @click="actions.copyLink(node.shareUrl)"><Copy :size="18" /></IconButton>
+        <template v-if="shareUrl">
+          <p class="ml-3 min-w-0 flex-1 truncate-safe text-15 leading-none">{{ shareUrl }}</p>
+          <IconButton :label="t('panel.copy')" :size="36" @click="actions.copyLink(shareUrl)"><Copy :size="18" /></IconButton>
           <Button variant="ghost" class="h-9 px-3" @click="files.removeShareLink(node.id)">{{ t('panel.remove') }}</Button>
         </template>
         <template v-else>

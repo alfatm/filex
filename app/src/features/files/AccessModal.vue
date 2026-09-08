@@ -18,6 +18,8 @@ const files = useFilesStore();
 const GRANTABLE = ['editor', 'viewer'] as const;
 
 const people = ref<Person[]>([]);
+/** A viewer may see who else has access; only an owner may change it, so for everyone else this is a list. */
+const canManage = ref(false);
 const email = ref('');
 const role = ref<(typeof GRANTABLE)[number]>('viewer');
 const input = ref<InstanceType<typeof Input>>();
@@ -27,7 +29,9 @@ const roleOptions = computed(() => GRANTABLE.map((value) => ({ value, label: t(`
 const valid = computed(() => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim()));
 
 async function load() {
-  people.value = await repository.listPeople(props.node.id);
+  const access = await repository.listPeople(props.node.id);
+  people.value = access.people;
+  canManage.value = access.canManage;
   // The details panel shows the same list.
   await files.refresh();
 }
@@ -56,7 +60,7 @@ async function revoke(person: Person) {
   <Modal :title="t('modal.access.title')" :close-label="t('modal.close')" :width="560" :initial-focus="input?.el" @close="emit('close')">
     <p class="text-14 leading-tight text-text-3">{{ t('modal.access.hint', { name: node.name }) }}</p>
 
-    <form class="mt-4 flex gap-3" @submit.prevent="invite">
+    <form v-if="canManage" class="mt-4 flex gap-3" @submit.prevent="invite">
       <Input
         ref="input"
         v-model="email"
@@ -77,8 +81,9 @@ async function revoke(person: Person) {
           <p class="truncate-safe text-15 leading-none">{{ person.id === files.user?.id ? t('panel.you') : person.name }}</p>
           <p class="mt-1.5 truncate-safe text-13 leading-none text-text-3">{{ person.id }}</p>
         </div>
-        <!-- The owner's role is not a permission anyone can hand out, so that row is read-only. -->
-        <span v-if="person.role === 'owner'" class="ml-3 text-15 leading-none text-text-3">{{ t('panel.role.owner') }}</span>
+        <!-- The owner's role is not a permission anyone can hand out, so that row is read-only — and for a caller
+             who may not manage the list at all, every row is. -->
+        <span v-if="!canManage || person.role === 'owner'" class="ml-3 text-15 leading-none text-text-3">{{ t(`panel.role.${person.role}`) }}</span>
         <template v-else>
           <Select
             :model-value="person.role"

@@ -54,7 +54,6 @@ export interface Capabilities {
   mkdir: boolean;
   search: boolean;
   versions: boolean;
-  ocr: boolean;
 
   assistant: boolean;
   tags: boolean;
@@ -77,7 +76,6 @@ export function noCapabilities(): Capabilities {
     mkdir: false,
     search: false,
     versions: false,
-    ocr: false,
     assistant: false,
     tags: false,
     activity: false,
@@ -93,8 +91,9 @@ export interface Version {
   /** When this revision became the file's content. */
   at: string;
   size: number;
-  authorId: string;
-  authorName: string;
+  /** Who wrote the revision. Absent for anything filex snapshotted before it recorded an author. */
+  authorId?: string;
+  authorName?: string;
   current: boolean;
 }
 
@@ -181,6 +180,15 @@ export interface Person {
   role: 'owner' | 'editor' | 'viewer';
 }
 
+/**
+ * Who can reach a node, and whether the caller is allowed to change that. Reading the list needs only the right to
+ * open the node; changing it is the owner's business, so the panel that shows both has to be told which it holds.
+ */
+export interface Access {
+  people: Person[];
+  canManage: boolean;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -261,9 +269,8 @@ export interface SearchQuery {
   size: SizeRange;
   /** Path prefix filter as typed, e.g. "/demo/design/". */
   path: string;
+  /** Sent as a quoted query: the words in that order, adjacent, inside the file. */
   wholePhrase: boolean;
-  caseSensitive: boolean;
-  ocr: boolean;
 }
 
 export interface MatchRange {

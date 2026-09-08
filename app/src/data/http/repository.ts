@@ -1,7 +1,7 @@
 import { DUPLICATE_NAME, OPERATION_PENDING, WRONG_PASSWORD, type Repository } from '../repository';
 import { matchesFilter, MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
-import { noCapabilities, type ActivityEvent, type AssistantEvent, type AuthMethods, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type Quota, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type User, type Version } from '../types';
+import { noCapabilities, type Access, type ActivityEvent, type AssistantEvent, type AuthMethods, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type User, type Version } from '../types';
 import { HttpError, putChunk, request } from './client';
 import {
   fromFileNode,
@@ -128,6 +128,12 @@ function searchFacets(query: SearchQuery): Record<string, unknown> {
   return out;
 }
 
+/** The text as one phrase, with any quotes of its own removed — a stray one would make the whole form unreadable. */
+function quoted(text: string): string {
+  const inner = text.replaceAll('"', ' ').trim();
+  return inner ? `"${inner}"` : '';
+}
+
 /**
  * The one size form the server has no expression for: a hand-typed range. The presets became `size_min`/`size_max`
  * on the request; this stays here because the form allows a range in whichever unit the user picked.
@@ -192,6 +198,9 @@ interface WireVersion {
   version_n: number;
   size: number;
   created_at: string;
+  /** Absent on revisions taken before filex recorded who took them; there is no backfill for those. */
+  created_by?: number;
+  author_name?: string;
 }
 
 /** `model.Capabilities` — only the fields the app gates on. */
@@ -203,7 +212,6 @@ interface WireCapabilities {
   mkdir?: boolean;
   search?: boolean;
   versions?: boolean;
-  ocr?: boolean;
 }
 
 function initialOf(name: string): string {
@@ -316,8 +324,9 @@ export class HttpRepository implements Repository {
       request<{ storages: WireStorage[] }>('/api/files/storages'),
       request<WireQuota>('/api/files/quota/me'),
     ]);
-    const shared: Quota = toQuota(quota);
-    this.storages = storages.map((s) => toStorage(s, shared));
+    // The ceiling is the account's; what each drive HOLDS is the drive's own, and the two used to be the same figure.
+    const { totalBytes } = toQuota(quota);
+    this.storages = storages.map((s) => toStorage(s, totalBytes));
     return this.storages;
   }
 
@@ -428,7 +437,6 @@ export class HttpRepository implements Repository {
       mkdir: wire.mkdir ?? false,
       search: wire.search ?? false,
       versions: wire.versions ?? false,
-      ocr: wire.ocr ?? false,
       tags: true,
       permissions: true,
       // Not reported by /capabilities — filex answers for the storage DRIVERS, and zipping a subtree is filex's
@@ -703,9 +711,30 @@ export class HttpRepository implements Repository {
     return url;
   }
 
+  /**
+   * Empty for a node with no link — and also for one shared by SOMEBODY ELSE: filex lists a non-admin only the
+   * links they minted themselves, and refuses the question below editor. Either way the answer is "no link of
+   * yours to show", which is what the panel can honestly offer to remove.
+   */
+  async shareLink(id: string): Promise<string | null> {
+    const shares = await this.shares(id);
+    return shares[0]?.url ?? null;
+  }
+
   async removeShareLink(id: string): Promise<void> {
-    const { shares } = await request<{ shares: { id: number }[] }>('/api/files/share', { query: { path: id } });
-    for (const share of shares) await request(`/api/files/share/${share.id}`, { method: 'DELETE' });
+    for (const share of await this.shares(id)) await request(`/api/files/share/${share.uuid}`, { method: 'DELETE' });
+  }
+
+  /** The node's live links as filex reports them. `uuid` is the share id in string form — there is no `id` key. */
+  private async shares(id: string): Promise<{ uuid: string; url: string }[]> {
+    try {
+      const { shares } = await request<{ shares: { uuid: string; url: string }[] }>('/api/files/share', { query: { path: id } });
+      return shares ?? [];
+    } catch (error) {
+      // Below editor filex refuses the question rather than answering "none"; to the panel that is the same thing.
+      if (error instanceof HttpError && error.status === 403) return [];
+      throw error;
+    }
   }
 
   async recordOpen(id: string): Promise<void> {
@@ -714,8 +743,11 @@ export class HttpRepository implements Repository {
 
   // ── access, history ─────────────────────────────────────────────────────────
 
-  async listPeople(nodeId: string): Promise<Person[]> {
-    const { direct, inherited } = await request<{ direct: WireGrant[]; inherited: WireGrant[] }>('/api/files/permissions', { query: { path: nodeId } });
+  async listPeople(nodeId: string): Promise<Access> {
+    const { direct, inherited, can_manage } = await request<{ direct: WireGrant[]; inherited: WireGrant[]; can_manage?: boolean }>(
+      '/api/files/permissions',
+      { query: { path: nodeId } },
+    );
     const seen = new Set<string>();
     const people: Person[] = [];
     for (const grant of [...direct, ...inherited]) {
@@ -726,7 +758,7 @@ export class HttpRepository implements Repository {
       const name = grant.user_display_name?.trim() || grant.user_email || id;
       people.push({ id, name, initial: initialOf(name), role: LEVELS[grant.level] ?? 'viewer' });
     }
-    return people;
+    return { people, canManage: can_manage ?? false };
   }
 
   /** By email, because that is the only handle the person adding someone has; filex resolves or creates the account. */
@@ -757,14 +789,14 @@ export class HttpRepository implements Repository {
    */
   async listVersions(nodeId: string): Promise<Version[]> {
     const { versions } = await request<{ versions: WireVersion[] | null }>('/api/files/versions', { query: { node_id: this.nodeId(nodeId) } });
-    const me = await this.currentUser();
     const rows = [...(versions ?? [])].sort((a, b) => b.version_n - a.version_n);
+    // An unattributed revision stays unattributed. Stamping the reader's own name on it, which is what this did
+    // before the column existed, told everyone they had written every version of every file they opened.
     return rows.map((v, i) => ({
       id: String(v.id),
       at: v.created_at,
       size: v.size,
-      authorId: me.id,
-      authorName: me.name,
+      ...(v.created_by === undefined ? {} : { authorId: String(v.created_by), authorName: v.author_name }),
       current: i === 0,
     }));
   }
@@ -809,7 +841,11 @@ export class HttpRepository implements Repository {
    */
   async search(query: SearchQuery): Promise<SearchResult> {
     const scope = query.scope === 'content' ? 'content' : query.scope === 'paths' ? 'path' : '';
-    const text = query.tags.length ? [query.text, ...query.tags.map((t) => `tag:${t}`)].join(' ').trim() : query.text;
+    // "Whole phrase" is sent the way every search box in the world spells it: the text in quotes. The server reads a
+    // fully quoted query as a phrase INSIDE files; filename matching drops the quotes and stays subsequence-based,
+    // because `invoice 2026` has to keep finding `invoice_2026.pdf`. The tag terms stay outside the quotes.
+    const phrase = query.wholePhrase ? quoted(query.text) : query.text;
+    const text = query.tags.length ? [phrase, ...query.tags.map((t) => `tag:${t}`)].join(' ').trim() : phrase;
     // POST rather than the GET form: the facets are a list and four numbers, and the body is where filex's search
     // has always taken them. No storage_id — the app addresses drives by name and has no numeric one to send, so
     // the server asks every drive the caller could see and lets its own RBAC pass decide what comes back.

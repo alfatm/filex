@@ -23,8 +23,6 @@ describe('search URL mapping', () => {
       size: { preset: 'custom' as const, min: 1.5, max: 20, unit: 'GB' as const },
       path: '/demo/design/',
       wholePhrase: true,
-      caseSensitive: true,
-      ocr: false,
     };
     const url = toUrlQuery(query);
     // Tags are repeated params, so a tag may contain a comma.
@@ -39,7 +37,8 @@ describe('search URL mapping', () => {
   });
 
   it('ignores unknown or malformed values', () => {
-    expect(fromUrlQuery({ q: ['a', 'b'], scope: 'bogus', min: 'x', tags: ' ', ocr: '1', size: null })).toEqual({
+    // `case` and `ocr` are old links: the boxes they carried are gone, so they are read as no query at all.
+    expect(fromUrlQuery({ q: ['a', 'b'], scope: 'bogus', min: 'x', tags: ' ', case: '1', ocr: '0', size: null })).toEqual({
       ...emptyQuery(),
       text: 'a',
     });
@@ -56,15 +55,12 @@ describe('search URL mapping', () => {
         max: 'Infinity',
         unit: 'TB',
         phrase: 'true',
-        case: ['1'],
-        ocr: 'false',
       }),
     ).toEqual({
       ...emptyQuery(),
       fileType: 'images',
       tags: ['a', 'b,c'],
       size: { ...emptyQuery().size, min: 5 },
-      caseSensitive: true,
     });
   });
 
