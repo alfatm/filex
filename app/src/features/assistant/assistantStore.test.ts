@@ -4,6 +4,7 @@ import type { AssistantEvent, AssistantMode, SearchHit } from '@/data/types';
 import { useAssistantStore } from './assistantStore';
 
 const calls: { prompt: string; mode: AssistantMode; conversationId: string | null; signal: AbortSignal }[] = [];
+const approvals: { id: string; path: string }[] = [];
 let script: AssistantEvent[] = [];
 /** When set, the generator throws this instead of yielding once the script is exhausted. */
 let failWith: Error | null = null;
@@ -13,6 +14,12 @@ const gate = () => new Promise<void>((resolve) => (release = resolve));
 
 vi.mock('@/data', () => ({
   repository: {
+    // A turn is written into a stored conversation, so one is opened on the first question.
+    createAssistantSession: async () => ({ id: 's1', title: '', titleManual: false, messageCount: 0, lastActiveAt: '', createdAt: '' }),
+    assistantMessages: async () => ({ messages: [{ id: 'm1', role: 'assistant', text: 'earlier', at: '', cards: [{ kind: 'approval', path: 'main://pay.csv' }] }], granted: ['main://pay.csv'] }),
+    approveAssistantRead: async (id: string, path: string) => {
+      approvals.push({ id, path });
+    },
     async *assistantAsk(prompt: string, mode: AssistantMode, conversationId: string | null, signal: AbortSignal) {
       calls.push({ prompt, mode, conversationId, signal });
       for (const event of script) {
@@ -44,6 +51,7 @@ describe('assistant store', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     calls.length = 0;
+    approvals.length = 0;
     release = null;
     failWith = null;
   });
@@ -92,21 +100,36 @@ describe('assistant store', () => {
     expect(store.messages[1].hits).toEqual([hit, hit2]);
   });
 
-  it('passes the selected mode and echoes the conversation id from the meta event', async () => {
-    script = [{ type: 'meta', conversationId: 'conv-7' }, { type: 'done' }];
+  it('opens a conversation for the first question and keeps every later turn in it', async () => {
+    script = [{ type: 'meta', conversationId: 's1' }, { type: 'done' }];
     const store = useAssistantStore();
     store.mode = 'tags';
     let turn = store.send('x');
     await step();
     await step();
     await turn;
-    expect(calls[0]).toMatchObject({ mode: 'tags', conversationId: null });
-    expect(store.conversationId).toBe('conv-7');
+    expect(calls[0]).toMatchObject({ mode: 'tags', conversationId: 's1' });
+    expect(store.sessionId).toBe('s1');
     turn = store.send('y');
     await step();
     await step();
     await turn;
-    expect(calls[1].conversationId).toBe('conv-7');
+    expect(calls[1].conversationId).toBe('s1');
+  });
+
+  it('marks the answer failed when the server reports the model call failed, and keeps what arrived', async () => {
+    script = [
+      { type: 'text', delta: 'half an ' },
+      { type: 'error', message: 'provider returned 429' },
+      { type: 'done' },
+    ];
+    const store = useAssistantStore();
+    const turn = store.send('x');
+    await step();
+    await step();
+    await step();
+    await turn;
+    expect(store.messages[1]).toMatchObject({ text: 'half an ', error: true });
   });
 
   it('abort stops the stream, keeps the partial answer and marks it stopped', async () => {
@@ -194,5 +217,61 @@ describe('assistant store', () => {
     await step();
     await turn;
     expect(calls).toHaveLength(1);
+  });
+
+  it('shows what the assistant is doing while it does it, and stops showing it once words arrive', async () => {
+    script = [
+      { type: 'tool', tool: 'list_folder', target: 'main://Docs' },
+      { type: 'text', delta: 'Two files.' },
+      { type: 'done' },
+    ];
+    const store = useAssistantStore();
+    const turn = store.send('what is in Docs?');
+    await step();
+    // A tool is not part of the answer — no empty bubble appears for it.
+    expect(store.activity).toEqual({ tool: 'list_folder', target: 'main://Docs' });
+    expect(store.messages).toHaveLength(1);
+    await step();
+    expect(store.activity).toBeNull();
+    expect(store.messages[1].text).toBe('Two files.');
+    await step();
+    await turn;
+    expect(store.activity).toBeNull();
+  });
+
+  it('attaches a permission request to the turn that raised it, and records the answer for that file only', async () => {
+    script = [
+      { type: 'text', delta: 'I need the pay file.' },
+      { type: 'card', card: { kind: 'approval', path: 'main://Docs/pay.csv', reason: 'to total the salaries' } },
+      { type: 'done' },
+    ];
+    const store = useAssistantStore();
+    const turn = store.send('summarise pay');
+    await step();
+    await step();
+    await step();
+    await turn;
+
+    const card = store.messages[1].cards?.[0];
+    expect(card).toMatchObject({ path: 'main://Docs/pay.csv', reason: 'to total the salaries' });
+    expect(store.isGranted(card!)).toBe(false);
+
+    await store.approveRead('main://Docs/pay.csv');
+    expect(approvals).toEqual([{ id: 's1', path: 'main://Docs/pay.csv' }]);
+    expect(store.isGranted(card!)).toBe(true);
+    // Approving one file says nothing about the next one.
+    expect(store.isGranted({ kind: 'approval', path: 'main://Docs/other.csv' })).toBe(false);
+
+    // Approving twice does not ask the server twice.
+    await store.approveRead('main://Docs/pay.csv');
+    expect(approvals).toHaveLength(1);
+  });
+
+  it('reopens a conversation with its pending questions and the permissions already given', async () => {
+    const store = useAssistantStore();
+    await store.openSession('s9');
+    expect(store.messages[0].cards?.[0].path).toBe('main://pay.csv');
+    expect(store.granted).toEqual(['main://pay.csv']);
+    expect(store.isGranted({ kind: 'approval', path: 'main://pay.csv' })).toBe(true);
   });
 });

@@ -21,6 +21,7 @@ import (
 
 	"github.com/brf-tech/filex/backend/internal/acl"
 	"github.com/brf-tech/filex/backend/internal/api/handlers"
+	"github.com/brf-tech/filex/backend/internal/assistant"
 	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/capability"
 	cloudpkg "github.com/brf-tech/filex/backend/internal/cloud" /* kimlik:e3 cloud */
@@ -47,6 +48,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/replica"
 	"github.com/brf-tech/filex/backend/internal/s3api"
 	"github.com/brf-tech/filex/backend/internal/search"
+	"github.com/brf-tech/filex/backend/internal/secretbox"
 	"github.com/brf-tech/filex/backend/internal/share"
 	"github.com/brf-tech/filex/backend/internal/sharezip"
 	"github.com/brf-tech/filex/backend/internal/staging"
@@ -404,6 +406,24 @@ func BuildRouter(d *Deps) http.Handler {
 
 	// New self-service + admin handlers.
 	authSelf := handlers.NewAuthSelf(d.Store)
+	assistantH := handlers.NewAssistant(d.Store)
+	assistantAdminH := handlers.NewAssistantAdmin(d.Store)
+	// The model side. The box unseals the provider key; a build error here
+	// (an unusable FILEX_SECRET_KEY) leaves the assistant unconfigured rather
+	// than taking the router down — every other feature is unaffected by it.
+	assistantBox, _ := secretbox.New(d.Cfg.SecretKey)
+	assistantAI := assistant.New(d.Store, assistantBox)
+	assistantH.AttachAI(assistantAI)
+	// The files it may look at — the same ACL-checked core the MCP server uses,
+	// so the assistant sees exactly what the person asking could open.
+	assistantH.AttachTools(handlers.AssistantToolDeps{
+		Store:    d.Store,
+		Resolver: d.StorageResolver,
+		ACL:      d.ACL,
+		Index:    d.Index,
+		Body:     d.Body,
+	})
+	assistantProviderH := handlers.NewAssistantProviderAdmin(d.Store, assistantBox, assistantAI)
 	dashH := handlers.NewDashboard(d.Store, d.Caps, d.Worker)
 	auditH := handlers.NewAudit(d.Store)
 	syncAdmH := handlers.NewSyncAdmin(d.Store)
@@ -656,6 +676,21 @@ func BuildRouter(d *Deps) http.Handler {
 		// scoped to the caller by the context principal, not by a parameter.
 		r.Get("/api/auth/sessions", authSelf.Sessions)
 		r.Delete("/api/auth/sessions/{id}", authSelf.RevokeSession)
+		// The assistant's conversation history. Every route is scoped to the
+		// caller by the context principal, and the one that returns MESSAGES has
+		// no administrator path through it at all — see handlers/assistant.go.
+		// Whether asking is possible at all — the panel is drawn from this.
+		r.Get("/api/assistant/status", assistantH.Status)
+		// One question, answered as a stream so it can be stopped mid-answer.
+		r.Post("/api/assistant/sessions/{id}/turn", assistantH.Turn)
+		// Permission to read ONE file, given by the person, for this
+		// conversation only — the gate in front of read_file.
+		r.Post("/api/assistant/sessions/{id}/approvals", assistantH.Approve)
+		r.Get("/api/assistant/sessions", assistantH.Sessions)
+		r.Post("/api/assistant/sessions", assistantH.CreateSession)
+		r.Get("/api/assistant/sessions/{id}", assistantH.Messages)
+		r.Patch("/api/assistant/sessions/{id}", assistantH.RenameSession)
+		r.Delete("/api/assistant/sessions/{id}", assistantH.DeleteSession)
 		r.Post("/api/auth/totp/enroll", authSelf.TotpEnroll)
 		r.Post("/api/auth/totp/verify", authSelf.TotpVerify)
 		r.Post("/api/auth/totp/disable", authSelf.TotpDisable)
@@ -910,6 +945,17 @@ func BuildRouter(d *Deps) http.Handler {
 
 		r.Route("/api/admin", func(r chi.Router) {
 			r.Get("/dashboard", dashH.Get)
+
+			// Assistant history: how much of it each account holds, and the
+			// ability to clear one. Metadata only — the handler contains no
+			// call that could return a conversation.
+			r.Get("/assistant/sessions", assistantAdminH.Sessions)
+			r.Delete("/assistant/sessions/{id}", assistantAdminH.DeleteSession)
+			// The model provider: one for the whole installation, so the
+			// handler additionally refuses a tenant admin.
+			r.Get("/assistant/provider", assistantProviderH.Get)
+			r.Put("/assistant/provider", assistantProviderH.Put)
+			r.Post("/assistant/provider/test", assistantProviderH.Test)
 			// Duplicate-file report — same (size, etag) grouping (v0.2 "Bul").
 			r.Get("/duplicates", handlers.NewDuplicates(d.Store).Report)
 

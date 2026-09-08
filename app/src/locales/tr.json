@@ -76,6 +76,7 @@
     "empty": "Çöp kutusunu boşalt"
   },
   "modal": {
+    "save": "Kaydet",
     "cancel": "İptal",
     "close": "Kapat",
     "done": "Bitti",
@@ -426,9 +427,35 @@
     "error": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
     "stopped": "Durduruldu",
     "more": "Daha fazla",
+    "sessions": "Sohbetler",
+    "newChat": "Yeni sohbet",
+    "searchSessions": "Sohbetlerde ara",
+    "untitled": "Adsız sohbet",
+    "noSessions": "Henüz sohbet yok",
+    "noMatches": "Eşleşen sohbet yok",
+    "sessionMeta": "{count} mesaj | {count} mesaj",
+    "rename": "“{title}” sohbetini yeniden adlandır",
+    "renameTitle": "Sohbet adı",
+    "deleteSession": "“{title}” sohbetini sil",
+    "backToChat": "Sohbete dön",
+    "capacity": "{max} sohbetten {count} tanesi. Liste dolduğunda en uzun süredir dokunulmayan silinir.",
     "menu": {
       "open": "Aç",
       "showInFolder": "Klasörde göster"
+    },
+    "card": {
+      "title": "Bu dosyayı açabilir miyim?",
+      "allow": "Bu dosyaya izin ver",
+      "deny": "Bu değil",
+      "approved": "Bu dosyaya izin verdiniz",
+      "allowedPrompt": "`{path}` dosyasını okuyabilirsin.",
+      "deniedPrompt": "`{path}` dosyasını okuma."
+    },
+    "tools": {
+      "list_storages": "Sürücülere bakılıyor",
+      "list_folder": "Klasöre bakılıyor:",
+      "search_files": "Aranıyor:",
+      "read_file": "Okunuyor:"
     }
   },
   "settings": {

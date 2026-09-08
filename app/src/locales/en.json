@@ -76,6 +76,7 @@
     "empty": "Empty trash"
   },
   "modal": {
+    "save": "Save",
     "cancel": "Cancel",
     "close": "Close",
     "done": "Done",
@@ -426,9 +427,35 @@
     "error": "Something went wrong. Please try again.",
     "stopped": "Stopped",
     "more": "More",
+    "sessions": "Chats",
+    "newChat": "New chat",
+    "searchSessions": "Search chats",
+    "untitled": "Untitled chat",
+    "noSessions": "No chats yet",
+    "noMatches": "No chat matches that",
+    "sessionMeta": "{count} message | {count} messages",
+    "rename": "Rename “{title}”",
+    "renameTitle": "Chat name",
+    "deleteSession": "Delete “{title}”",
+    "backToChat": "Back to the chat",
+    "capacity": "{count} of {max} chats. The least recently used one is dropped when the list is full.",
     "menu": {
       "open": "Open",
       "showInFolder": "Show in folder"
+    },
+    "card": {
+      "title": "May I open this file?",
+      "allow": "Allow this file",
+      "deny": "Not this one",
+      "approved": "You allowed this file",
+      "allowedPrompt": "You may read `{path}`.",
+      "deniedPrompt": "Do not read `{path}`."
+    },
+    "tools": {
+      "list_storages": "Looking at the drives",
+      "list_folder": "Looking in",
+      "search_files": "Searching for",
+      "read_file": "Reading"
     }
   },
   "settings": {

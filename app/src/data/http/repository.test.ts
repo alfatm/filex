@@ -539,4 +539,128 @@ describe('HttpRepository', () => {
     expect(calls.at(-1)?.body).toEqual({ display_name: 'Ada', job_title: '' });
     expect([user.fullName, user.jobTitle]).toEqual(['Ada Lovelace', 'Analyst']);
   });
+  it('reports the assistant from the server, and reads an older server’s silence as “no assistant”', async () => {
+    routes = [
+      ['/api/files/capabilities', { upload: true, search: true }],
+      ['/api/assistant/status', { enabled: true, model: 'a-model' }],
+    ];
+    expect((await new HttpRepository().capabilities()).assistant).toBe(true);
+
+    // No such route (an older filex) — the panel is simply not offered, rather than the whole snapshot failing.
+    routes = [['/api/files/capabilities', { upload: true }]];
+    expect((await new HttpRepository().capabilities()).assistant).toBe(false);
+  });
+
+  it('streams one turn, reassembling events that arrive split across chunks', async () => {
+    const chunks = [
+      'data: {"type":"meta","conversation_id":"7"}\n\ndata: {"type":"te',
+      'xt","delta":"Your "}\n\ndata: {"type":"text","delta":"files."}\n\n',
+      'data: {"type":"done"}\n\n',
+    ];
+    let asked: { url: string; body: unknown } | null = null;
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      asked = { url, body: JSON.parse(String(init?.body)) };
+      const encoder = new TextEncoder();
+      return {
+        ok: true,
+        status: 200,
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+            controller.close();
+          },
+        }),
+      } as Response;
+    });
+
+    const events = [];
+    for await (const event of new HttpRepository().assistantAsk('how are my files?', 'filename', '7', new AbortController().signal)) {
+      events.push(event);
+    }
+    expect(asked).toMatchObject({ url: '/api/assistant/sessions/7/turn', body: { prompt: 'how are my files?' } });
+    expect(events).toEqual([
+      { type: 'meta', conversationId: '7' },
+      { type: 'text', delta: 'Your ' },
+      { type: 'text', delta: 'files.' },
+      { type: 'done' },
+    ]);
+  });
+
+  it('raises the server’s refusal instead of opening an empty stream', async () => {
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 429, text: async () => '{"error":"assistant: a turn is already running"}' }) as Response);
+    const turn = new HttpRepository().assistantAsk('again', 'filename', '7', new AbortController().signal);
+    await expect((async () => { for await (const _ of turn); })()).rejects.toThrow('already running');
+  });
+
+  it('refuses a turn with no conversation to store it in', async () => {
+    const turn = new HttpRepository().assistantAsk('hi', 'filename', null, new AbortController().signal);
+    await expect((async () => { for await (const _ of turn); })()).rejects.toThrow('conversation');
+  });
+  it('passes through what the assistant is doing and what it needs permission for', async () => {
+    const frames = [
+      'data: {"type":"meta","conversation_id":"7"}\n\n',
+      'data: {"type":"tool","tool":"read_file","target":"main://Docs/pay.csv"}\n\n',
+      'data: {"type":"card","kind":"approval","path":"main://Docs/pay.csv","reason":"to total the salaries"}\n\n',
+      'data: {"type":"done"}\n\n',
+    ];
+    vi.stubGlobal('fetch', async () => {
+      const encoder = new TextEncoder();
+      return {
+        ok: true,
+        status: 200,
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const frame of frames) controller.enqueue(encoder.encode(frame));
+            controller.close();
+          },
+        }),
+      } as Response;
+    });
+    const events = [];
+    for await (const event of new HttpRepository().assistantAsk('summarise pay', 'filename', '7', new AbortController().signal)) {
+      events.push(event);
+    }
+    expect(events).toEqual([
+      { type: 'meta', conversationId: '7' },
+      { type: 'tool', tool: 'read_file', target: 'main://Docs/pay.csv' },
+      { type: 'card', card: { kind: 'approval', path: 'main://Docs/pay.csv', reason: 'to total the salaries' } },
+      { type: 'done' },
+    ]);
+  });
+
+  it('reads a stored conversation with its questions and the permissions already given', async () => {
+    routes = [
+      [
+        '/api/assistant/sessions/7',
+        {
+          messages: [
+            { id: '1', role: 'user', content: 'summarise pay', aborted: false, secret_notice: false, created_at: '2026-07-01T10:00:00Z' },
+            {
+              id: '2',
+              role: 'assistant',
+              content: 'I need the pay file.',
+              aborted: false,
+              secret_notice: false,
+              created_at: '2026-07-01T10:00:01Z',
+              cards: [{ kind: 'approval', path: 'main://Docs/pay.csv', reason: 'to total the salaries' }],
+            },
+          ],
+          granted: ['main://Docs/pay.csv'],
+        },
+      ],
+    ];
+    const conversation = await new HttpRepository().assistantMessages('7');
+    expect(conversation.granted).toEqual(['main://Docs/pay.csv']);
+    expect(conversation.messages[1].cards).toEqual([{ kind: 'approval', path: 'main://Docs/pay.csv', reason: 'to total the salaries' }]);
+  });
+
+  it('grants permission for one path, in the shape the server takes', async () => {
+    routes = [['/approvals', { ok: true }]];
+    await new HttpRepository().approveAssistantRead('7', 'main://Docs/pay.csv');
+    expect(calls.at(-1)).toMatchObject({
+      url: '/api/assistant/sessions/7/approvals',
+      method: 'POST',
+      body: { path: 'main://Docs/pay.csv' },
+    });
+  });
 });

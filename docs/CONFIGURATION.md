@@ -669,6 +669,65 @@ Index path is `config.yaml` only (`search.index_path`, default
 
 ---
 
+## AI assistant
+
+The file assistant in the end-user app. Off unless an operator configures a
+model provider — filex ships with no default provider and no key, and an
+installation that has not configured one reports no assistant at all, so the
+panel is never drawn.
+
+All five settings live in the database and are **seeded** from these variables
+on first boot only (see [Zero-touch seeding](#zero-touch-seeding)): once a row
+exists, the variable is inert and the value is edited through
+`PUT /api/admin/assistant/provider`.
+
+| Env var | Where it lives now | Default | Description |
+|---|---|---|---|
+| `FILEX_ASSISTANT_ENABLED` | **seed → database** (`assistant.enabled`) | off | The operator's switch. Off on a fresh install on purpose: nothing should start talking to a model provider because a key happened to be in the environment. |
+| `FILEX_ASSISTANT_PROVIDER` | **seed → database** (`assistant.provider`) | `openai` | The wire protocol, not the vendor: `openai` is OpenAI *and* every openai-compatible server (vLLM, Ollama, LiteLLM, a gateway) — point `BASE_URL` at yours. `anthropic` is the Messages API. |
+| `FILEX_ASSISTANT_BASE_URL` | **seed → database** (`assistant.base_url`) | unset | Absolute `http(s)` endpoint. Empty means the provider's own (`https://api.openai.com/v1`, `https://api.anthropic.com/v1`). A bare host is refused when you save it, not discovered at the first question. |
+| `FILEX_ASSISTANT_MODEL` | **seed → database** (`assistant.model`) | unset | The model name, spelled the way your provider spells it. There is no default: it decides both the bill and the quality, and no software can guess it for you. |
+| `FILEX_ASSISTANT_TURNS_PER_MINUTE` | **seed → database** (`assistant.turns_per_minute`) | `20` | The loop-breaker, per account. A person cannot type past it; an agent that has talked itself into a circle reaches it at once. Not a cost control. One turn at a time per account is enforced separately and is not configurable — a second concurrent turn would interleave two answers in one conversation. |
+| `FILEX_ASSISTANT_API_KEY` | **seed → database, sealed** (`assistant.api_key`) | unset | The provider credential. It is encrypted with `FILEX_SECRET_KEY` before it is written and is never read back by any endpoint — the admin surface reports only *that* a key is stored. |
+
+> ⚠⚠ **`FILEX_SECRET_KEY` is required to configure the assistant.** Without it
+> the key cannot be sealed, and filex refuses to store it rather than writing a
+> billable third-party credential into the database in the clear. The seed is
+> skipped with a warning naming the variable. Rotating `FILEX_SECRET_KEY` makes
+> the stored key unreadable; the admin surface then says so and asks for it to
+> be re-entered, instead of reporting "not configured" next to a page that
+> visibly holds one.
+
+### What it can do
+
+**Read-only, and one of the four reads needs permission.** The assistant can
+list the drives, list a folder, search a drive by name and content, and read a
+text file. It can change **nothing**: there is no tool that writes, moves,
+deletes, tags, shares or restores, so no configuration can make it do any of
+those.
+
+`read_file` refuses unless the person has approved that **exact path** in that
+conversation. The approval is a row in `assistant_read_grants`, given through a
+card in the panel, and it is scoped to the one file and the one conversation —
+there is no wildcard, no per-folder form and no "approve everything", and the
+schema has no column that could express one. Approvals disappear with the
+conversation.
+
+Listing and searching are not gated: they return names, sizes and dates, which
+is what the person already sees in their own file list.
+
+One turn may call tools at most 8 times before it has to answer. That ceiling is
+not configurable and is separate from `turns_per_minute`: this one stops a
+single turn from going round in circles, the other stops a client from starting
+turns in a loop.
+
+Conversations are stored per account: private to their owner (an administrator
+may see how many an account holds and delete one, and can read no line of any),
+capped at 100 per account, and the least recently *active* one is evicted when
+the cap is reached.
+
+---
+
 ## Queue
 
 | Env var | Default | Description |

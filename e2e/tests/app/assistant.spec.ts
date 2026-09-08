@@ -16,6 +16,34 @@ test.describe('AI assistant', () => {
     await expect(panel(page)).toBeVisible();
   });
 
+  test('chats: a new one appears in the list, gets renamed, and can be dropped', async ({ page }) => {
+    const chat = panel(page);
+    await chat.getByRole('button', { name: 'New chat' }).click();
+    await chat.getByRole('button', { name: 'Chats' }).click();
+
+    const rows = chat.getByRole('list', { name: 'Chats' }).getByRole('listitem');
+    await expect(rows).toHaveCount(1);
+    // A conversation the title generator has not named yet still has to be callable something.
+    await expect(rows.first()).toContainText('Untitled chat');
+    await expect(chat.getByText('1 of 100 chats')).toBeVisible();
+
+    await rows.first().getByRole('button', { name: /^Rename/ }).click();
+    const name = chat.getByRole('textbox', { name: 'Chat name' });
+    await name.fill('Q3 contracts');
+    await name.press('Enter');
+    await expect(rows.first()).toContainText('Q3 contracts');
+
+    // The search filters what is already loaded — the history is capped, so there is nothing to fetch.
+    const search = chat.getByRole('textbox', { name: 'Search chats' });
+    await search.fill('nothing like this');
+    await expect(chat.getByText('No chat matches that')).toBeVisible();
+    await search.fill('q3');
+    await expect(rows).toHaveCount(1);
+
+    await rows.first().getByRole('button', { name: /^Delete/ }).click();
+    await expect(chat.getByText('No chats yet')).toBeVisible();
+  });
+
   test('opens from the Sparkles button', async ({ page }) => {
     await expect(panel(page)).toBeVisible();
     await expect(panel(page).getByRole('heading', { name: 'AI assistant' })).toBeVisible();

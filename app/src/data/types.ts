@@ -293,6 +293,39 @@ export interface SearchResult {
 
 export type AssistantMode = 'filename' | 'content' | 'tags';
 
+/**
+ * One conversation with the assistant. Carries no message text: the list is drawn from these, and the messages of a
+ * session are fetched only when it is opened — which is also how the server keeps them out of the operator's reach.
+ */
+export interface AssistantSession {
+  id: string;
+  title: string;
+  /** True once somebody named it by hand; the title generator then leaves it alone. */
+  titleManual: boolean;
+  messageCount: number;
+  /** Ordering key of the list AND of eviction: the least recently ACTIVE session is the one that goes. */
+  lastActiveAt: string;
+  createdAt: string;
+}
+
+/**
+ * The assistant asking to open one file. It is shown as a card with the file and the reason, because permission is
+ * given per file: approving one is not approving the next, and there is no "allow everything" anywhere in the flow.
+ */
+export interface ApprovalCard {
+  kind: 'approval';
+  /** The file, as `<drive>://<path>`. */
+  path: string;
+  /** Why the assistant wants it, in its own words. */
+  reason?: string;
+}
+
+/** One conversation as the server holds it: the turns, and the files this conversation may open. */
+export interface AssistantConversation {
+  messages: AssistantMessage[];
+  granted: string[];
+}
+
 export interface AssistantMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -300,6 +333,8 @@ export interface AssistantMessage {
   /** ISO timestamp. */
   at: string;
   hits?: SearchHit[];
+  /** Permission requests raised by this turn. They survive a reload — the question is still waiting. */
+  cards?: ApprovalCard[];
   /** The stream failed while this message was open; the text so far stays. */
   error?: boolean;
   /** The stream was stopped (panel closed) while this message was open. */
@@ -316,4 +351,10 @@ export type AssistantEvent =
   | { type: 'meta'; conversationId: string }
   | { type: 'text'; delta: string }
   | { type: 'hits'; hits: SearchHit[] }
+  /** A tool is running: what it is doing, so twenty seconds of looking around does not read as a stall. */
+  | { type: 'tool'; tool: string; target?: string }
+  /** Something for the person to decide — today only a request to read one file. */
+  | { type: 'card'; card: ApprovalCard }
+  /** The model call failed part-way. Whatever was streamed before it stays on screen and in the log. */
+  | { type: 'error'; message: string }
   | { type: 'done' };

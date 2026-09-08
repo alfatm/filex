@@ -86,6 +86,51 @@ export async function putChunk<T>(path: string, range: string, chunk: Blob): Pro
   return settle<T>(response);
 }
 
+/**
+ * A POST whose answer arrives in pieces: filex writes server-sent events, this yields each event's JSON payload as it
+ * lands. Used by the assistant, where the answer is produced at reading speed and stopping half-way has to mean
+ * something — aborting `signal` closes the connection, which is what the server reads as "stop".
+ *
+ * Only the `data:` lines are read. filex puts the event's kind inside the payload rather than on an `event:` line, so
+ * there is one parser and one switch on the other side.
+ */
+export async function* streamJSON<T>(path: string, body: unknown, signal?: AbortSignal): AsyncIterable<T> {
+  const response = await fetch(path, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+    body: JSON.stringify(body),
+    signal,
+  });
+  // A refusal (429 for a turn already running, 503 for an unconfigured assistant) arrives as JSON, not as a stream.
+  if (!response.ok) await settle(response);
+  const reader = response.body?.getReader();
+  if (!reader) throw new HttpError(response.status, null, 'the server did not send a stream');
+  const decoder = new TextDecoder();
+  let buffer = '';
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      // An event ends at a blank line; anything after the last one is a partial frame that waits for more bytes.
+      let end = buffer.indexOf('\n\n');
+      for (; end >= 0; end = buffer.indexOf('\n\n')) {
+        const frame = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        for (const line of frame.split('\n')) {
+          const data = line.startsWith('data:') ? line.slice(5).trim() : '';
+          if (data) yield JSON.parse(data) as T;
+        }
+      }
+    }
+  } finally {
+    // Whether the reader stopped, threw, or the caller broke out of the loop, the connection is released — on the
+    // server that cancellation is the difference between a stopped answer and one that keeps being generated.
+    await reader.cancel().catch(() => {});
+  }
+}
+
 function safeParse(text: string): unknown {
   try {
     return JSON.parse(text);

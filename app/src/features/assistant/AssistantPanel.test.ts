@@ -9,6 +9,7 @@ import AssistantPanel from './AssistantPanel.vue';
 import { useAssistantStore } from './assistantStore';
 
 const calls: { prompt: string; mode: AssistantMode }[] = [];
+const approvals: { id: string; path: string }[] = [];
 let script: AssistantEvent[] = [];
 let release: (() => void) | null = null;
 
@@ -19,6 +20,12 @@ vi.mock('@/data', () => ({
     },
     async currentUser() {
       return { id: 'demo', name: 'demo', initial: 'D' };
+    },
+    async createAssistantSession() {
+      return { id: 's1', title: '', titleManual: false, messageCount: 0, lastActiveAt: '', createdAt: '' };
+    },
+    async approveAssistantRead(id: string, path: string) {
+      approvals.push({ id, path });
     },
     async *assistantAsk(prompt: string, mode: AssistantMode) {
       calls.push({ prompt, mode });
@@ -70,9 +77,12 @@ describe('AssistantPanel', () => {
     cleanup = () => wrapper.unmount();
     await textarea(wrapper).setValue('where is the readme?');
     await textarea(wrapper).trigger('keydown', { key: 'Enter' });
-    expect(calls).toEqual([{ prompt: 'where is the readme?', mode: 'filename' }]);
+    // The box empties and the panel goes into its streaming state at once; the request itself waits for the
+    // conversation the turn will be written into.
     expect(textarea(wrapper).element.value).toBe('');
     expect(store.streaming).toBe(true);
+    await flushPromises();
+    expect(calls).toEqual([{ prompt: 'where is the readme?', mode: 'filename' }]);
     await nextTick();
     expect(textarea(wrapper).attributes('disabled')).toBeUndefined();
     expect(wrapper.find('button[type="submit"]').attributes('disabled')).toBeDefined();
@@ -135,5 +145,36 @@ describe('AssistantPanel', () => {
     await nextTick();
     expect(wrapper.text()).toContain('Stopped');
     expect(wrapper.text()).toContain('Something went wrong. Please try again.');
+  });
+
+  it('asks for one file at a time, and says the permission out loud in the chat', async () => {
+    script = [{ type: 'done' }];
+    const { wrapper, store } = await setup();
+    cleanup = () => wrapper.unmount();
+    store.sessionId = 's1';
+    store.seed([
+      { id: 'm1', role: 'user', text: 'summarise pay', at: '2026-07-01T10:00:00Z' },
+      {
+        id: 'm2',
+        role: 'assistant',
+        text: 'I need the pay file.',
+        at: '2026-07-01T10:00:01Z',
+        cards: [{ kind: 'approval', path: 'main://Docs/pay.csv', reason: 'to total the salaries' }],
+      },
+    ]);
+    await nextTick();
+
+    expect(wrapper.text()).toContain('May I open this file?');
+    expect(wrapper.text()).toContain('main://Docs/pay.csv');
+    expect(wrapper.text()).toContain('to total the salaries');
+
+    const allow = wrapper.findAll('button').find((b) => b.text() === 'Allow this file');
+    await allow!.trigger('click');
+    await flushPromises();
+    // The grant is recorded for that one path, and the conversation records that it was given.
+    expect(approvals).toEqual([{ id: 's1', path: 'main://Docs/pay.csv' }]);
+    expect(calls.at(-1)?.prompt).toBe('You may read `main://Docs/pay.csv`.');
+    await nextTick();
+    expect(wrapper.text()).toContain('You allowed this file');
   });
 });

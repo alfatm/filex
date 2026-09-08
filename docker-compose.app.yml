@@ -57,6 +57,13 @@ services:
       FILEX_DEFAULT_STORAGE_PATH: /srv/files
 
       FILEX_THUMBS_ENABLED: "true"
+
+      # Encrypts the secrets filex has to read back (internal/secretbox). The
+      # assistant refuses to store its provider key without one, so the stand
+      # cannot configure a model until this is set. A fixed test value here on
+      # purpose — a real deploy generates its own and keeps it off the host it
+      # backs up to.
+      FILEX_SECRET_KEY: app-stand-not-a-real-key
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5212/healthz"]
       interval: 5s

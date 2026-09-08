@@ -1,8 +1,8 @@
 import { DUPLICATE_NAME, OPERATION_PENDING, WRONG_PASSWORD, type Repository } from '../repository';
 import { matchesFilter, MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
-import { noCapabilities, type Access, type ActivityEvent, type AssistantEvent, type AuthMethods, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type User, type Version } from '../types';
-import { HttpError, putChunk, request } from './client';
+import { noCapabilities, type Access, type ActivityEvent, type AssistantConversation, type AssistantMode, type AssistantSession, type AssistantEvent, type AuthMethods, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type User, type Version } from '../types';
+import { HttpError, putChunk, request, streamJSON } from './client';
 import {
   fromFileNode,
   fromActivityEvent,
@@ -76,6 +76,23 @@ const POLL_GIVE_UP_MS = 60_000;
  * 100. The extra round trips are cheap next to the bytes they carry.
  */
 const NOTIFY_SETTINGS = '/api/notifications/settings';
+const ASSISTANT_SESSIONS = '/api/assistant/sessions';
+const ASSISTANT_STATUS = '/api/assistant/status';
+
+/** One frame of the turn stream; filex carries the kind inside the payload rather than on an `event:` line. */
+interface WireAssistantEvent {
+  type: 'meta' | 'text' | 'tool' | 'card' | 'error' | 'done';
+  conversation_id?: string;
+  delta?: string;
+  message?: string;
+  /** `tool`: which tool, and the path or query it was given. */
+  tool?: string;
+  target?: string;
+  /** `card`: the kind of decision and what it is about. */
+  kind?: string;
+  path?: string;
+  reason?: string;
+}
 
 /**
  * Which filex event each switch of the Notifications tab stands for. A failed upload is deliberately not
@@ -189,6 +206,38 @@ function toUser(wire: WireUser): User {
     jobTitle: wire.job_title || undefined,
     locale: wire.locale || undefined,
     timeZone: wire.timezone || undefined,
+  };
+}
+
+/** `chatSessionView` from the server: metadata only, never message text. */
+interface WireChatSession {
+  id: string;
+  title: string;
+  title_manual: boolean;
+  message_count: number;
+  last_active_at: string;
+  created_at: string;
+}
+
+interface WireChatMessage {
+  id: string;
+  role: string;
+  content: string;
+  aborted: boolean;
+  secret_notice: boolean;
+  created_at: string;
+  /** Permission requests this turn raised; they are stored with it, so a reopened chat still shows the question. */
+  cards?: { kind: string; path: string; reason?: string }[];
+}
+
+function fromChatSession(wire: WireChatSession): AssistantSession {
+  return {
+    id: wire.id,
+    title: wire.title,
+    titleManual: wire.title_manual,
+    messageCount: wire.message_count,
+    lastActiveAt: wire.last_active_at,
+    createdAt: wire.created_at,
   };
 }
 
@@ -427,9 +476,10 @@ export class HttpRepository implements Repository {
    * (`/api/admin/trash`), and there is no assistant or per-node activity feed at all — see docs/BACKEND-GAP.md.
    */
   async capabilities(): Promise<Capabilities> {
-    const wire = await request<WireCapabilities>('/api/files/capabilities');
+    const [wire, assistant] = await Promise.all([request<WireCapabilities>('/api/files/capabilities'), this.assistantEnabled()]);
     return {
       ...noCapabilities(),
+      assistant,
       upload: wire.upload ?? false,
       move: wire.move ?? false,
       copy: wire.copy ?? false,
@@ -883,9 +933,81 @@ export class HttpRepository implements Repository {
 
 
 
-  /** No assistant endpoint exists; the capability is off, so the panel is never reachable to call this. */
-  // eslint-disable-next-line require-yield
-  async *assistantAsk(): AsyncIterable<AssistantEvent> {
-    throw new Error('this server has no assistant');
+  /**
+   * One turn, streamed. The mode chips are not sent: filex’s assistant answers in prose and has no per-mode search
+   * endpoint behind it — the chips narrow what it is asked to look at once it has tools to look with.
+   *
+   * `hits` never arrives from a live server yet, for the same reason: an answer today is text.
+   */
+  async *assistantAsk(prompt: string, mode: AssistantMode, conversationId: string | null, signal: AbortSignal): AsyncIterable<AssistantEvent> {
+    void mode;
+    if (!conversationId) throw new Error('assistant: a conversation has to exist before a turn can be stored in it');
+    const stream = streamJSON<WireAssistantEvent>(`${ASSISTANT_SESSIONS}/${conversationId}/turn`, { prompt }, signal);
+    for await (const event of stream) {
+      if (event.type === 'meta') yield { type: 'meta', conversationId: event.conversation_id ?? conversationId };
+      else if (event.type === 'text') yield { type: 'text', delta: event.delta ?? '' };
+      else if (event.type === 'tool') yield { type: 'tool', tool: event.tool ?? '', target: event.target };
+      else if (event.type === 'card') yield { type: 'card', card: { kind: 'approval', path: event.path ?? '', reason: event.reason } };
+      else if (event.type === 'error') yield { type: 'error', message: event.message ?? '' };
+      else if (event.type === 'done') yield { type: 'done' };
+    }
+  }
+
+  /**
+   * Whether this server can answer at all. A filex with no model provider configured says so, and the panel is not
+   * offered — a chat box that could only fail is worse than none. An older server has no such route, which is the
+   * same answer.
+   */
+  private async assistantEnabled(): Promise<boolean> {
+    try {
+      const { enabled } = await request<{ enabled?: boolean }>(ASSISTANT_STATUS);
+      return enabled === true;
+    } catch {
+      return false;
+    }
+  }
+
+  // ── assistant history ───────────────────────────────────────────────────────
+
+  async listAssistantSessions(): Promise<AssistantSession[]> {
+    const { sessions } = await request<{ sessions: WireChatSession[] }>(ASSISTANT_SESSIONS);
+    return (sessions ?? []).map(fromChatSession);
+  }
+
+  async createAssistantSession(title?: string): Promise<AssistantSession> {
+    const { session } = await request<{ session: WireChatSession }>(ASSISTANT_SESSIONS, {
+      method: 'POST',
+      body: title === undefined ? {} : { title },
+    });
+    return fromChatSession(session);
+  }
+
+  async assistantMessages(id: string): Promise<AssistantConversation> {
+    const { messages, granted } = await request<{ messages: WireChatMessage[]; granted?: string[] }>(`${ASSISTANT_SESSIONS}/${id}`);
+    return {
+      messages: (messages ?? []).map((m) => ({
+        id: m.id,
+        role: m.role === 'user' ? 'user' : 'assistant',
+        text: m.content,
+        at: m.created_at,
+        ...(m.aborted ? { aborted: true } : {}),
+        ...(m.cards?.length ? { cards: m.cards.map((c) => ({ kind: 'approval' as const, path: c.path, reason: c.reason })) } : {}),
+      })),
+      granted: granted ?? [],
+    };
+  }
+
+  /** One path, one permission. The server takes no other shape of this call. */
+  async approveAssistantRead(id: string, path: string): Promise<void> {
+    await request(`${ASSISTANT_SESSIONS}/${id}/approvals`, { method: 'POST', body: { path } });
+  }
+
+  async renameAssistantSession(id: string, title: string): Promise<AssistantSession> {
+    const { session } = await request<{ session: WireChatSession }>(`${ASSISTANT_SESSIONS}/${id}`, { method: 'PATCH', body: { title } });
+    return fromChatSession(session);
+  }
+
+  async deleteAssistantSession(id: string): Promise<void> {
+    await request(`${ASSISTANT_SESSIONS}/${id}`, { method: 'DELETE' });
   }
 }

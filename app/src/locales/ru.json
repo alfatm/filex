@@ -76,6 +76,7 @@
     "empty": "Очистить корзину"
   },
   "modal": {
+    "save": "Сохранить",
     "cancel": "Отмена",
     "close": "Закрыть",
     "done": "Готово",
@@ -426,9 +427,35 @@
     "error": "Что-то пошло не так. Попробуйте ещё раз.",
     "stopped": "Остановлено",
     "more": "Ещё",
+    "sessions": "Чаты",
+    "newChat": "Новый чат",
+    "searchSessions": "Поиск по чатам",
+    "untitled": "Без названия",
+    "noSessions": "Чатов пока нет",
+    "noMatches": "Ничего не найдено",
+    "sessionMeta": "{count} сообщение | {count} сообщения | {count} сообщений",
+    "rename": "Переименовать «{title}»",
+    "renameTitle": "Название чата",
+    "deleteSession": "Удалить «{title}»",
+    "backToChat": "Назад к чату",
+    "capacity": "{count} из {max} чатов. Когда список заполнен, вытесняется тот, к которому дольше всего не возвращались.",
     "menu": {
       "open": "Открыть",
       "showInFolder": "Показать в папке"
+    },
+    "card": {
+      "title": "Открыть этот файл?",
+      "allow": "Разрешить этот файл",
+      "deny": "Не этот",
+      "approved": "Вы разрешили этот файл",
+      "allowedPrompt": "Можно прочитать `{path}`.",
+      "deniedPrompt": "Не читай `{path}`."
+    },
+    "tools": {
+      "list_storages": "Смотрю список дисков",
+      "list_folder": "Смотрю папку",
+      "search_files": "Ищу",
+      "read_file": "Читаю"
     }
   },
   "settings": {

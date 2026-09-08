@@ -226,7 +226,34 @@ Panel w 432 right, white, border-left 1px, padding 20 22; opens independently
 of the details panel (both may be visible, details sits between the listing
 and the assistant); search box shrinks. Ref 4 shows it with details closed.
 - Header: `Sparkles` 26 primary at x 1290; "AI assistant" 20/600; "● Online"
-  13 with 8px `--c-success` dot; `X` 22 right.
+  13 with 8px `--c-success` dot; then three 36px icon buttons at the right —
+  `SquarePen` 20 (new chat), `MessagesSquare` 20 (chats, pressed while the list
+  is open), `X` 22 (close). **The reference draws only the `X`**: it was made
+  before the assistant kept a history, and a history nobody can reach is not a
+  history. The two buttons are the whole of the deviation; nothing else in the
+  panel moved.
+- Chat list (behind `MessagesSquare`, replaces the body): search input h 40,
+  then a capacity line 13 gray naming the cap and the eviction rule, then rows —
+  title 15 over "N messages · date" 13 gray, with rename and delete icon buttons
+  32 appearing on hover AND on keyboard focus. Filtering is client-side: the
+  history is capped at 100 per account, so the list is already in the browser.
+- The mode chips (filename / content / tags) are drawn as the reference has
+  them and are NOT sent to the server. filex's assistant answers in prose and
+  has no per-mode search behind it; the chips become the scope hint the day it
+  has tools to search with. Sending a field the server ignores would only have
+  looked like it worked.
+- Permission card (below the answer that raised it, full width, border 1px
+  radius 12 padding 16): "May I open this file?" 14/500, the full address 14
+  gray (breaks anywhere — an address is longer than the panel), the assistant's
+  own stated reason 13 gray, then two 36px pill buttons — primary "Allow this
+  file", outlined "Not this one". Once given, both are replaced by a green 13
+  line. **Not in the reference**, which was drawn before the assistant could
+  open anything. One card per file, always: there is no button anywhere in this
+  flow that approves more than the one file it names.
+- Activity line (13 gray with a spinning `Loader2` 14, under the last message
+  while a tool runs): "Looking in main://Docs", "Reading …". Also not in the
+  reference. It exists because a turn that lists a folder, searches and then
+  answers is twenty silent seconds otherwise, which reads as a stall.
 - Intro 15 `--c-text-3` line-height 1.5: "Find files by content, filename, or
   tags. I can also summarize files, answer questions, and help you organize
   your work."
@@ -414,7 +441,10 @@ otherwise. Active sessions carries the count and opens in place into the list
 address and the sign-in date under it, "This device" on the session the app is
 calling with and End session on every other one, which acts at once. AI
 assistant — enable switch, default search mode select, a note that the
-provider is set by the administrator.
+provider is set by the administrator. That note is literally true now: the
+model, its endpoint and its key are an operator setting
+(`PUT /api/admin/assistant/provider`), and an installation with no provider
+configured reports no assistant at all, so the panel is never offered.
 
 Editing works on a copy: Cancel drops it, Save changes commits everything at
 once — and the copy has two destinations. Theme, the compact list, the upload

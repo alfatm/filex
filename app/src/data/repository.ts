@@ -1,6 +1,8 @@
 import type {
   Access,
   ActivityEvent,
+  AssistantConversation,
+  AssistantSession,
   AssistantEvent,
   AuthMethods,
   AssistantMode,
@@ -86,10 +88,28 @@ export interface Repository {
   capabilities(): Promise<Capabilities>;
   search(query: SearchQuery): Promise<SearchResult>;
   /**
-   * Streams the assistant's answer to `prompt`; aborting `signal` ends the stream early. `conversationId` is the id
-   * from the previous turn's `meta` event (null for the first turn) so the server keeps the context.
+   * Streams the assistant's answer to `prompt`; aborting `signal` ends the stream early. `conversationId` is the
+   * conversation this turn belongs to — against a live server that is the stored session, which is where the
+   * question and the answer are both written, so a turn without one has nowhere to go.
    */
   assistantAsk(prompt: string, mode: AssistantMode, conversationId: string | null, signal: AbortSignal): AsyncIterable<AssistantEvent>;
+
+  // The assistant's history. Private to the account: the server has no route that hands one person's conversation
+  // to anybody else, an administrator included.
+  /** Most recently active first — the order the list is drawn in and the order eviction reads from the far end. */
+  listAssistantSessions(): Promise<AssistantSession[]>;
+  /** Starts one. Reaching the per-account cap evicts the least recently active session rather than refusing. */
+  createAssistantSession(title?: string): Promise<AssistantSession>;
+  /** The turns of one conversation, plus the files it has been given permission to open. */
+  assistantMessages(id: string): Promise<AssistantConversation>;
+  /**
+   * Records permission to read ONE file in this conversation. There is no form of this call that approves a folder,
+   * a pattern or everything — that is the rule it exists to keep.
+   */
+  approveAssistantRead(id: string, path: string): Promise<void>;
+  /** A name chosen by hand; the title generator never overwrites one. */
+  renameAssistantSession(id: string, title: string): Promise<AssistantSession>;
+  deleteAssistantSession(id: string): Promise<void>;
 
   // Listings beyond the folder tree. Trashed nodes never appear in `listFolder`, `listRecent`, `listStarred`, `listShared`.
   /** Files only, newest `openedAt` (falling back to `modifiedAt`) first. */

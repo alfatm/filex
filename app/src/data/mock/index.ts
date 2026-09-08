@@ -1,10 +1,16 @@
 import { segments } from '@/lib/path';
 import { DUPLICATE_NAME, MIN_PASSWORD_LENGTH, WRONG_PASSWORD, type Repository } from '../repository';
-import type { ListingFilter, Node, NotifyPrefs, Session, User } from '../types';
+import type { AssistantMessage, AssistantSession, ListingFilter, Node, NotifyPrefs, Session, User } from '../types';
 import { fileTypeOf, filterPeople, indexedOnly, live, nodes, storages, TYPE_THUMBNAILS, user } from './dataset';
 import * as history from './history';
 import { assistantAsk } from './assistant';
 import { matchesFilter, search } from './search';
+
+/** Matches `model.MaxAssistantSessions` on the server; the demo evicts by the same rule. */
+const MAX_CHAT_SESSIONS = 100;
+const chatSessions: AssistantSession[] = [];
+const chatMessages = new Map<string, AssistantMessage[]>();
+let chatSeq = 0;
 
 // `nodes` is the single in-memory state: search reads it too, so mutations edit that array in place.
 const initial: Node[] = structuredClone(nodes);
@@ -269,6 +275,54 @@ export const mockRepository: Repository = {
   },
   assistantAsk(prompt, mode, conversationId, signal) {
     return assistantAsk(prompt, mode, conversationId, signal);
+  },
+
+  // Assistant history, kept in memory like everything else here: the demo has no server to persist it to. The
+  // eviction rule is modelled too — the list is what the panel is drawn from, and a cap that only exists on the
+  // server would let the demo show a list the real thing cannot produce.
+  async listAssistantSessions() {
+    return [...chatSessions].sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt)).map((s) => ({ ...s }));
+  },
+  async createAssistantSession(title) {
+    const now = new Date().toISOString();
+    const session: AssistantSession = {
+      id: `chat-${++chatSeq}`,
+      title: title ?? '',
+      titleManual: title !== undefined && title !== '',
+      messageCount: 0,
+      lastActiveAt: now,
+      createdAt: now,
+    };
+    chatSessions.push(session);
+    chatMessages.set(session.id, []);
+    // Oldest by LAST ACTIVITY, not by age — same rule the server applies.
+    const ordered = [...chatSessions].sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt));
+    for (const dropped of ordered.slice(MAX_CHAT_SESSIONS)) {
+      chatSessions.splice(chatSessions.indexOf(dropped), 1);
+      chatMessages.delete(dropped.id);
+    }
+    return { ...session };
+  },
+  async assistantMessages(id) {
+    // No grants in the mock: its assistant answers from the demo dataset and never opens a file, so nothing here
+    // ever needs permission. The gate is the server's, and it is tested against the server.
+    return { messages: (chatMessages.get(id) ?? []).map((m) => ({ ...m })), granted: [] };
+  },
+
+  async approveAssistantRead() {
+    // Nothing to record — see above.
+  },
+  async renameAssistantSession(id, title) {
+    const session = chatSessions.find((s) => s.id === id);
+    if (!session) throw new Error(`unknown chat session: ${id}`);
+    session.title = title;
+    session.titleManual = true;
+    return { ...session };
+  },
+  async deleteAssistantSession(id) {
+    const at = chatSessions.findIndex((s) => s.id === id);
+    if (at >= 0) chatSessions.splice(at, 1);
+    chatMessages.delete(id);
   },
 
   async listRecent(filter) {

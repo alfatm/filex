@@ -18,6 +18,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/antivirus"
 	"github.com/brf-tech/filex/backend/internal/api"
 	"github.com/brf-tech/filex/backend/internal/api/handlers"
+	"github.com/brf-tech/filex/backend/internal/assistant"
 	"github.com/brf-tech/filex/backend/internal/auth"
 	authapitoken "github.com/brf-tech/filex/backend/internal/auth/drivers/apitoken"
 	authldap "github.com/brf-tech/filex/backend/internal/auth/drivers/ldap"
@@ -48,6 +49,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/replica"
 	"github.com/brf-tech/filex/backend/internal/search"
+	"github.com/brf-tech/filex/backend/internal/secretbox"
 	"github.com/brf-tech/filex/backend/internal/sftpsrv"
 	"github.com/brf-tech/filex/backend/internal/share"
 	"github.com/brf-tech/filex/backend/internal/sharezip"
@@ -686,6 +688,12 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 	// Database-backed settings seeded from the environment on first boot only.
 	// The env var is inert once a row exists (see package dbsetting).
 	antivirus.SeedSettings(ctx, store)
+	// The assistant's provider settings, seeded the same way. The key is sealed
+	// on the way in, so an install with no FILEX_SECRET_KEY is told the key was
+	// not stored rather than having it written to the database in the clear.
+	if box, err := secretbox.New(cfg.SecretKey); err == nil {
+		assistant.SeedSettings(ctx, store, box)
+	}
 	// ⚠⚠ This resolution is what the process RUNS with until it restarts.
 	// enabled / mode / clamd address are read once, here, because the lines
 	// below are the wiring itself: registering the queue handler and handing

@@ -311,6 +311,48 @@ type Store interface {
 	ListAuditRecent(ctx context.Context, limit int) ([]*model.AuditEntry, error)
 	ListAuditFiltered(ctx context.Context, userID *int64, action string, from, to *time.Time, limit, offset int) ([]*AuditEntryWithUser, int64, error)
 
+	// Assistant sessions and messages.
+	//
+	// The split is the privacy rule made structural: session rows are metadata
+	// an administrator may list, message rows are the conversation and only the
+	// owner ever reads them. There is deliberately no store method that returns
+	// another user's messages — not a filtered one, none.
+	CreateAssistantSession(ctx context.Context, s *model.AssistantSession) (*model.AssistantSession, error)
+	// ListAssistantSessions returns one user's sessions, most recently active
+	// first — which is also the order eviction reads from the other end.
+	ListAssistantSessions(ctx context.Context, userID int64, limit int) ([]*model.AssistantSession, error)
+	GetAssistantSession(ctx context.Context, id int64) (*model.AssistantSession, error)
+	// SetAssistantSessionTitle records a title; manual marks it as chosen by a
+	// person, which stops the generator from replacing it later.
+	SetAssistantSessionTitle(ctx context.Context, id int64, title string, manual bool) error
+	DeleteAssistantSession(ctx context.Context, id int64) error
+	// EvictAssistantSessions drops everything past `keep` for this user, oldest
+	// by LAST ACTIVITY, and answers with how many it removed. Ordering by
+	// creation would evict the conversation somebody returns to every week.
+	EvictAssistantSessions(ctx context.Context, userID int64, keep int) (int, error)
+	// AppendAssistantMessage stores one turn and moves the session's activity
+	// stamp and message count with it — one call, so a stored message can never
+	// leave the session looking untouched.
+	AppendAssistantMessage(ctx context.Context, m *model.AssistantMessage) (*model.AssistantMessage, error)
+	ListAssistantMessages(ctx context.Context, sessionID int64) ([]*model.AssistantMessage, error)
+	// GrantAssistantRead records the person's permission to read ONE file's
+	// contents inside ONE conversation. Repeating a grant is not an error —
+	// the same file approved twice is one permission.
+	//
+	// ⚠ There is no revoke and no wildcard on purpose. Consent ends with the
+	// conversation (the rows cascade with it), and a form that could express
+	// "everything" is the one the owner ruled out.
+	GrantAssistantRead(ctx context.Context, sessionID int64, path string) error
+	// AssistantReadGranted answers the read tool's only question: may this
+	// conversation open this exact path.
+	AssistantReadGranted(ctx context.Context, sessionID int64, path string) (bool, error)
+	// ListAssistantReadGrants is what the panel redraws its approvals from
+	// when a stored conversation is reopened.
+	ListAssistantReadGrants(ctx context.Context, sessionID int64) ([]string, error)
+	// CountAssistantSessions is the admin overview's figure: how many
+	// conversations an account holds, never what is in them.
+	CountAssistantSessions(ctx context.Context, userID int64) (int, error)
+
 	// Settings
 	GetSetting(ctx context.Context, key string) (string, error)
 	UpsertSetting(ctx context.Context, key, value string) error

@@ -15,7 +15,9 @@ means there is nothing on the server to talk to.
 | `getPath` | none needed | ✅ | derived, not fetched: every ancestor is a prefix of the node's own address, so the chain costs no requests |
 | `listPeople` | `GET /permissions`, ≥viewer to read, owner to change | ✅ | **added to the backend**: reading the list was gated at owner, so everyone else opened "People with access" and saw themselves alone. The answer carries `can_manage`, and the modal renders read-only for anybody who does not have it |
 | `search` | `POST /search {storage_id, query, limit, scope}` plus the facets `path_prefix`, `ext`, `modified_after`, `size_min`, `size_max`, `owner_id`; tags via `tag:` syntax; snippet with `«»` markers | ⚠️ | **added to the backend**: the date window, type group, size band, owner and current-folder scope are the server's work now, resolved against the node table and applied as an index restriction rather than sieved out of the first 100 hits. Still client-side or absent: the hand-typed custom size range, the free-text path prefix (it is typed in the FULL address space, `/demo/design/`, which the server has no form of), and a true total. Whole phrase is the server's work now (a quoted query); the case and OCR boxes were REMOVED rather than implemented — see the design spec §7 |
-| `assistantAsk` | none (only MCP `file_search` behind token scope) | ❌ | new endpoint: `POST /api/ai/assistant` SSE stream, server-side provider (OpenAI-compatible or Claude), tool-calling over the search index, conversation id; admin settings page for provider/key |
+| `assistantAsk` | `POST /api/assistant/sessions/{id}/turn` (SSE), `GET /api/assistant/status`, `GET/PUT/POST /api/admin/assistant/provider[/test]` | ⚠️ | **added to the backend**: one configured provider (openai-compatible — which covers vLLM, Ollama and any gateway — or Anthropic), its key sealed with `internal/secretbox` and never read back, the standing instructions in `internal/assistant/prompt.go`, the answer streamed so stopping half-way is real, and both halves of the exchange stored (a stopped answer stays, marked). Two limits per account: one turn at a time, and `assistant.turns_per_minute` as the loop-breaker. It now has READ tools (below); it still writes nothing, and `hits` is never emitted, so the panel's result cards only appear against the mock |
+| assistant READ tools | `list_storages`, `list_folder`, `search_files`, `read_file` — all through `aiOps`, the same ACL-checked core the MCP server uses | ✅ | **added to the backend**: the assistant sees exactly what the person asking could open themselves, because it goes through the one chokepoint (`resolveStorage`) that asserts ≥viewer on every path. `read_file` refuses unless `assistant_read_grants` holds that EXACT path for that conversation (migration 00038): no prefix, no folder form, no "approve everything" — the schema cannot express one. The refusal is answered back to the model AND raised as a card the person can act on, so the conversation continues instead of dead-ending. One turn may call tools 8 times before it has to answer |
+| assistant WRITE tools (tag, restore a version, revoke a link, empty trash) | none | ❌ | the next stage: the destructive ones execute a plan the SERVER recorded and the person approved — resolved ids and fingerprints — rather than a call the model makes live. Still open: whether the agent may CREATE share links, and the per-plan caps |
 | `listRecent` | `GET /manager/recent` fed by `POST /manager/recent` on open | ✅ | the preview modal records every file it shows (`recordOpen`), which is what Recent orders by |
 | `listActivity` | `GET /api/files/activity?path=…` | ✅ | **added to the backend**: the events were all being recorded already, as bell entries with the file buried in `meta_json`. Two indexed columns make them findable per node. Readable by whoever may read the file (≥viewer). Keyed by path, so a rename splits a file's history across its two names — and there is no backfill, so history starts at the upgrade |
 | `listStarred`, `setStarred` | `GET /manager/star/list`, `POST /manager/star` per node | ✅ | loop per id |
@@ -44,7 +46,7 @@ means there is nothing on the server to talk to.
 | active sessions | `GET /api/auth/sessions`, `DELETE /api/auth/sessions/{id}` | ✅ | **added to the backend**: filex had recorded a row per sign-in since its first migration and never showed it to the person who made it. The row now carries the count, opens in place into the list, and ends one sign-in at a time; the session the app is calling with is marked and cannot be ended (that is what signing out is). `ip` and `user_agent` were also never WRITTEN — both login drivers passed empty strings — so they are filled from now on and older rows read "Unknown device" |
 | notification switches | `GET/PATCH /api/notifications/settings` | ✅ | **the endpoint existed and nothing read it**: `notify.Send` inserted every row whatever the user had muted, so wiring the switches to it alone would have drawn a working-looking control over a preference no code consulted. The send path honours the matrix now. The three switches map onto `share.created`, `comment.added` and `file.uploaded`; `file.upload_failed` is deliberately NOT part of "finished uploads", and the app rewrites only those three keys so an event set elsewhere survives |
 | theme, language, compact list, time zone, upload prefs | none | ✅ | client-only on purpose (localStorage `filex.app.settings`); revisit only if prefs must follow the user across devices |
-| assistant enable + default mode | none | ❌ | belongs with the assistant endpoint row above; the provider and key stay admin-side |
+| assistant enable + default mode | `assistant.enabled` is the OPERATOR's switch (`PUT /api/admin/assistant/provider`), seeded once from `FILEX_ASSISTANT_ENABLED` | ⚠️ | the enable switch is the administrator's, not the user's: it decides whether the installation talks to a model provider at all, and the panel is drawn from `GET /api/assistant/status`. The mode chips stay client-side and are NOT sent — filex's assistant answers in prose and has no per-mode search behind it; they become the scope hint once it has tools. The admin PAGE for provider/key/model is still to be built in `web/` |
 
 ## Addressing: how the app names a node
 
@@ -109,7 +111,6 @@ is accepted behaviour, not a gap.
 
 | Repository method | State |
 |---|---|
-| `assistantAsk` | no assistant endpoint; the capability is off, so the panel is unreachable |
 | version authorship | recorded from migration 00036 on. Revisions taken before it have no author and are shown without a name — there is no backfill, because nobody wrote one down |
 
 ## Capability snapshot
@@ -120,15 +121,18 @@ app maps those field for field: `upload`, `move`, `copy`, `delete`, `mkdir`,
 extraction time, so there is no OCR surface for a flag to gate.) Five more are
 the app's own axes and filex does not report them, so
 `HttpRepository.capabilities` decides them from whether an endpoint exists at
-all: `tags`, `permissions`, `folderDownload`, `activity` and `deleteForever` on,
-`assistant` off.
+all: `tags`, `permissions`, `folderDownload`, `activity` and `deleteForever` on.
+`assistant` is the exception and is now ASKED (`GET /api/assistant/status`,
+fetched alongside the driver snapshot): it is the one axis that really varies —
+an installation with no provider configured has no assistant — and a server too
+old to answer that route is read as "no assistant" rather than as a failure.
 
 Reporting them from the server was considered and **deliberately not done**: in
 a build where those routes are compiled in, every one of them can only be
 `true`, so the server would be sending a constant for the client to read instead
 of assuming — the assumption moves, it does not go away. The one axis that will
 genuinely vary is `assistant`, and its flag belongs with the endpoint that makes
-it vary.
+it vary — which is where it now lives.
 
 | Repository method | filex today | Status | Decision needed |
 |---|---|---|---|

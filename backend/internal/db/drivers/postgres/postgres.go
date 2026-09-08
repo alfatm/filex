@@ -2809,6 +2809,187 @@ func (s *Store) ChildCounts(ctx context.Context, parentIDs []int64) (map[int64]i
 	return out, rows.Err()
 }
 
+// ─────────────────── Assistant sessions ───────────────────
+
+const assistantSessionCols = `id, user_id, title, title_manual, message_count, last_active_at, created_at`
+
+func scanAssistantSession(row interface{ Scan(...any) error }) (*model.AssistantSession, error) {
+	a := &model.AssistantSession{}
+	if err := row.Scan(&a.ID, &a.UserID, &a.Title, &a.TitleManual, &a.MessageCount, &a.LastActiveAt, &a.CreatedAt); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+func (s *Store) CreateAssistantSession(ctx context.Context, a *model.AssistantSession) (*model.AssistantSession, error) {
+	var id int64
+	var lastActive, created time.Time
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO assistant_sessions (user_id, title, title_manual) VALUES ($1,$2,$3) RETURNING id, last_active_at, created_at`,
+		a.UserID, a.Title, a.TitleManual).Scan(&id, &lastActive, &created)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: create assistant session: %w", err)
+	}
+	a.ID, a.LastActiveAt, a.CreatedAt = id, lastActive, created
+	return a, nil
+}
+
+func (s *Store) ListAssistantSessions(ctx context.Context, userID int64, limit int) ([]*model.AssistantSession, error) {
+	if limit <= 0 {
+		limit = model.MaxAssistantSessions
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+assistantSessionCols+` FROM assistant_sessions WHERE user_id=$1 ORDER BY last_active_at DESC, id DESC LIMIT $2`,
+		userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list assistant sessions: %w", err)
+	}
+	defer rows.Close()
+	out := []*model.AssistantSession{}
+	for rows.Next() {
+		a, serr := scanAssistantSession(rows)
+		if serr != nil {
+			return nil, serr
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetAssistantSession(ctx context.Context, id int64) (*model.AssistantSession, error) {
+	return scanAssistantSession(s.db.QueryRowContext(ctx,
+		`SELECT `+assistantSessionCols+` FROM assistant_sessions WHERE id=$1`, id))
+}
+
+func (s *Store) SetAssistantSessionTitle(ctx context.Context, id int64, title string, manual bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE assistant_sessions SET title=$1, title_manual=$2 WHERE id=$3`, title, manual, id)
+	return err
+}
+
+func (s *Store) DeleteAssistantSession(ctx context.Context, id int64) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM assistant_messages WHERE session_id=$1`, id); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM assistant_sessions WHERE id=$1`, id)
+	return err
+}
+
+func (s *Store) EvictAssistantSessions(ctx context.Context, userID int64, keep int) (int, error) {
+	if keep < 0 {
+		keep = 0
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM assistant_sessions WHERE user_id=$1 ORDER BY last_active_at DESC, id DESC OFFSET $2`,
+		userID, keep)
+	if err != nil {
+		return 0, fmt.Errorf("postgres: evict assistant sessions: %w", err)
+	}
+	var doomed []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		doomed = append(doomed, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, id := range doomed {
+		if err := s.DeleteAssistantSession(ctx, id); err != nil {
+			return 0, err
+		}
+	}
+	return len(doomed), nil
+}
+
+func (s *Store) AppendAssistantMessage(ctx context.Context, m *model.AssistantMessage) (*model.AssistantMessage, error) {
+	payload := m.PayloadJSON
+	if payload == "" {
+		payload = "{}"
+	}
+	var id int64
+	var created time.Time
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO assistant_messages (session_id, role, content, payload_json, aborted, secret_notice)
+		 VALUES ($1,$2,$3,$4::jsonb,$5,$6) RETURNING id, created_at`,
+		m.SessionID, m.Role, m.Content, payload, m.Aborted, m.SecretNotice).Scan(&id, &created)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: append assistant message: %w", err)
+	}
+	m.ID, m.PayloadJSON, m.CreatedAt = id, payload, created
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE assistant_sessions SET message_count = message_count + 1, last_active_at = NOW() WHERE id = $1`, m.SessionID); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+func (s *Store) ListAssistantMessages(ctx context.Context, sessionID int64) ([]*model.AssistantMessage, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, session_id, role, content, payload_json::text, aborted, secret_notice, created_at
+		   FROM assistant_messages WHERE session_id=$1 ORDER BY id`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list assistant messages: %w", err)
+	}
+	defer rows.Close()
+	out := []*model.AssistantMessage{}
+	for rows.Next() {
+		m := &model.AssistantMessage{}
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.PayloadJSON, &m.Aborted, &m.SecretNotice, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CountAssistantSessions(ctx context.Context, userID int64) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM assistant_sessions WHERE user_id=$1`, userID).Scan(&n)
+	return n, err
+}
+
+// GrantAssistantRead records consent for one file in one conversation. ON
+// CONFLICT DO NOTHING makes a repeat approval a no-op — approving the same file
+// twice is one permission.
+func (s *Store) GrantAssistantRead(ctx context.Context, sessionID int64, path string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO assistant_read_grants (session_id, path) VALUES ($1, $2)
+		 ON CONFLICT (session_id, path) DO NOTHING`, sessionID, path)
+	return err
+}
+
+// AssistantReadGranted matches the path EXACTLY. Nothing looser: a prefix match
+// would turn approval of one file into approval of its siblings.
+func (s *Store) AssistantReadGranted(ctx context.Context, sessionID int64, path string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM assistant_read_grants WHERE session_id=$1 AND path=$2`,
+		sessionID, path).Scan(&n)
+	return n > 0, err
+}
+
+func (s *Store) ListAssistantReadGrants(ctx context.Context, sessionID int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT path FROM assistant_read_grants WHERE session_id=$1 ORDER BY id`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		out = append(out, path)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) StorageUsage(ctx context.Context, storageIDs []int64) (map[int64]int64, error) {
 	if len(storageIDs) == 0 {
 		return nil, nil

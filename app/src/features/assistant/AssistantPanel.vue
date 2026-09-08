@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { File, Search, Send, Sparkles, Tag, X } from 'lucide-vue-next';
+import { File, Loader2, MessagesSquare, Search, Send, Sparkles, SquarePen, Tag, X } from 'lucide-vue-next';
 import { useFormat } from '@/composables/useFormat';
-import type { AssistantMode } from '@/data/types';
+import type { ApprovalCard, AssistantMode } from '@/data/types';
 import { useFilesStore } from '@/stores/files';
 import { Avatar, IconButton, SidePanel } from '@/ui';
 import { ASSISTANT_MODES, useAssistantStore } from './assistantStore';
 import ResultCard from './ResultCard.vue';
+import SessionList from './SessionList.vue';
 
 const emit = defineEmits<{ close: [] }>();
 
@@ -21,6 +22,8 @@ const SUGGESTIONS = ['contracts', 'tag'] as const;
 /** Auto-scroll follows the stream only while the reader is this close to the end. */
 const NEAR_BOTTOM_PX = 40;
 
+/** The panel shows either the conversation or the list of them; the header switches between the two. */
+const showSessions = ref(false);
 const draft = ref('');
 const online = ref(navigator.onLine);
 const log = ref<HTMLElement>();
@@ -42,6 +45,44 @@ const announcement = computed(() => {
   const last = assistant.messages.at(-1);
   return !assistant.streaming && last?.role === 'assistant' ? last.text : '';
 });
+
+async function openSession(id: string) {
+  await assistant.openSession(id);
+  showSessions.value = false;
+}
+
+/** The tools the panel has words for; anything else shows its bare name rather than a missing-translation key. */
+const KNOWN_TOOLS = ['list_storages', 'list_folder', 'search_files', 'read_file'] as const;
+
+/** What the assistant is doing right now, in words, while it does it. */
+const activityLabel = computed(() => {
+  const running = assistant.activity;
+  if (!running) return '';
+  const name = (KNOWN_TOOLS as readonly string[]).includes(running.tool) ? t(`assistant.tools.${running.tool}`) : running.tool;
+  return running.target ? `${name} ${running.target}` : name;
+});
+
+/**
+ * Permission for ONE file. The grant is recorded server-side and then said out loud in the chat: everything the
+ * assistant is told has to be visible in the conversation, a permission most of all.
+ *
+ * ⚠ The path is quoted in that sentence (`assistant.card.allowedPrompt`) rather than left bare. A model reading
+ * "You may read main://a/notes.md." takes the sentence's full stop for part of the name, calls read_file with it,
+ * and is refused — correctly, since the grant is an exact match, but for a reason nobody can see.
+ */
+async function allowRead(card: ApprovalCard) {
+  await assistant.approveRead(card.path);
+  send(t('assistant.card.allowedPrompt', { path: card.path }));
+}
+
+function refuseRead(card: ApprovalCard) {
+  send(t('assistant.card.deniedPrompt', { path: card.path }));
+}
+
+async function startNewChat() {
+  await assistant.newSession();
+  showSessions.value = false;
+}
 
 function send(text: string) {
   if (!canSend.value) return;
@@ -110,97 +151,140 @@ onBeforeUnmount(() => {
           {{ t(online ? 'assistant.online' : 'assistant.offline') }}
         </p>
       </div>
+      <IconButton :label="t('assistant.newChat')" :size="36" @click="startNewChat"><SquarePen :size="20" /></IconButton>
+      <IconButton
+        :label="showSessions ? t('assistant.backToChat') : t('assistant.sessions')"
+        :size="36"
+        :active="showSessions"
+        @click="showSessions = !showSessions"
+      >
+        <MessagesSquare :size="20" />
+      </IconButton>
       <IconButton :label="t('assistant.close')" :size="36" class="-mr-2" @click="emit('close')"><X :size="22" /></IconButton>
     </div>
 
-    <p class="mt-4 shrink-0 text-15 leading-normal text-text-3">{{ t('assistant.intro') }}</p>
+    <SessionList v-if="showSessions" @open="openSession" />
 
-    <div ref="log" role="log" aria-live="off" class="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto">
-      <template v-for="{ message, followUp, streaming } in rows" :key="message.id">
-        <div v-if="message.role === 'user'" class="flex items-start justify-end">
-          <div class="max-w-[300px] rounded-xl bg-primary-soft px-4 py-3">
-            <p class="whitespace-pre-wrap text-15 leading-[1.45]">{{ message.text }}</p>
-            <p class="mt-1 text-12 leading-none text-text-3">{{ formatTime(message.at) }}</p>
-          </div>
-          <Avatar :initial="files.user?.initial ?? ''" :src="files.user?.avatarUrl" class="ml-3" />
-        </div>
-        <div v-else-if="followUp" :aria-live="streaming ? 'off' : undefined">
-          <p class="text-15 leading-[1.45]">{{ message.text }}</p>
-          <p v-if="message.error" class="mt-1 text-14 text-danger">{{ t('assistant.error') }}</p>
-          <p v-else-if="message.aborted" class="mt-1 text-13 text-text-3">{{ t('assistant.stopped') }}</p>
-          <p class="mt-1 text-12 leading-none text-text-3">{{ formatTime(message.at) }}</p>
-        </div>
-        <div v-else class="space-y-3">
-          <div class="flex items-start">
-            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border">
-              <Sparkles :size="16" class="text-primary" />
-            </span>
-            <div class="ml-3 min-w-0 rounded-xl bg-bg-muted px-4 py-3" :aria-live="streaming ? 'off' : undefined">
+    <template v-else>
+      <p class="mt-4 shrink-0 text-15 leading-normal text-text-3">{{ t('assistant.intro') }}</p>
+
+      <div ref="log" role="log" aria-live="off" class="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto">
+        <template v-for="{ message, followUp, streaming } in rows" :key="message.id">
+          <div v-if="message.role === 'user'" class="flex items-start justify-end">
+            <div class="max-w-[300px] rounded-xl bg-primary-soft px-4 py-3">
               <p class="whitespace-pre-wrap text-15 leading-[1.45]">{{ message.text }}</p>
-              <p v-if="message.error" class="mt-1 text-14 text-danger">{{ t('assistant.error') }}</p>
-              <p v-else-if="message.aborted" class="mt-1 text-13 text-text-3">{{ t('assistant.stopped') }}</p>
               <p class="mt-1 text-12 leading-none text-text-3">{{ formatTime(message.at) }}</p>
             </div>
+            <Avatar :initial="files.user?.initial ?? ''" :src="files.user?.avatarUrl" class="ml-3" />
           </div>
-          <ResultCard v-for="hit in message.hits" :key="hit.node.id" :hit="hit" />
+          <div v-else-if="followUp" :aria-live="streaming ? 'off' : undefined">
+            <p class="text-15 leading-[1.45]">{{ message.text }}</p>
+            <p v-if="message.error" class="mt-1 text-14 text-danger">{{ t('assistant.error') }}</p>
+            <p v-else-if="message.aborted" class="mt-1 text-13 text-text-3">{{ t('assistant.stopped') }}</p>
+            <p class="mt-1 text-12 leading-none text-text-3">{{ formatTime(message.at) }}</p>
+          </div>
+          <div v-else class="space-y-3">
+            <div class="flex items-start">
+              <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border">
+                <Sparkles :size="16" class="text-primary" />
+              </span>
+              <div class="ml-3 min-w-0 rounded-xl bg-bg-muted px-4 py-3" :aria-live="streaming ? 'off' : undefined">
+                <p class="whitespace-pre-wrap text-15 leading-[1.45]">{{ message.text }}</p>
+                <p v-if="message.error" class="mt-1 text-14 text-danger">{{ t('assistant.error') }}</p>
+                <p v-else-if="message.aborted" class="mt-1 text-13 text-text-3">{{ t('assistant.stopped') }}</p>
+                <p class="mt-1 text-12 leading-none text-text-3">{{ formatTime(message.at) }}</p>
+              </div>
+            </div>
+            <ResultCard v-for="hit in message.hits" :key="hit.node.id" :hit="hit" />
+
+            <!-- Spec §6: permission is asked for one file at a time, and the card says which file and why. -->
+            <div v-for="card in message.cards" :key="card.path" class="rounded-xl border border-border p-4">
+              <p class="text-14 font-medium leading-snug">{{ t('assistant.card.title') }}</p>
+              <p class="mt-1 break-all text-14 leading-snug text-text-3">{{ card.path }}</p>
+              <p v-if="card.reason" class="mt-1 text-13 leading-snug text-text-3">{{ card.reason }}</p>
+              <p v-if="assistant.isGranted(card)" class="mt-3 text-13 leading-none text-success">{{ t('assistant.card.approved') }}</p>
+              <div v-else class="mt-3 flex flex-wrap gap-[10px]">
+                <button
+                  type="button"
+                  :disabled="!canSend"
+                  class="inline-flex h-9 items-center rounded-full bg-primary px-4 text-14 leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                  @click="allowRead(card)"
+                >
+                  {{ t('assistant.card.allow') }}
+                </button>
+                <button
+                  type="button"
+                  :disabled="!canSend"
+                  class="inline-flex h-9 items-center rounded-full border border-border px-4 text-14 leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                  @click="refuseRead(card)"
+                >
+                  {{ t('assistant.card.deny') }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
+        <p v-if="activityLabel" class="flex items-center text-13 leading-snug text-text-3">
+          <Loader2 :size="14" class="mr-2 shrink-0 animate-spin" />
+          <span class="min-w-0 break-all">{{ activityLabel }}</span>
+        </p>
+      </div>
+      <p role="status" class="sr-only">{{ announcement }}</p>
+
+      <div class="shrink-0 pt-4">
+        <div role="radiogroup" :aria-label="t('assistant.modeLabel')" class="flex gap-[10px]">
+          <button
+            v-for="(mode, index) in ASSISTANT_MODES"
+            :key="mode"
+            type="button"
+            role="radio"
+            :aria-checked="assistant.mode === mode"
+            :tabindex="assistant.mode === mode ? 0 : -1"
+            class="inline-flex h-[38px] items-center gap-2 rounded-full px-4 text-15 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+            :class="assistant.mode === mode ? 'bg-primary text-white' : 'border border-border text-text hover:bg-hover-row'"
+            @click="assistant.mode = mode"
+            @keydown="onModeKeydown($event, index)"
+          >
+            <component :is="MODE_ICONS[mode]" :size="16" />
+            {{ t(`assistant.mode.${mode}`) }}
+          </button>
         </div>
-      </template>
-    </div>
-    <p role="status" class="sr-only">{{ announcement }}</p>
 
-    <div class="shrink-0 pt-4">
-      <div role="radiogroup" :aria-label="t('assistant.modeLabel')" class="flex gap-[10px]">
-        <button
-          v-for="(mode, index) in ASSISTANT_MODES"
-          :key="mode"
-          type="button"
-          role="radio"
-          :aria-checked="assistant.mode === mode"
-          :tabindex="assistant.mode === mode ? 0 : -1"
-          class="inline-flex h-[38px] items-center gap-2 rounded-full px-4 text-15 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
-          :class="assistant.mode === mode ? 'bg-primary text-white' : 'border border-border text-text hover:bg-hover-row'"
-          @click="assistant.mode = mode"
-          @keydown="onModeKeydown($event, index)"
-        >
-          <component :is="MODE_ICONS[mode]" :size="16" />
-          {{ t(`assistant.mode.${mode}`) }}
-        </button>
+        <div class="mt-3 flex flex-wrap gap-[10px]">
+          <button
+            v-for="id in SUGGESTIONS"
+            :key="id"
+            type="button"
+            :disabled="!canSend"
+            class="inline-flex h-9 items-center rounded-full border border-border px-4 text-14 leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+            @click="send(t(`assistant.suggestions.${id}`))"
+          >
+            {{ t(`assistant.suggestions.${id}`) }}
+          </button>
+        </div>
+
+        <form class="mt-4 flex items-start gap-[10px]" @submit.prevent="send(draft)">
+          <!-- Typing the next question while the answer streams is fine; only sending waits. -->
+          <textarea
+            ref="textarea"
+            v-model="draft"
+            rows="1"
+            :disabled="!online"
+            :placeholder="t('assistant.placeholder')"
+            :aria-label="t('assistant.placeholder')"
+            class="h-14 min-w-0 flex-1 resize-none rounded-lg border border-border bg-bg px-4 py-4 text-15 leading-[1.45] text-text placeholder:text-text-3 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-bg-muted"
+            @keydown.enter.exact.prevent="send(draft)"
+          />
+          <button
+            type="submit"
+            :disabled="!canSend"
+            :aria-label="t('assistant.send')"
+            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-primary text-white hover:bg-primary-hover disabled:opacity-60 disabled:hover:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+          >
+            <Send :size="22" />
+          </button>
+        </form>
       </div>
-
-      <div class="mt-3 flex flex-wrap gap-[10px]">
-        <button
-          v-for="id in SUGGESTIONS"
-          :key="id"
-          type="button"
-          :disabled="!canSend"
-          class="inline-flex h-9 items-center rounded-full border border-border px-4 text-14 leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
-          @click="send(t(`assistant.suggestions.${id}`))"
-        >
-          {{ t(`assistant.suggestions.${id}`) }}
-        </button>
-      </div>
-
-      <form class="mt-4 flex items-start gap-[10px]" @submit.prevent="send(draft)">
-        <!-- Typing the next question while the answer streams is fine; only sending waits. -->
-        <textarea
-          ref="textarea"
-          v-model="draft"
-          rows="1"
-          :disabled="!online"
-          :placeholder="t('assistant.placeholder')"
-          :aria-label="t('assistant.placeholder')"
-          class="h-14 min-w-0 flex-1 resize-none rounded-lg border border-border bg-bg px-4 py-4 text-15 leading-[1.45] text-text placeholder:text-text-3 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-bg-muted"
-          @keydown.enter.exact.prevent="send(draft)"
-        />
-        <button
-          type="submit"
-          :disabled="!canSend"
-          :aria-label="t('assistant.send')"
-          class="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-primary text-white hover:bg-primary-hover disabled:opacity-60 disabled:hover:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
-        >
-          <Send :size="22" />
-        </button>
-      </form>
-    </div>
+    </template>
   </SidePanel>
 </template>
