@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/pathkey"
 	"github.com/brf-tech/filex/backend/internal/testutil"
@@ -51,12 +52,12 @@ func TestListTrashed_TopLevelOnlyDropsWhatAFolderDraggedIn(t *testing.T) {
 	// where it stands; its folder is still very much alive.
 	require.NoError(t, store.SoftDeleteNode(ctx, vanished.ID))
 
-	all, total, err := store.ListTrashed(ctx, &stg.ID, false, 100, 0)
+	all, total, err := store.ListTrashed(ctx, &stg.ID, false, db.NodeFacets{}, 100, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 3, total)
 	assert.Len(t, all, 3, "unfiltered, the file inside the deleted folder is a row of its own")
 
-	top, topTotal, err := store.ListTrashed(ctx, &stg.ID, true, 100, 0)
+	top, topTotal, err := store.ListTrashed(ctx, &stg.ID, true, db.NodeFacets{}, 100, 0)
 	require.NoError(t, err)
 	assert.Equal(t, 2, topTotal, "the total has to shrink too, or the page count lies")
 	// storage_key, not name: a trashed row is renamed to its trash key, and the

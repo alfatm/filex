@@ -887,33 +887,7 @@ func (s *Store) ListNodeIDsMatching(ctx context.Context, storageID int64, f db.N
 		args = append(args, v)
 		return "?"
 	}
-	where := []string{"storage_id = ? AND deleted_at IS NULL"}
-	if f.FilesOnly {
-		where = append(where, "type = "+bind(string(model.NodeTypeFile)))
-	}
-	if f.PathPrefix != "" && f.PathPrefix != "/" {
-		// The subtree, and the folder itself.
-		where = append(where, "(path = "+bind(f.PathPrefix)+" OR path LIKE "+bind(f.PathPrefix+"/%")+")")
-	}
-	if len(f.Exts) > 0 {
-		ors := make([]string, 0, len(f.Exts))
-		for _, ext := range f.Exts {
-			ors = append(ors, "LOWER(name) LIKE "+bind("%."+ext))
-		}
-		where = append(where, "("+strings.Join(ors, " OR ")+")")
-	}
-	if f.ModifiedAfter != nil {
-		where = append(where, "backend_mtime >= "+bind(*f.ModifiedAfter))
-	}
-	if f.SizeMin != nil {
-		where = append(where, "size >= "+bind(*f.SizeMin))
-	}
-	if f.SizeMax != nil {
-		where = append(where, "size <= "+bind(*f.SizeMax))
-	}
-	if f.OwnerID != nil {
-		where = append(where, "owner_id = "+bind(*f.OwnerID))
-	}
+	where := append([]string{"storage_id = ? AND deleted_at IS NULL"}, f.Where("", "backend_mtime", bind)...)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id FROM nodes WHERE `+strings.Join(where, " AND ")+` ORDER BY id LIMIT `+bind(limit), args...)
 	if err != nil {
@@ -3300,7 +3274,7 @@ func (s *Store) RestoreNode(ctx context.Context, id int64) error {
 
 // ListTrashed returns paginated soft-deleted rows, optionally narrowed to a
 // single storage. Total count returned alongside so the UI can paginate.
-func (s *Store) ListTrashed(ctx context.Context, storageID *int64, topLevelOnly bool, limit, offset int) ([]*model.Node, int, error) {
+func (s *Store) ListTrashed(ctx context.Context, storageID *int64, topLevelOnly bool, f db.NodeFacets, limit, offset int) ([]*model.Node, int, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
@@ -3308,10 +3282,18 @@ func (s *Store) ListTrashed(ctx context.Context, storageID *int64, topLevelOnly 
 		offset = 0
 	}
 	args := []any{}
+	bind := func(v any) string {
+		args = append(args, v)
+		return "?"
+	}
 	where := `WHERE deleted_at IS NOT NULL`
 	if storageID != nil {
-		where += ` AND storage_id = ?`
-		args = append(args, *storageID)
+		where += ` AND storage_id = ` + bind(*storageID)
+	}
+	// "modified" on a trash row is the deletion instant — that is the date the
+	// listing shows and orders by, so it is the one the date window has to test.
+	for _, clause := range f.Where("", "deleted_at", bind) {
+		where += ` AND ` + clause
 	}
 	// A node dragged into the trash with its folder is not a trash entry of
 	// its own: it comes back when the folder does. "Top level" is therefore
@@ -3484,17 +3466,24 @@ func (s *Store) ListUserNodeMetaForNode(ctx context.Context, userID, nodeID int6
 
 // ListNodesByUserMeta returns the nodes flagged with (key) for the given user,
 // joined with the live node row, ordered by user_node_meta.updated_at DESC.
-func (s *Store) ListNodesByUserMeta(ctx context.Context, userID int64, key string, limit int) ([]*model.Node, error) {
+func (s *Store) ListNodesByUserMeta(ctx context.Context, userID int64, key string, f db.NodeFacets, limit int) ([]*model.Node, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 50
 	}
+	args := []any{userID, key}
+	bind := func(v any) string {
+		args = append(args, v)
+		return "?"
+	}
+	where := append([]string{"m.user_id=? AND m.key=? AND n.deleted_at IS NULL"}, f.Where("n.", "backend_mtime", bind)...)
+	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT n.id, n.storage_id, n.parent_id, n.name, n.path, n.path_hash, COALESCE(n.storage_key,''), n.type, n.size, COALESCE(n.mime,''), COALESCE(n.etag,''), n.backend_mtime, n.db_mtime, n.sync_state, COALESCE(n.transfer_state,'stored'), n.seen_at, n.deleted_at, n.created_at, n.updated_at, n.owner_id
 		 FROM user_node_meta m
 		 INNER JOIN nodes n ON n.id = m.node_id
-		 WHERE m.user_id=? AND m.key=? AND n.deleted_at IS NULL
+		 WHERE `+strings.Join(where, " AND ")+`
 		 ORDER BY m.updated_at DESC
-		 LIMIT ?`, userID, key, limit)
+		 LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}

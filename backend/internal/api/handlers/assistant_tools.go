@@ -454,7 +454,7 @@ func (t *assistantTools) listTrash(ctx context.Context) assistant.ToolOutcome {
 	if t.trash == nil {
 		return failure("the trash is not available on this server")
 	}
-	entries, total, err := t.trash.List(ctx, nil, true, assistantListDefault, 0)
+	entries, total, err := t.trash.List(ctx, nil, true, db.NodeFacets{}, assistantListDefault, 0)
 	if err != nil {
 		return failure("%v", err)
 	}

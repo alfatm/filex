@@ -242,7 +242,7 @@ func (h *Trash) PurgeSelf(w http.ResponseWriter, r *http.Request) {
 // altogether. `more` says the cap was reached and there is another round to ask
 // for; a caller that keeps getting `purged: 0` has purged everything it may.
 func (h *Trash) EmptySelf(w http.ResponseWriter, r *http.Request) {
-	entries, _, err := h.Service.List(r.Context(), nil, true, trashEmptyMax, 0)
+	entries, _, err := h.Service.List(r.Context(), nil, true, db.NodeFacets{}, trashEmptyMax, 0)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -334,7 +334,7 @@ func (h *Trash) List(w http.ResponseWriter, r *http.Request) {
 	// that came along inside a deleted folder. Opt-in — the admin trash screen
 	// and the purge tooling still want every row.
 	topLevelOnly := q.Get("top_level_only") == "1" || q.Get("top_level_only") == "true"
-	entries, total, err := h.Service.List(r.Context(), storagePtr, topLevelOnly, limit, offset)
+	entries, total, err := h.Service.List(r.Context(), storagePtr, topLevelOnly, listingFacets(r), limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

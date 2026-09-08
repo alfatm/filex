@@ -375,7 +375,14 @@ empty state offers "Clear filters".
 
 The value lives in the store as a `ListingFilter` and is handed to the
 repository, which applies it — the mock in `mock/search.ts`, the HTTP one as
-query params. Nothing is narrowed after the fact in the client.
+query params on the listing endpoint (`ext`, `modified_after`, `size_min`,
+`size_max`, `owner_id` — the advanced search's own words). That matters because
+the flat listings are capped: a chip applied to the page instead of to the query
+answers with the matches among the newest few hundred rows and looks exactly
+like an empty result. Two listings are still narrowed in the client, and both
+exactly — a folder listing is not paged, and shared-with-me is asked for its
+whole page because its rows are grants, not files, and carry nothing a query
+could test.
 
 ## 7b. Navigation, dragging and load states
 

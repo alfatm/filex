@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/brf-tech/filex/backend/internal/model"
@@ -463,7 +464,9 @@ type Store interface {
 	// ListTrashed returns soft-deleted nodes (paginated). storage filter optional.
 	// topLevelOnly drops the rows that were dragged into the trash with a folder
 	// (their parent is trashed too), leaving one row per thing the user deleted.
-	ListTrashed(ctx context.Context, storageID *int64, topLevelOnly bool, limit, offset int) ([]*model.Node, int, error)
+	// The facets narrow inside the query rather than after it, so a filtered
+	// page is a page of the filtered set and `total` counts that set.
+	ListTrashed(ctx context.Context, storageID *int64, topLevelOnly bool, f NodeFacets, limit, offset int) ([]*model.Node, int, error)
 	RestoreNode(ctx context.Context, id int64) error
 	// RestoreNodeAt restores a soft-deleted node, simultaneously reverting its
 	// path/path_hash to the supplied original-path values and re-attaching it
@@ -479,7 +482,10 @@ type Store interface {
 	DeleteUserNodeMeta(ctx context.Context, userID, nodeID int64, key string) error
 	GetUserNodeMeta(ctx context.Context, userID, nodeID int64, key string) (string, error)
 	ListUserNodeMetaForNode(ctx context.Context, userID, nodeID int64, prefix string) (map[string]string, error)
-	ListNodesByUserMeta(ctx context.Context, userID int64, key string, limit int) ([]*model.Node, error)
+	// The facets narrow inside the query: applying them to the page instead
+	// would hand back the matches within the newest N rows and call that the
+	// answer.
+	ListNodesByUserMeta(ctx context.Context, userID int64, key string, f NodeFacets, limit int) ([]*model.Node, error)
 
 	// Tags use the shared node_meta table (key='tag:<name>', value='1').
 	SetNodeTags(ctx context.Context, nodeID int64, tags []string) error
@@ -629,6 +635,49 @@ type NodeFacets struct {
 func (f NodeFacets) Any() bool {
 	return f.PathPrefix != "" || len(f.Exts) > 0 || f.ModifiedAfter != nil ||
 		f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.FilesOnly
+}
+
+// Where renders the facets as SQL predicates, to be ANDed into whatever the
+// caller's own query already restricts. It lives here rather than in a driver
+// because every listing that takes these facets has to mean the same thing by
+// them: a second copy of "which column is the size" is a second copy to keep in
+// step, and the two drivers differ only in how a placeholder is spelled.
+//
+// `bind` appends a value to the caller's argument list and returns the
+// placeholder for it ("?" on sqlite, "$N" on postgres). `alias` qualifies the
+// columns ("n." for a joined query, "" for a plain one). `modified` names the
+// column the date window tests, because not every listing dates its rows the
+// same way: the trash listing means "when it was deleted", every other listing
+// means "when it was last written".
+func (f NodeFacets) Where(alias, modified string, bind func(any) string) []string {
+	var where []string
+	if f.FilesOnly {
+		where = append(where, alias+"type = "+bind(string(model.NodeTypeFile)))
+	}
+	if f.PathPrefix != "" && f.PathPrefix != "/" {
+		// The subtree, and the folder itself.
+		where = append(where, "("+alias+"path = "+bind(f.PathPrefix)+" OR "+alias+"path LIKE "+bind(f.PathPrefix+"/%")+")")
+	}
+	if len(f.Exts) > 0 {
+		ors := make([]string, 0, len(f.Exts))
+		for _, ext := range f.Exts {
+			ors = append(ors, "LOWER("+alias+"name) LIKE "+bind("%."+ext))
+		}
+		where = append(where, "("+strings.Join(ors, " OR ")+")")
+	}
+	if f.ModifiedAfter != nil {
+		where = append(where, alias+modified+" >= "+bind(*f.ModifiedAfter))
+	}
+	if f.SizeMin != nil {
+		where = append(where, alias+"size >= "+bind(*f.SizeMin))
+	}
+	if f.SizeMax != nil {
+		where = append(where, alias+"size <= "+bind(*f.SizeMax))
+	}
+	if f.OwnerID != nil {
+		where = append(where, alias+"owner_id = "+bind(*f.OwnerID))
+	}
+	return where
 }
 
 // NodeOwner is one node's owner, named. Nodes with no owner — anything a

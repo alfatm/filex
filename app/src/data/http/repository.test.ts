@@ -841,4 +841,63 @@ describe('HttpRepository', () => {
     expect(calls.at(-1)?.url).toBe('/api/assistant/sessions/7/plans/3/cancel');
     expect(refused.status).toBe('cancelled');
   });
+
+  // ── the filter chips ────────────────────────────────────────────────────────
+  //
+  // Every one of these listings is capped. What matters is that the chip
+  // reaches the SERVER: a chip applied to the page instead answers with the
+  // matches among the newest N rows, and looks exactly like an empty result.
+
+  it('sends the chips to the capped listings instead of sieving what comes back', async () => {
+    routes = [
+      ['/star/list', { nodes: [] }],
+      ['/manager/recent', { nodes: [] }],
+      ['/manager/trash', { entries: [] }],
+    ];
+    const repo = new HttpRepository();
+    const filter = { fileType: 'documents', modified: 'any', size: 'large', personId: '7' } as const;
+
+    await repo.listStarred(filter);
+    calls.length = 0; // Recent marks its rows starred, which asks star/list again — without the chips, and rightly so.
+    await repo.listRecent(filter);
+    const recent = calls[0].url;
+    await repo.listTrash(filter);
+
+    for (const url of [recent, calls.at(-1)!.url]) {
+      const query = new URLSearchParams(url.split('?')[1]);
+      expect(query.get('ext')).toBe('md,pdf');
+      expect(query.get('size_min')).toBe(String(100 * 1024 * 1024));
+      expect(query.get('size_max')).toBeNull();
+      expect(query.get('owner_id')).toBe('7');
+      expect(query.get('modified_after')).toBeNull();
+    }
+  });
+
+  it('turns the Modified chip into a moment, not a number of days', async () => {
+    vi.setSystemTime(Date.parse('2026-09-09T00:00:00Z'));
+    routes = [['/star/list', { nodes: [] }]];
+    await new HttpRepository().listStarred({ fileType: 'any', modified: 'week', size: 'any', personId: null });
+
+    const query = new URLSearchParams(calls[0].url.split('?')[1]);
+    expect(query.get('modified_after')).toBe(String(Date.parse('2026-09-02T00:00:00Z')));
+    expect(query.get('ext')).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it('asks an unfiltered listing for nothing but its page', async () => {
+    routes = [['/manager/recent', { nodes: [] }], ['/star/list', { nodes: [] }]];
+    await new HttpRepository().listRecent();
+    expect(calls[0].url).toBe('/api/files/manager/recent?limit=200');
+  });
+
+  // Shared-with-me is the exception: a grant can name a path the indexer never
+  // walked, so its rows are not node rows and the endpoint takes no facets. It
+  // does build the whole set before paging, so the fix is to ask for all of it.
+  it('asks shared-with-me for its full page, because that listing is narrowed here', async () => {
+    routes = [['/shared-with-me', { files: [] }]];
+    await new HttpRepository().listShared({ fileType: 'documents', modified: 'any', size: 'any', personId: null });
+    const query = new URLSearchParams(calls[0].url.split('?')[1]);
+    expect(query.get('limit')).toBe('500');
+    expect(query.get('ext')).toBeNull();
+  });
 });

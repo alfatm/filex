@@ -179,14 +179,16 @@ func (s *Service) Restore(ctx context.Context, nodeID int64) error {
 // topLevelOnly leaves out the rows a folder dragged in with it, so the caller
 // gets one entry per thing the user actually deleted; restoring the folder
 // brings those children back with it (RestoreNodeAt mirrors the soft-delete).
-func (s *Service) List(ctx context.Context, storageID *int64, topLevelOnly bool, limit, offset int) ([]TrashEntry, int, error) {
+// The facets are the caller's filter chips, applied inside the query: a zero
+// value narrows nothing.
+func (s *Service) List(ctx context.Context, storageID *int64, topLevelOnly bool, f db.NodeFacets, limit, offset int) ([]TrashEntry, int, error) {
 	if s == nil || s.Store == nil {
 		return nil, 0, errors.New("trash: service not initialised")
 	}
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
-	rows, total, err := s.Store.ListTrashed(ctx, storageID, topLevelOnly, limit, offset)
+	rows, total, err := s.Store.ListTrashed(ctx, storageID, topLevelOnly, f, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -413,7 +415,7 @@ func (s *Service) purgeDirDescendants(ctx context.Context, dir *model.Node) {
 	}
 	var descendants []*model.Node
 	for offset := 0; ; {
-		batch, _, err := s.Store.ListTrashed(ctx, &dir.StorageID, false, 500, offset)
+		batch, _, err := s.Store.ListTrashed(ctx, &dir.StorageID, false, db.NodeFacets{}, 500, offset)
 		if err != nil || len(batch) == 0 {
 			break
 		}

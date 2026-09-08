@@ -181,6 +181,8 @@ const RECENT_LIMIT = 200;
  */
 const EMPTY_TRASH_ROUNDS = 40;
 const TRASH_LIMIT = 500;
+/** The server's own maximum for `shared-with-me`, which is narrowed here rather than in the query — see `listShared`. */
+const SHARED_LIMIT = 500;
 const SEARCH_LIMIT = 100;
 
 /** filex answers a name collision with 409 on every write verb; the modals expect the shared error. */
@@ -205,6 +207,34 @@ function searchFacets(query: SearchQuery): Record<string, unknown> {
   // The owner is filex's numeric user id, which is exactly what the People chip carries as a Person id.
   const owner = Number(query.ownerId);
   if (query.ownerId && Number.isFinite(owner)) out.owner_id = owner;
+  return out;
+}
+
+/**
+ * The filter chips above a listing, as query parameters.
+ *
+ * The same words the advanced search uses — `ext`, `modified_after`, `size_min`, `size_max`, `owner_id` — because
+ * both are the same question asked of different row sets, and two vocabularies for one question is one of them
+ * going stale. Extensions rather than a group name for the same reason as there: `extensionsOf` is where "documents"
+ * is defined, and the server holds no second copy of it.
+ *
+ * They are sent rather than sieved because these listings are capped. A chip applied to the page instead of to the
+ * query answers with the matches among the newest N rows and gives no sign of it — "no images among your starred
+ * files" reads identically whether there are none or whether they are all past number five hundred.
+ */
+function listingFacets(filter?: ListingFilter): Record<string, string | number | undefined> {
+  if (!filter) return {};
+  const out: Record<string, string | number | undefined> = {};
+  // Comma-joined: `withQuery` writes one value per key, and the server reads both spellings.
+  if (filter.fileType !== 'any') out.ext = extensionsOf(TYPE_GROUPS[filter.fileType]).join(',');
+  if (filter.modified !== 'any') out.modified_after = Date.now() - MODIFIED_WINDOW_DAYS[filter.modified] * DAY_MS;
+  if (filter.size !== 'any') {
+    const [min, max] = SIZE_PRESET_BYTES[filter.size];
+    if (min > 0) out.size_min = min;
+    if (Number.isFinite(max)) out.size_max = max;
+  }
+  const owner = Number(filter.personId);
+  if (filter.personId && Number.isFinite(owner)) out.owner_id = owner;
   return out;
 }
 
@@ -635,21 +665,30 @@ export class HttpRepository implements Repository {
   // ── listings beside the tree ────────────────────────────────────────────────
 
   async listRecent(filter?: ListingFilter): Promise<Node[]> {
-    const { nodes } = await request<{ nodes: WireNode[] }>(`${MANAGER}/recent`, { query: { limit: RECENT_LIMIT } });
+    const { nodes } = await request<{ nodes: WireNode[] }>(`${MANAGER}/recent`, {
+      query: { limit: RECENT_LIMIT, ...listingFacets(filter) },
+    });
     // The endpoint answers newest-opened first; `openedAt` is what the Recent page sorts on, and filex reports the
     // order without the timestamp, so the order is preserved and the field left unset.
     const files = this.projectModel(nodes).filter((n) => n.kind === 'file');
-    return HttpRepository.narrow(await this.withStars(files), filter);
+    return this.withStars(files);
   }
 
   async listStarred(filter?: ListingFilter): Promise<Node[]> {
-    const { nodes } = await request<{ nodes: WireNode[] }>(`${MANAGER}/star/list`, { query: { limit: STARRED_LIMIT } });
-    const starred = this.projectModel(nodes).map((n) => ({ ...n, starred: true }));
-    return HttpRepository.narrow(starred, filter);
+    const { nodes } = await request<{ nodes: WireNode[] }>(`${MANAGER}/star/list`, {
+      query: { limit: STARRED_LIMIT, ...listingFacets(filter) },
+    });
+    return this.projectModel(nodes).map((n) => ({ ...n, starred: true }));
   }
 
+  /**
+   * The one listing still narrowed here. Its rows are not node rows — a grant can name a path the indexer has never
+   * walked, and such a row has no size, date or owner for a query to test — so the endpoint takes no facets. What it
+   * does do is build the whole set before paging it, so asking for its maximum page makes the chips exact up to that
+   * many shared items rather than up to the default hundred.
+   */
   async listShared(filter?: ListingFilter): Promise<Node[]> {
-    const { files } = await request<{ files: WireFileNode[] }>(`${MANAGER}/shared-with-me`);
+    const { files } = await request<{ files: WireFileNode[] }>(`${MANAGER}/shared-with-me`, { query: { limit: SHARED_LIMIT } });
     const shared = this.project(files).map((n) => ({ ...n, shared: true }));
     return HttpRepository.narrow(shared, filter);
   }
@@ -658,14 +697,13 @@ export class HttpRepository implements Repository {
     // `top_level_only`: one row per thing the user deleted. Without it a deleted folder arrives together with every
     // file it contained, each offering a Restore that only the folder's own restore actually performs.
     const { entries } = await request<{ entries: WireTrashEntry[] }>(`${MANAGER}/trash`, {
-      query: { limit: TRASH_LIMIT, top_level_only: 1 },
+      query: { limit: TRASH_LIMIT, top_level_only: 1, ...listingFacets(filter) },
     });
-    const trashed = entries.map((entry) => {
+    return entries.map((entry) => {
       const node = fromTrashEntry(entry);
       this.remember(node.id, entry.id);
       return node;
     });
-    return HttpRepository.narrow(trashed, filter);
   }
 
   // ── mutations ───────────────────────────────────────────────────────────────

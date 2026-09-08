@@ -43,6 +43,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/acl"
 	"github.com/brf-tech/filex/backend/internal/assistant"
 	"github.com/brf-tech/filex/backend/internal/auth"
+	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/model"
 )
 
@@ -310,7 +311,7 @@ func (t *assistantTools) planEmptyTrash(ctx context.Context, raw string) assista
 	if t.trash == nil {
 		return failure("the trash is not available on this server")
 	}
-	entries, _, err := t.trash.List(ctx, nil, true, model.MaxPlanItems+1, 0)
+	entries, _, err := t.trash.List(ctx, nil, true, db.NodeFacets{}, model.MaxPlanItems+1, 0)
 	if err != nil {
 		return failure("the trash could not be read: %v", err)
 	}

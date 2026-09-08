@@ -139,7 +139,7 @@ rows at a time) and reports a summary (`scanned` / `deleted` / `failed` /
 
 | Method & path | Body / query | Notes |
 |---|---|---|
-| `GET /api/files/manager/trash` | `?storage_id=…&limit=…&offset=…&top_level_only=1` | Lists soft‑deleted items. `limit` defaults to 50 (max 500). Each entry shows the **original** `name`/`path` (not the internal trash key), `deleted_at`, `size`, `storage_name`, and **`ttl_days`** (days remaining before purge, floored at 0). `top_level_only=1` drops the rows a deleted folder dragged in with it, and narrows `total` to match. |
+| `GET /api/files/manager/trash` | `?storage_id=…&limit=…&offset=…&top_level_only=1`, plus the filter facets `ext=` (repeated or comma-separated, dot-less), `modified_after=` (epoch ms), `size_min=`, `size_max=`, `owner_id=` | Lists soft‑deleted items. `limit` defaults to 50 (max 500). Each entry shows the **original** `name`/`path` (not the internal trash key), `deleted_at`, `size`, `storage_name`, and **`ttl_days`** (days remaining before purge, floored at 0). `top_level_only=1` drops the rows a deleted folder dragged in with it, and narrows `total` to match. The facets are the same words `POST /api/files/search` takes, and they narrow inside the query — so `total` counts the filtered set and a filtered page is a page of it, not of the newest 500. One difference from search: `modified_after` here tests **`deleted_at`**, because that is the date this listing shows and orders by. |
 | `POST /api/files/manager/restore` | `{ "node_id": 123 }` | Moves the file back to its original path and re‑attaches the row. |
 
 Both are **filtered by access**: a [confined](RBAC.md) (root‑locked) caller only

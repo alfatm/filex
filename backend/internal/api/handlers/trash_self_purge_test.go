@@ -144,7 +144,7 @@ func TestTrashEmptySelf_TakesTheContentsOfADeletedFolderWithIt(t *testing.T) {
 	f.bin(t, dir)
 
 	// One deletion, one row to purge: the file inside is not a second entry.
-	entries, _, err := f.svc.List(context.Background(), nil, true, 50, 0)
+	entries, _, err := f.svc.List(context.Background(), nil, true, db.NodeFacets{}, 50, 0)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 
@@ -166,7 +166,7 @@ func TestTrashEmptySelf_TakesTheContentsOfADeletedFolderWithIt(t *testing.T) {
 		n, err := f.store.GetNode(context.Background(), id)
 		require.True(t, err != nil || n == nil, "everything under the deleted folder goes too")
 	}
-	rest, _, err := f.svc.List(context.Background(), nil, false, 50, 0)
+	rest, _, err := f.svc.List(context.Background(), nil, false, db.NodeFacets{}, 50, 0)
 	require.NoError(t, err)
 	require.Empty(t, rest, "the trash is empty afterwards, by its own listing")
 }
