@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -813,6 +814,71 @@ func (s *Store) ListDuplicateNodes(ctx context.Context, minSize int64) ([]db.Dup
 	}
 	return out, rows.Err()
 }
+
+// ListNodeIDsMatching resolves the facet half of a search — see db.NodeFacets.
+//
+// Extensions are matched with LIKE on the name rather than a column, because
+// there is none: the name is the only place a node's extension lives, and a
+// derived column would have to be backfilled and kept in step with every rename
+// for a predicate this cheap.
+func (s *Store) ListNodeIDsMatching(ctx context.Context, storageID int64, f db.NodeFacets, limit int) ([]int64, error) {
+	if limit <= 0 || limit > facetIDMax {
+		limit = facetIDMax
+	}
+	args := []any{storageID}
+	bind := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+	where := []string{"storage_id = $1 AND deleted_at IS NULL"}
+	if f.FilesOnly {
+		where = append(where, "type = "+bind(string(model.NodeTypeFile)))
+	}
+	if f.PathPrefix != "" && f.PathPrefix != "/" {
+		// The subtree, and the folder itself.
+		where = append(where, "(path = "+bind(f.PathPrefix)+" OR path LIKE "+bind(f.PathPrefix+"/%")+")")
+	}
+	if len(f.Exts) > 0 {
+		ors := make([]string, 0, len(f.Exts))
+		for _, ext := range f.Exts {
+			ors = append(ors, "LOWER(name) LIKE "+bind("%."+ext))
+		}
+		where = append(where, "("+strings.Join(ors, " OR ")+")")
+	}
+	if f.ModifiedAfter != nil {
+		where = append(where, "backend_mtime >= "+bind(*f.ModifiedAfter))
+	}
+	if f.SizeMin != nil {
+		where = append(where, "size >= "+bind(*f.SizeMin))
+	}
+	if f.SizeMax != nil {
+		where = append(where, "size <= "+bind(*f.SizeMax))
+	}
+	if f.OwnerID != nil {
+		where = append(where, "owner_id = "+bind(*f.OwnerID))
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM nodes WHERE `+strings.Join(where, " AND ")+` ORDER BY id LIMIT `+bind(limit), args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: facet ids: %w", err)
+	}
+	defer rows.Close()
+	out := make([]int64, 0, 128)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// facetIDMax caps the set one facet query may produce. It is the ceiling `tag:`
+// filtering already uses, for the same reason: the ids become a boolean query
+// inside the index, so an unbounded set turns one search into a
+// hundred-thousand-clause query. A truncated set is reported, not absorbed.
+const facetIDMax = 10000
 
 func (s *Store) SearchNodes(ctx context.Context, storageID int64, like string, limit int) ([]*model.Node, error) {
 	if limit <= 0 {
@@ -1955,12 +2021,12 @@ type rowScanner interface {
 }
 
 func nodeColumns() string {
-	return `id, storage_id, parent_id, name, path, path_hash, COALESCE(storage_key,''), type, size, COALESCE(mime,''), COALESCE(etag,''), backend_mtime, db_mtime, sync_state, COALESCE(transfer_state,'stored'), seen_at, deleted_at, created_at, updated_at`
+	return `id, storage_id, parent_id, name, path, path_hash, COALESCE(storage_key,''), type, size, COALESCE(mime,''), COALESCE(etag,''), backend_mtime, db_mtime, sync_state, COALESCE(transfer_state,'stored'), seen_at, deleted_at, created_at, updated_at, owner_id`
 }
 
 func scanNode(r rowScanner) (*model.Node, error) {
 	n := &model.Node{}
-	err := r.Scan(&n.ID, &n.StorageID, &n.ParentID, &n.Name, &n.Path, &n.PathHash, &n.StorageKey, &n.Type, &n.Size, &n.Mime, &n.Etag, &n.BackendMtime, &n.DBMtime, &n.SyncState, &n.TransferState, &n.SeenAt, &n.DeletedAt, &n.CreatedAt, &n.UpdatedAt)
+	err := r.Scan(&n.ID, &n.StorageID, &n.ParentID, &n.Name, &n.Path, &n.PathHash, &n.StorageKey, &n.Type, &n.Size, &n.Mime, &n.Etag, &n.BackendMtime, &n.DBMtime, &n.SyncState, &n.TransferState, &n.SeenAt, &n.DeletedAt, &n.CreatedAt, &n.UpdatedAt, &n.OwnerID)
 	if err != nil {
 		return nil, err
 	}
@@ -2625,6 +2691,38 @@ func (s *Store) GetNodeOwner(ctx context.Context, nodeID int64) (*int64, error) 
 	return &v, nil
 }
 
+// NodeOwners resolves a whole listing's owners in one query, joined to the
+// account name the UI actually shows. Nodes nobody owns — anything a storage
+// sync found rather than a person uploading it — are absent from the answer.
+func (s *Store) NodeOwners(ctx context.Context, nodeIDs []int64) ([]db.NodeOwner, error) {
+	if len(nodeIDs) == 0 {
+		return nil, nil
+	}
+	args := make([]any, 0, len(nodeIDs))
+	marks := make([]string, 0, len(nodeIDs))
+	for i, id := range nodeIDs {
+		args = append(args, id)
+		marks = append(marks, "$"+strconv.Itoa(i+1))
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT n.id, u.id, COALESCE(NULLIF(u.display_name,''), u.email)
+		   FROM nodes n JOIN users u ON u.id = n.owner_id
+		  WHERE n.id IN (`+strings.Join(marks, ",")+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: node owners: %w", err)
+	}
+	defer rows.Close()
+	out := make([]db.NodeOwner, 0, len(nodeIDs))
+	for rows.Next() {
+		var o db.NodeOwner
+		if err := rows.Scan(&o.NodeID, &o.OwnerID, &o.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 // ─────────────────── Trash retention ───────────────────
 
 // ListTrashedExpired returns soft-deleted nodes whose deleted_at is older than `before`.
@@ -2840,7 +2938,7 @@ func (s *Store) ListNodesByUserMeta(ctx context.Context, userID int64, key strin
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT n.id, n.storage_id, n.parent_id, n.name, n.path, n.path_hash, COALESCE(n.storage_key,''), n.type, n.size, COALESCE(n.mime,''), COALESCE(n.etag,''), n.backend_mtime, n.db_mtime, n.sync_state, COALESCE(n.transfer_state,'stored'), n.seen_at, n.deleted_at, n.created_at, n.updated_at
+		`SELECT n.id, n.storage_id, n.parent_id, n.name, n.path, n.path_hash, COALESCE(n.storage_key,''), n.type, n.size, COALESCE(n.mime,''), COALESCE(n.etag,''), n.backend_mtime, n.db_mtime, n.sync_state, COALESCE(n.transfer_state,'stored'), n.seen_at, n.deleted_at, n.created_at, n.updated_at, n.owner_id
 		 FROM user_node_meta m
 		 INNER JOIN nodes n ON n.id = m.node_id
 		 WHERE m.user_id=$1 AND m.key=$2 AND n.deleted_at IS NULL
@@ -2965,7 +3063,7 @@ func (s *Store) ListNodesByTag(ctx context.Context, tag string, limit int) ([]*m
 		limit = 500
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT n.id, n.storage_id, n.parent_id, n.name, n.path, n.path_hash, COALESCE(n.storage_key,''), n.type, n.size, COALESCE(n.mime,''), COALESCE(n.etag,''), n.backend_mtime, n.db_mtime, n.sync_state, COALESCE(n.transfer_state,'stored'), n.seen_at, n.deleted_at, n.created_at, n.updated_at
+		`SELECT n.id, n.storage_id, n.parent_id, n.name, n.path, n.path_hash, COALESCE(n.storage_key,''), n.type, n.size, COALESCE(n.mime,''), COALESCE(n.etag,''), n.backend_mtime, n.db_mtime, n.sync_state, COALESCE(n.transfer_state,'stored'), n.seen_at, n.deleted_at, n.created_at, n.updated_at, n.owner_id
 		 FROM node_meta m
 		 INNER JOIN nodes n ON n.id = m.node_id
 		 WHERE m.key=$1 AND n.deleted_at IS NULL
@@ -3006,15 +3104,53 @@ func (s *Store) InsertNotification(ctx context.Context, n *model.NotificationInp
 	if n.UserID != nil {
 		userID = *n.UserID
 	}
+	var nodeStorage any
+	if n.NodeStorageID != nil {
+		nodeStorage = *n.NodeStorageID
+	}
+	var nodePath any
+	if n.NodePath != "" {
+		nodePath = n.NodePath
+	}
 	var id int64
 	if err := s.db.QueryRowContext(ctx,
-		`INSERT INTO notifications (event, severity, title, body, meta_json, user_id, webhook_status)
-		 VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7) RETURNING id`,
-		n.Event, n.Severity, n.Title, n.Body, string(meta), userID, "pending",
+		`INSERT INTO notifications (event, severity, title, body, meta_json, user_id, webhook_status,
+		                            node_storage_id, node_path)
+		 VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9) RETURNING id`,
+		n.Event, n.Severity, n.Title, n.Body, string(meta), userID, "pending", nodeStorage, nodePath,
 	).Scan(&id); err != nil {
 		return 0, fmt.Errorf("postgres: insert notification: %w", err)
 	}
 	return id, nil
+}
+
+// ListNodeEvents returns what has happened to ONE file, newest first. See the
+// sqlite driver's copy for why it is keyed by path and what that costs after a
+// rename.
+func (s *Store) ListNodeEvents(ctx context.Context, storageID int64, path string, limit int) ([]*model.Notification, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, event, severity, title, body, meta_json::text,
+		        user_id, read_at, webhook_status, COALESCE(webhook_error,''), created_at
+		   FROM notifications
+		  WHERE node_storage_id = $1 AND node_path = $2
+		  ORDER BY created_at DESC, id DESC
+		  LIMIT $3`, storageID, path, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list node events: %w", err)
+	}
+	defer rows.Close()
+	out := []*model.Notification{}
+	for rows.Next() {
+		n, err := scanNotificationPg(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
 }
 
 // GetNotification returns a single row by id.

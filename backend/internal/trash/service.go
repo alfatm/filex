@@ -232,6 +232,11 @@ func (s *Service) List(ctx context.Context, storageID *int64, topLevelOnly bool,
 	return out, total, nil
 }
 
+// ErrNotTrashed is returned when a purge names a node that is not in the trash
+// — a live row, or one already gone. Callers turn it into a 404: from outside,
+// "there is no such trash entry" is what both cases mean.
+var ErrNotTrashed = errors.New("trash: node is not in the trash")
+
 // PurgeOne immediately hard-deletes a single trashed node (admin / owner).
 func (s *Service) PurgeOne(ctx context.Context, nodeID int64) error {
 	if s == nil || s.Store == nil {
@@ -240,6 +245,18 @@ func (s *Service) PurgeOne(ctx context.Context, nodeID int64) error {
 	n, err := s.Store.GetNode(ctx, nodeID)
 	if err != nil {
 		return err
+	}
+	if n == nil {
+		return ErrNotTrashed
+	}
+	// ⚠ A purge takes the bytes at `n.Path`, and for a LIVE row that path is
+	// where the file still is. Nothing above this line established that the
+	// node is in the trash at all: while the only caller was an admin route
+	// nobody could reach it with a live id, but "purge one node by id" is not a
+	// primitive that may quietly mean "delete anything by id" the moment a
+	// second caller appears.
+	if n.DeletedAt == nil {
+		return ErrNotTrashed
 	}
 	return s.purgeOne(ctx, n)
 }

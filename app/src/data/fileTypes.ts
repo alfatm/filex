@@ -29,3 +29,16 @@ export const TYPE_THUMBNAILS: Partial<Record<FileType, ThumbnailKind>> = {
 export function fileTypeOf(name: string): FileType {
   return EXTENSION_TYPES[name.split('.').pop()?.toLowerCase() ?? ''] ?? 'other';
 }
+
+/**
+ * The extensions that make up a set of types — the same table read backwards.
+ *
+ * It exists because the server filters by extension and nothing else: which extensions count as "documents" is a
+ * decision this file makes, and a second copy of it in Go would be a second copy to keep in step. The client sends
+ * the list it means, so there is only ever one taxonomy.
+ */
+export function extensionsOf(types: readonly FileType[]): string[] {
+  return Object.entries(EXTENSION_TYPES)
+    .filter(([, type]) => types.includes(type))
+    .map(([ext]) => ext);
+}

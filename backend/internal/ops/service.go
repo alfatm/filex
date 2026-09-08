@@ -20,6 +20,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/brf-tech/filex/backend/internal/auth"
+	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/storage"
 	"github.com/brf-tech/filex/backend/internal/trash"
 )
@@ -57,17 +59,23 @@ type Op struct {
 	// which the worker serves by streaming bytes between the two drivers.
 	// Zero means "same as StorageID" — the shape every row written before
 	// this column existed has.
-	DestStorageID int64      `json:"dest_storage_id,omitempty"`
-	Sources       []string   `json:"sources"`
-	Dest          string     `json:"dest,omitempty"`
-	Total         int        `json:"total"`
-	Done          int        `json:"done"`
-	Failed        int        `json:"failed"`
-	Status        string     `json:"status"`
-	Error         string     `json:"error,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	StartedAt     *time.Time `json:"started_at,omitempty"`
-	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+	DestStorageID int64    `json:"dest_storage_id,omitempty"`
+	Sources       []string `json:"sources"`
+	Dest          string   `json:"dest,omitempty"`
+	// UserID is who submitted the op. The worker runs on a server-lifetime
+	// context with no request behind it, so without this the events a queued
+	// move or delete emits carry no actor at all — and "somebody moved it to
+	// Docs" is what the file's activity feed then has to say. Nil for work
+	// nobody asked for by hand (the retention sweep, a sync-driven op).
+	UserID     *int64     `json:"user_id,omitempty"`
+	Total      int        `json:"total"`
+	Done       int        `json:"done"`
+	Failed     int        `json:"failed"`
+	Status     string     `json:"status"`
+	Error      string     `json:"error,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
 // Service is the queue + worker bundle.
@@ -178,15 +186,24 @@ func (s *Service) Migrate(ctx context.Context) error {
 	// ALTER whose "duplicate column name" error is the expected outcome on
 	// every boot but the first — the queue table is not driven by goose (see
 	// the comment above), and a table rebuild would drop in-flight work.
-	if _, aerr := s.db.ExecContext(ctx, `ALTER TABLE pending_ops ADD COLUMN dest_storage_id INTEGER NOT NULL DEFAULT 0`); aerr != nil &&
-		!strings.Contains(strings.ToLower(aerr.Error()), "duplicate column") {
-		slog.Warn("ops: add dest_storage_id column", slog.String("err", aerr.Error()))
-	}
+	s.addColumn(ctx, "dest_storage_id", `ALTER TABLE pending_ops ADD COLUMN dest_storage_id INTEGER NOT NULL DEFAULT 0`)
+	// Who asked for the op. Same story: added after the table shipped.
+	s.addColumn(ctx, "user_id", `ALTER TABLE pending_ops ADD COLUMN user_id INTEGER`)
 	// On boot, any row left in `running` is from a previous crash — re-queue.
 	if _, err := s.db.ExecContext(ctx, `UPDATE pending_ops SET status='pending', started_at=NULL WHERE status='running'`); err != nil {
 		slog.Warn("ops: requeue stale running rows", slog.String("err", err.Error()))
 	}
 	return nil
+}
+
+// addColumn applies one ALTER whose "duplicate column name" error is the
+// expected outcome on every boot but the first — the queue table is not driven
+// by goose (see Migrate), and rebuilding it would drop in-flight work.
+func (s *Service) addColumn(ctx context.Context, name, ddl string) {
+	if err := func() error { _, e := s.db.ExecContext(ctx, ddl); return e }(); err != nil &&
+		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		slog.Warn("ops: add column", slog.String("column", name), slog.String("err", err.Error()))
+	}
 }
 
 // Submit enqueues a same-storage op and pokes the worker.
@@ -228,9 +245,15 @@ func (s *Service) SubmitTo(ctx context.Context, kind string, storageID, destStor
 		destStorageID = storageID
 	}
 	srcJSON, _ := json.Marshal(sources)
+	// Read off the request context here, where there still is one.
+	var userID any
+	if u := auth.UserFrom(ctx); u != nil && u.ID > 0 {
+		userID = u.ID
+	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO pending_ops (kind, storage_id, dest_storage_id, sources_json, dest, total, status) VALUES (?,?,?,?,?,?,?)`,
-		kind, storageID, destStorageID, string(srcJSON), dest, len(sources), StatusPending)
+		`INSERT INTO pending_ops (kind, storage_id, dest_storage_id, sources_json, dest, total, status, user_id)
+		 VALUES (?,?,?,?,?,?,?,?)`,
+		kind, storageID, destStorageID, string(srcJSON), dest, len(sources), StatusPending, userID)
 	if err != nil {
 		return nil, fmt.Errorf("ops: insert: %w", err)
 	}
@@ -239,11 +262,12 @@ func (s *Service) SubmitTo(ctx context.Context, kind string, storageID, destStor
 	return s.Get(ctx, id)
 }
 
+// opColumns is the one projection both readers use, in scanOp's order.
+const opColumns = `id, kind, storage_id, COALESCE(dest_storage_id,0), sources_json, COALESCE(dest,''), total, done, failed, status, COALESCE(error,''), created_at, started_at, finished_at, user_id`
+
 // Get returns the current state of an op.
 func (s *Service) Get(ctx context.Context, id int64) (*Op, error) {
-	row := s.db.QueryRowContext(ctx,
-		`SELECT id, kind, storage_id, COALESCE(dest_storage_id,0), sources_json, COALESCE(dest,''), total, done, failed, status, COALESCE(error,''), created_at, started_at, finished_at
-		 FROM pending_ops WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT `+opColumns+` FROM pending_ops WHERE id=?`, id)
 	return scanOp(row)
 }
 
@@ -252,7 +276,7 @@ func (s *Service) Get(ctx context.Context, id int64) (*Op, error) {
 // at 200 to keep the polling payload small. Used by the SPA's
 // PendingOpsTray which calls GET /api/files/ops?status=running every 2s.
 func (s *Service) List(ctx context.Context, status string) ([]*Op, error) {
-	const cols = `id, kind, storage_id, COALESCE(dest_storage_id,0), sources_json, COALESCE(dest,''), total, done, failed, status, COALESCE(error,''), created_at, started_at, finished_at`
+	const cols = opColumns
 	var (
 		rows *sql.Rows
 		err  error
@@ -270,14 +294,9 @@ func (s *Service) List(ctx context.Context, status string) ([]*Op, error) {
 	defer rows.Close()
 	out := make([]*Op, 0, 16)
 	for rows.Next() {
-		op := &Op{}
-		var srcJSON string
-		if err := rows.Scan(&op.ID, &op.Kind, &op.StorageID, &op.DestStorageID, &srcJSON, &op.Dest, &op.Total, &op.Done, &op.Failed, &op.Status, &op.Error, &op.CreatedAt, &op.StartedAt, &op.FinishedAt); err != nil {
+		op, err := scanOp(rows)
+		if err != nil {
 			return nil, err
-		}
-		_ = json.Unmarshal([]byte(srcJSON), &op.Sources)
-		if op.DestStorageID == 0 {
-			op.DestStorageID = op.StorageID
 		}
 		out = append(out, op)
 	}
@@ -389,6 +408,10 @@ func (s *Service) claimNext(ctx context.Context) (*Op, bool, error) {
 
 // execute runs a single Op against the storage driver and persists progress.
 func (s *Service) execute(ctx context.Context, op *Op) {
+	// Everything below emits file events through the DBSync callbacks, and those
+	// read their actor off the context exactly as a request handler's would. The
+	// user is long gone; their id is on the row, so put it back.
+	ctx = s.withSubmitter(ctx, op)
 	if s.storageResolver == nil {
 		s.fail(ctx, op, "no storage resolver")
 		return
@@ -444,6 +467,24 @@ func (s *Service) execute(ctx context.Context, op *Op) {
 	_, _ = s.db.ExecContext(ctx,
 		`UPDATE pending_ops SET status=?, error=?, finished_at=CURRENT_TIMESTAMP WHERE id=?`,
 		status, errMsg, op.ID)
+}
+
+// withSubmitter attaches the account that queued this op, so the events its
+// steps emit are attributed to a person rather than to nobody.
+//
+// Id and email only: that is the whole of what an event's actor reference
+// carries, and every reader that wants a display name resolves it from the
+// users table anyway. A row with no submitter, or a user since deleted, leaves
+// the context as it was — an unattributed event is the honest answer there.
+func (s *Service) withSubmitter(ctx context.Context, op *Op) context.Context {
+	if op.UserID == nil {
+		return ctx
+	}
+	var email string
+	if err := s.db.QueryRowContext(ctx, `SELECT email FROM users WHERE id=?`, *op.UserID).Scan(&email); err != nil {
+		return ctx
+	}
+	return auth.WithUser(ctx, &model.User{ID: *op.UserID, Email: email})
 }
 
 func (s *Service) runOne(ctx context.Context, drv, dstDrv storage.Driver, op *Op, src string) error {
@@ -659,11 +700,20 @@ func joinIntoDir(dest, src string) string {
 	return path.Join(strings.TrimRight(dest, "/"), base)
 }
 
-func scanOp(row *sql.Row) (*Op, error) {
+// scanOp reads one row of opColumns. It takes the Scan interface rather than a
+// *sql.Row so the single-row and the listing path share it — they used to hold
+// two copies of the same fourteen destinations, and adding a column to one of
+// them is exactly how that goes wrong.
+func scanOp(row interface{ Scan(...any) error }) (*Op, error) {
 	op := &Op{}
 	var srcJSON string
-	if err := row.Scan(&op.ID, &op.Kind, &op.StorageID, &op.DestStorageID, &srcJSON, &op.Dest, &op.Total, &op.Done, &op.Failed, &op.Status, &op.Error, &op.CreatedAt, &op.StartedAt, &op.FinishedAt); err != nil {
+	var userID sql.NullInt64
+	if err := row.Scan(&op.ID, &op.Kind, &op.StorageID, &op.DestStorageID, &srcJSON, &op.Dest, &op.Total, &op.Done, &op.Failed, &op.Status, &op.Error, &op.CreatedAt, &op.StartedAt, &op.FinishedAt, &userID); err != nil {
 		return nil, err
+	}
+	if userID.Valid {
+		id := userID.Int64
+		op.UserID = &id
 	}
 	_ = json.Unmarshal([]byte(srcJSON), &op.Sources)
 	if op.DestStorageID == 0 {

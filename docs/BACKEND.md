@@ -252,6 +252,40 @@ source storage).
 remaining relative path applied to the SOURCE storage, so a cross-storage paste
 answered `202` and wrote the file into the depo it was copied from.
 
+### Search facets
+`POST /api/files/search` also takes the filter half of a query. All optional;
+each one narrows, none widens.
+
+| Field | Meaning |
+|---|---|
+| `path_prefix` | Confine to one subtree, storage-relative (`/Docs/2026`). This is "search in the current folder". |
+| `ext` | Extensions without the dot (`["md","pdf"]`). **Extensions, not a type-group name** — which extensions count as "documents" is the client's vocabulary, and a second copy of that taxonomy here is a second copy to keep in step. |
+| `modified_after` | Epoch milliseconds. |
+| `size_min` / `size_max` | Bytes. `size_max: 0` means no ceiling. |
+| `owner_id` | filex's numeric user id. |
+
+`ext`, `size_min` and `size_max` imply files only — a folder has no extension
+and its size is a rollup. A date or an owner keeps folders.
+
+**Why they are not applied to the answer.** The full-text index knows a
+document's name, path, mime and type and nothing else, so a filtered search used
+to mean "the first N hits for the text, minus the ones that did not fit": if the
+files the user wanted ranked two hundredth, they saw nothing and could not tell
+that from "there are none". The facets are resolved against the node table and
+applied as a restriction on which documents the index may return — the same
+mechanism `tag:` uses — plus an exact pass over the results, which is what makes
+them right on the two paths that never consult the index (a bare `tag:` listing
+and the SQL LIKE fallback).
+
+⚠ The id set behind the restriction is capped at 10 000 per storage, as `tag:`
+is and for the same reason: the ids become a boolean query inside the index.
+Past the cap the answer carries `"facets_truncated": true` — the filter became a
+sample, so a hit outside it cannot be found however well it matches.
+
+A search with no `storage_id` resolves the facets against every enabled storage
+and unions them; the RBAC pass at the end drops whatever the caller may not see,
+as it does for any hit.
+
 ### `POST /api/files/ops` ![user](https://img.shields.io/badge/-user-blue)
 The unified form behind the three per-verb endpoints:
 ```json
@@ -287,6 +321,59 @@ there is the delete a real one. Purging is the admin's `/api/admin/trash/*`.
 **Refusals** are the same submit-time ones as move, minus the destination:
 `403` read-only source storage · `403` no editor permission on a source ·
 `400` mixed-adapter sources · `400` a source that names a storage root.
+
+### `DELETE /api/files/manager/trash/:id` ![user](https://img.shields.io/badge/-user-blue)
+Destroy one entry of the caller's OWN trash. `200 { ok: true }`.
+
+The admin route beside it (`DELETE /api/admin/trash/{id}`) takes any entry in the
+deployment; this one takes only what the caller could have deleted in the first
+place — confinement on the entry's ORIGINAL path, ≥editor there — which is what
+makes it safe to hand to an ordinary account.
+
+**A node that is not in the trash answers `404`**, live rows included. The purge
+takes the bytes at the row's current path, and for a live row that path is where
+the file still is.
+
+### `POST /api/files/manager/trash/empty` ![user](https://img.shields.io/badge/-user-blue)
+Destroy everything in the trash this caller may purge.
+```json
+{ "ok": true, "purged": 12, "failed": 0, "skipped": 0, "more": false }
+```
+Top-level entries only — purging a deleted folder already takes its contents —
+capped at 500 per request so no single call holds open for a trash of any size.
+`more` says the cap was reached; ask again. An entry the caller may not purge is
+`skipped`, not refused: on a shared drive, somebody else's deletion must not make
+"empty my trash" fail altogether. A caller that keeps getting `purged: 0` has
+purged everything it may.
+
+### `GET /api/files/activity` ![user](https://img.shields.io/badge/-user-blue)
+What has happened to ONE file. `?path=<adapter>://<rel>&limit=50` (50 is both
+the default and the ceiling — a details panel shows a short history; the long
+one is the admin audit page).
+```json
+{ "events": [
+  { "id": 23, "event": "file.moved", "at": "2026-09-07T19:26:20Z",
+    "actor_id": 1, "actor_name": "Ada Lovelace",
+    "meta": { "from": "/Docs/act.txt", "to": "/Docs/gunluk.txt", "origin": "manager" } }
+] }
+```
+Readable by whoever may read the file (≥viewer, plus root confinement). A caller
+without that gets `403`, not an empty list — an empty list would answer whether
+the file exists.
+
+The rows are the canonical file events every write surface already emits, read
+back the other way round. `meta` is the event's own payload, which is what tells
+a rename from a move without a second vocabulary here; `actor` and `node` are
+lifted out into fields.
+
+⚠ **Keyed by path**, because that is what the event carries. A renamed file has
+its history split across the two names — the events from before the rename stay
+under the old one. Same property every path-addressed surface in filex has.
+
+⚠ **History starts at the upgrade.** Migration 00034 added the columns that make
+an event findable per node and deliberately did not backfill them from
+`meta_json`: parsing every existing row would spend a long migration on events
+nothing could have shown anyway.
 
 ### `GET /api/files/manager/shared-with-me` ![user](https://img.shields.io/badge/-user-blue)
 

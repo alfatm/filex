@@ -1,9 +1,11 @@
 import { DUPLICATE_NAME, OPERATION_PENDING, WRONG_PASSWORD, type Repository } from '../repository';
-import { matchesFilter } from '../listingFilter';
+import { matchesFilter, MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
+import { extensionsOf } from '../fileTypes';
 import { noCapabilities, type ActivityEvent, type AssistantEvent, type AuthMethods, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type Quota, type SearchHit, type SearchQuery, type SearchResult, type Storage, type UploadInput, type UploadOptions, type User, type Version } from '../types';
 import { HttpError, putChunk, request } from './client';
 import {
   fromFileNode,
+  fromActivityEvent,
   fromModelNode,
   fromTrashEntry,
   joinPath,
@@ -20,6 +22,8 @@ import {
   type WireQuota,
   type WireStorage,
   type WireAuthMethods,
+  type WireActivityEvent,
+  type WireTrashEmpty,
   type WireTrashEntry,
   type WireUploadBegin,
   type WireUploadCommit,
@@ -75,10 +79,51 @@ const CHUNK_BYTES = 1024 * 1024;
 /** How many rows the metadata listings return; filex caps starred at 500 and recent at 200. */
 const STARRED_LIMIT = 500;
 const RECENT_LIMIT = 200;
+/**
+ * How many times `emptyTrash` may go round. The server caps one request so it stays short; this caps the client so
+ * a server that keeps saying "more" can never turn one click into an unbounded stream of requests.
+ */
+const EMPTY_TRASH_ROUNDS = 40;
 const TRASH_LIMIT = 500;
 const SEARCH_LIMIT = 100;
 
 /** filex answers a name collision with 409 on every write verb; the modals expect the shared error. */
+const DAY_MS = 24 * 60 * 60 * 1000;
+const SIZE_UNIT_BYTES = { KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3 } as const;
+
+/**
+ * The advanced form as request fields. Extensions rather than a group name, because which extensions count as
+ * "documents" is the app's word and `extensionsOf` is where it is kept — the server holds no second copy of it.
+ */
+function searchFacets(query: SearchQuery): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  // `searchIn`, not `scope`: the scope picks which FIELDS are consulted, this picks WHERE.
+  if (query.searchIn === 'current' && query.folderPath) out.path_prefix = `/${query.folderPath}`;
+  if (query.fileType !== 'any') out.ext = extensionsOf(TYPE_GROUPS[query.fileType]);
+  if (query.modified !== 'any') out.modified_after = Date.now() - MODIFIED_WINDOW_DAYS[query.modified] * DAY_MS;
+  if (query.size.preset !== 'any' && query.size.preset !== 'custom') {
+    const [min, max] = SIZE_PRESET_BYTES[query.size.preset];
+    if (min > 0) out.size_min = min;
+    if (Number.isFinite(max)) out.size_max = max;
+  }
+  // The owner is filex's numeric user id, which is exactly what the People chip carries as a Person id.
+  const owner = Number(query.ownerId);
+  if (query.ownerId && Number.isFinite(owner)) out.owner_id = owner;
+  return out;
+}
+
+/**
+ * The one size form the server has no expression for: a hand-typed range. The presets became `size_min`/`size_max`
+ * on the request; this stays here because the form allows a range in whichever unit the user picked.
+ */
+function withinCustomSize(node: Node, size: SearchQuery['size']): boolean {
+  if (node.kind !== 'file') return false;
+  const unit = SIZE_UNIT_BYTES[size.unit] ?? 1;
+  if (size.min !== null && node.size < size.min * unit) return false;
+  if (size.max !== null && node.size > size.max * unit) return false;
+  return true;
+}
+
 function asRepositoryError(error: unknown): never {
   if (error instanceof HttpError && error.status === 409) throw new Error(DUPLICATE_NAME);
   throw error;
@@ -183,17 +228,32 @@ export class HttpRepository implements Repository {
   private project(rows: WireFileNode[]): Node[] {
     return rows.map((row) => {
       this.remember(row.path, row.id);
-      return { ...fromFileNode(row), ownerId: this.owner() };
+      const node = fromFileNode(row);
+      if (row.owner_id === undefined) return { ...node, ownerId: this.owner() };
+      if (!this.people.has(node.ownerId)) {
+        this.people.set(node.ownerId, { id: node.ownerId, name: node.ownerName ?? node.ownerId, initial: initialOf(node.ownerName ?? '?'), role: 'owner' });
+      }
+      return node;
     });
   }
 
   /**
-   * filex stores no owner per node, so everything the caller can see is theirs. Saying so with the account's OWN id
-   * rather than a sentinel is what lets the details panel recognise it and print "You".
+   * The fallback owner for a row filex named none for — anything a storage sync found rather than a person
+   * uploading it. Everything the caller can see, they can see, so the account's own id is the honest answer, and
+   * saying it with the real id rather than a sentinel is what lets the panel print "You".
    */
   private owner(): string {
     return this.user?.id ?? SELF;
   }
+
+  /**
+   * The People chip's options, learned from the listings this session has read.
+   *
+   * There is no endpoint that answers "who might own something here", and a DISTINCT over the node table would be
+   * the wrong one: it would name owners of folders the caller cannot open. What the rows themselves carried is both
+   * the set that is safe to offer and the only set a filter over those rows can match.
+   */
+  private readonly people = new Map<string, Person>();
 
   /** `model.Node` rows only address a storage by name on the handlers that fill it in; a row without one is unusable. */
   private projectModel(rows: WireNode[]): Node[] {
@@ -317,6 +377,11 @@ export class HttpRepository implements Repository {
       // Not reported by /capabilities — filex answers for the storage DRIVERS, and zipping a subtree is filex's
       // own work, not the driver's. The endpoint exists (`GET /api/files/download/zip`), so the answer is yes.
       folderDownload: true,
+      // Same reasoning: purging is filex's own bookkeeping, and the caller now has routes of their own for it
+      // (`DELETE /manager/trash/{id}`, `POST /manager/trash/empty`) rather than only the admin's.
+      deleteForever: true,
+      // And the per-node event feed (`GET /api/files/activity`), which the details panel's second tab needs.
+      activity: true,
     };
   }
 
@@ -484,24 +549,42 @@ export class HttpRepository implements Repository {
     }
   }
 
+  /** Either the trash listing named this row, or this session trashed it and kept its number. */
+  private trashedNodeId(id: string): number {
+    const numeric = this.trashed.get(id) ?? this.ids.get(id);
+    if (numeric === undefined) throw new Error(`no node id known for ${id}`);
+    return numeric;
+  }
+
   async restore(ids: string[]): Promise<void> {
     for (const id of ids) {
-      // Either the trash listing named this row, or this session trashed it and kept its number.
-      const numeric = this.trashed.get(id) ?? this.ids.get(id);
-      if (numeric === undefined) throw new Error(`no node id known for ${id}`);
+      const numeric = this.trashedNodeId(id);
       await request(`${MANAGER}/restore`, { method: 'POST', body: { node_id: numeric } });
       this.trashed.delete(id);
       this.ids.set(id, numeric);
     }
   }
 
-  /** Purging is `/api/admin/trash/{id}`; an ordinary account cannot reach it, which is why the capability is off. */
-  async deleteForever(): Promise<void> {
-    throw new Error('deleting forever is an administrator action on this server');
+  /** One entry at a time; purging a deleted FOLDER takes everything that went into the trash inside it. */
+  async deleteForever(ids: string[]): Promise<void> {
+    for (const id of ids) {
+      await request(`${MANAGER}/trash/${this.trashedNodeId(id)}`, { method: 'DELETE' }).catch(asRepositoryError);
+      this.trashed.delete(id);
+      this.ids.delete(id);
+    }
   }
 
+  /**
+   * The server purges a bounded number of entries per request and says whether more is left, so no single call has
+   * to hold open for a trash of any size. Loop while it is still making progress: `more` on its own would spin
+   * against entries this caller can see and may not purge, which the server skips rather than failing over.
+   */
   async emptyTrash(): Promise<void> {
-    throw new Error('emptying the trash is an administrator action on this server');
+    for (let round = 0; round < EMPTY_TRASH_ROUNDS; round++) {
+      const answer = await request<WireTrashEmpty>(`${MANAGER}/trash/empty`, { method: 'POST' });
+      if (!answer.more || !answer.purged) break;
+    }
+    this.trashed.clear();
   }
 
   async setStarred(ids: string[], starred: boolean): Promise<void> {
@@ -637,34 +720,53 @@ export class HttpRepository implements Repository {
   }
 
   /** filex keeps an admin audit log, not a per-node feed; the panel's Activity tab stays empty until one exists. */
-  async listActivity(): Promise<ActivityEvent[]> {
-    return [];
+  /**
+   * What has happened to one file. filex records an event for every write, so the feed is real from the moment the
+   * server is upgraded — but only from then: the events already in the table predate the columns that make them
+   * findable per node, and no backfill invents a history nobody could read.
+   *
+   * Events the app has no sentence for are dropped rather than shown as something they are not.
+   */
+  async listActivity(nodeId: string): Promise<ActivityEvent[]> {
+    const { events } = await request<{ events: WireActivityEvent[] }>('/api/files/activity', { query: { path: nodeId } });
+    const storageName = nodeId.slice(0, Math.max(0, nodeId.indexOf('://')));
+    return events.map((event) => fromActivityEvent(event, storageName)).filter((event): event is ActivityEvent => event !== null);
   }
 
-  /** The People chip offers the owners filex could report per listing — it reports none, so the chip has no options. */
+  /** Everyone seen owning a row so far, and the account itself — which owns things whether or not it has listed any. */
   async listFilterPeople(): Promise<Person[]> {
-    return [];
+    const me = await this.currentUser();
+    const options = new Map(this.people);
+    options.set(me.id, { id: me.id, name: me.name, initial: me.initial, role: 'owner' });
+    return [...options.values()];
   }
 
   // ── search ──────────────────────────────────────────────────────────────────
 
   /**
-   * filex's search takes a query string, a scope and a limit. Everything else the advanced form offers — the date
-   * window, the type group, the size band, the owner — has no query param, so it is applied to the answer here,
-   * through the same predicate the listing chips use.
+   * The date window, the type group, the size band, the owner and the current-folder scope are now the server's
+   * work: it resolves them against the node table and restricts the index to what they matched, so a filtered
+   * search no longer means "the first hundred hits for the text, minus the ones that did not fit". What stays here
+   * is the custom size range the form allows but the presets do not express, and whole-phrase/case/OCR, which
+   * filex's query language has no form of.
    */
   async search(query: SearchQuery): Promise<SearchResult> {
     const scope = query.scope === 'content' ? 'content' : query.scope === 'paths' ? 'path' : '';
     const text = query.tags.length ? [query.text, ...query.tags.map((t) => `tag:${t}`)].join(' ').trim() : query.text;
+    // POST rather than the GET form: the facets are a list and four numbers, and the body is where filex's search
+    // has always taken them. No storage_id — the app addresses drives by name and has no numeric one to send, so
+    // the server asks every drive the caller could see and lets its own RBAC pass decide what comes back.
     const { results } = await request<{ results: (WireNode & { snippet?: string })[] }>('/api/files/search', {
-      query: { q: text, limit: SEARCH_LIMIT, scope: scope || undefined },
+      method: 'POST',
+      body: { query: text, limit: SEARCH_LIMIT, ...(scope ? { scope } : {}), ...searchFacets(query) },
     });
     const hits: SearchHit[] = [];
     for (const row of results) {
       if (!row.storage) continue;
       const node = { ...fromModelNode(row, row.storage), ownerId: this.owner() };
       this.remember(node.id, row.id);
-      if (!matchesFilter(node, { fileType: query.fileType, modified: query.modified, size: query.size.preset === 'custom' ? 'any' : query.size.preset, personId: query.ownerId })) continue;
+      // Only what the server could not express: a hand-typed size range.
+      if (query.size.preset === 'custom' && !withinCustomSize(node, query.size)) continue;
       const parent = parentPath(node.id);
       hits.push({
         node,
@@ -675,6 +777,8 @@ export class HttpRepository implements Repository {
     }
     return { hits, total: hits.length };
   }
+
+
 
   /** No assistant endpoint exists; the capability is off, so the panel is never reachable to call this. */
   // eslint-disable-next-line require-yield

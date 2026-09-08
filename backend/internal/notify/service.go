@@ -172,14 +172,22 @@ func (s *service) Send(ctx context.Context, e Event) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("notify: marshal meta: %w", err)
 	}
-	id, err := s.store.InsertNotification(ctx, &model.NotificationInput{
+	in := &model.NotificationInput{
 		Event:    string(e.Event),
 		Severity: string(e.Severity),
 		Title:    e.Title,
 		Body:     e.Body,
 		MetaJSON: metaJSON,
 		UserID:   e.UserID,
-	})
+	}
+	// The node also goes into meta_json (marshalMeta); these columns are the
+	// same reference in a form that can be looked up, which is what a per-file
+	// activity feed asks for. An event about no file leaves them null.
+	if e.Node != nil && e.Node.Path != "" {
+		storageID := e.Node.StorageID
+		in.NodeStorageID, in.NodePath = &storageID, e.Node.Path
+	}
+	id, err := s.store.InsertNotification(ctx, in)
 	if err != nil {
 		return 0, err
 	}

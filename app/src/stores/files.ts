@@ -3,12 +3,12 @@ import { computed, ref, watch } from 'vue';
 import { useSelection } from '@/composables/useSelection';
 import { emptyFilter, isFiltered } from '@/features/files/filters';
 import { repository } from '@/data';
-import { OPERATION_PENDING } from '@/data/repository';
 import type { ListingFilter, Node, Person, Storage, UploadInput, UploadOptions, User } from '@/data/types';
 import { i18n } from '@/i18n';
 import { subjectMessage } from '@/i18n/subject';
 import { useToastStore } from './toast';
 import { useUndoStore } from '@/features/files/undoStore';
+import { useOperationsStore } from '@/features/files/operationsStore';
 import { useViewStore } from './view';
 
 /** Flat listings that reuse the table, selection and sort of the folder view. */
@@ -19,6 +19,7 @@ export const useFilesStore = defineStore('files', () => {
   const view = useViewStore();
   const toast = useToastStore();
   const undo = useUndoStore();
+  const operations = useOperationsStore();
   const t = i18n.global.t;
 
   const storages = ref<Storage[]>([]);
@@ -98,6 +99,10 @@ export const useFilesStore = defineStore('files', () => {
     error.value = null;
     try {
       await read(target, seq);
+      // The People chip's options are learned from the rows a listing carried (the HTTP repository has no other
+      // way to know who owns what), so they are re-read after every listing rather than only at bootstrap.
+      const people = await repository.listFilterPeople();
+      if (seq === loadSeq) filterPeople.value = people;
     } catch {
       // A newer load already owns the listing; its own result decides what is shown.
       if (seq === loadSeq) {
@@ -227,20 +232,15 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   /**
-   * Runs one of the queued verbs (move, trash, copy) and reports what became of it. The server can take the work
-   * and still be busy with it when the repository stops waiting; that is not a failure, so it gets a plain message
-   * instead of one — and `landed` is skipped, because neither the "moved" toast nor an Undo may be offered for a
-   * job whose second half has not happened yet.
+   * Every mutation that nobody else answers for goes through the operations tray: it owns the "still going",
+   * the "did not work" and the message, and it is the reason a failed move is no longer silence. `landed` runs
+   * only when the work is really done — an Undo for half a move would undo the wrong half.
+   *
+   * The two verbs NOT here are the ones with an error surface of their own: New folder and Rename put a name
+   * collision under their own field, where the name being typed is.
    */
-  async function queued(action: () => Promise<void>, landed: () => void): Promise<void> {
-    try {
-      await action();
-    } catch (e) {
-      if (!(e instanceof Error) || e.message !== OPERATION_PENDING) throw e;
-      toast.push(t('toast.stillRunning'));
-      return;
-    }
-    landed();
+  function queued(nodes: Node[], key: string, action: () => Promise<void>, landed: () => void, extra: Record<string, unknown> = {}) {
+    return operations.run(subjectMessage(t, key, nodes, extra), action, landed);
   }
 
   /** Where "New" and uploads land: the open folder, else the storage root. */
@@ -270,13 +270,14 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   async function restore(nodes: Node[]) {
-    await mutate(() => repository.restore(nodes.map((n) => n.id)));
-    toast.push(subjectMessage(t, 'toast.restored', nodes));
+    await queued(nodes, 'op.restoring', () => mutate(() => repository.restore(nodes.map((n) => n.id))), () => {
+      toast.push(subjectMessage(t, 'toast.restored', nodes));
+    });
   }
 
   /** Moves to trash and offers Undo in a toast (spec §7). */
   async function trash(nodes: Node[]) {
-    await queued(() => mutate(() => repository.moveToTrash(nodes.map((n) => n.id))), () => {
+    await queued(nodes, 'op.trashing', () => mutate(() => repository.moveToTrash(nodes.map((n) => n.id))), () => {
       undo.record({ undo: () => restore(nodes), redo: () => trash(nodes) });
       // The toast button and Ctrl+Z are the same step, so pressing both only restores once.
       toast.push(subjectMessage(t, 'toast.movedToTrash', nodes), { label: t('toast.undo'), run: () => void undo.undo() });
@@ -286,29 +287,33 @@ export const useFilesStore = defineStore('files', () => {
   // Permanent deletion invalidates any pending Undo: restoring a node that is gone would throw.
   async function deleteForever(nodes: Node[]) {
     toast.dismissActions();
-    await mutate(() => repository.deleteForever(nodes.map((n) => n.id)));
-    toast.push(subjectMessage(t, 'toast.deletedForever', nodes));
+    await queued(nodes, 'op.deleting', () => mutate(() => repository.deleteForever(nodes.map((n) => n.id))), () => {
+      toast.push(subjectMessage(t, 'toast.deletedForever', nodes));
+    });
   }
 
   async function emptyTrash() {
     toast.dismissActions();
-    await mutate(() => repository.emptyTrash());
-    toast.push(t('toast.trashEmptied'));
+    await operations.run(t('op.emptying'), () => mutate(() => repository.emptyTrash()), () => {
+      toast.push(t('toast.trashEmptied'));
+    });
   }
 
   async function setStarred(nodes: Node[], starred: boolean) {
-    await mutate(() => repository.setStarred(nodes.map((n) => n.id), starred));
-    undo.record({ undo: () => setStarred(nodes, !starred), redo: () => setStarred(nodes, starred) });
-    toast.push(subjectMessage(t, starred ? 'toast.starred' : 'toast.unstarred', nodes));
+    await queued(nodes, 'op.starring', () => mutate(() => repository.setStarred(nodes.map((n) => n.id), starred)), () => {
+      undo.record({ undo: () => setStarred(nodes, !starred), redo: () => setStarred(nodes, starred) });
+      toast.push(subjectMessage(t, starred ? 'toast.starred' : 'toast.unstarred', nodes));
+    });
   }
 
   async function setTags(node: Node, tags: string[]) {
-    await mutate(() => repository.setTags(node.id, tags));
-    toast.push(t('toast.tagsSaved', { name: node.name }));
+    await queued([node], 'op.tagging', () => mutate(() => repository.setTags(node.id, tags)), () => {
+      toast.push(t('toast.tagsSaved', { name: node.name }));
+    });
   }
 
   async function move(nodes: Node[], target: Node) {
-    await queued(() => mutate(() => repository.move(nodes.map((n) => n.id), target.id)), () => {
+    await queued(nodes, 'op.moving', () => mutate(() => repository.move(nodes.map((n) => n.id), target.id)), () => {
       toast.push(subjectMessage(t, 'toast.moved', nodes, { folder: target.name }));
       // Where each node came from, by name: undo re-resolves the ids in the target, because a moved node's path —
       // and with it its id — has changed.
@@ -318,7 +323,7 @@ export const useFilesStore = defineStore('files', () => {
       }
       // After the undo the nodes are back under their own ids, so the redo is simply the same move again.
       if (origins.size) undo.record({ undo: () => moveBack(target.id, origins), redo: () => move(nodes, target) });
-    });
+    }, { folder: target.name });
   }
 
   async function moveBack(fromFolderId: string, origins: Map<string, string[]>) {
@@ -337,11 +342,11 @@ export const useFilesStore = defineStore('files', () => {
    */
   async function copyInto(nodes: Node[], target: Node) {
     const before = new Set(items.value.map((n) => n.id));
-    await queued(() => mutate(() => repository.copy(nodes.map((n) => n.id), target.id)), () => {
+    await queued(nodes, 'op.copying', () => mutate(() => repository.copy(nodes.map((n) => n.id), target.id)), () => {
       toast.push(subjectMessage(t, 'toast.copied', nodes, { folder: target.name }));
       const created = items.value.filter((n) => !before.has(n.id));
       if (created.length) undo.record({ undo: () => trash(created), redo: () => restore(created) });
-    });
+    }, { folder: target.name });
   }
 
   async function createShareLink(id: string) {

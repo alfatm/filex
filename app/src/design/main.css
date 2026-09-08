@@ -33,4 +33,26 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  /* A 6px rail instead of the platform's ~15: inside a modal column the native bar eats the gutter and
+     draws a heavier line than anything else on the panel. Chromium ignores `scrollbar-width` wherever the
+     ::-webkit- pseudo-elements apply, so the standard properties are left to the engines that have nothing else
+     (Firefox), which cap out at "thin". */
+  .scroll-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: var(--c-border-hover);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    .scroll-thin {
+      scrollbar-width: thin;
+      scrollbar-color: var(--c-border-hover) transparent;
+    }
+  }
 }

@@ -102,6 +102,13 @@ type Store interface {
 	// the SPA looping every node row.
 	StorageStats(ctx context.Context, storageID int64) (fileCount int64, totalBytes int64, err error)
 	SearchNodes(ctx context.Context, storageID int64, like string, limit int) ([]*model.Node, error)
+	// ListNodeIDsMatching answers "which nodes have these properties" — the
+	// facet half of a search, which the full-text index cannot express because
+	// its documents carry no size, date or owner. The ids come back so the
+	// index can be RESTRICTED to them, the same mechanism a `tag:` filter uses;
+	// `limit` is a ceiling on the set, and a truncated set is reported by the
+	// caller rather than silently narrowing the search.
+	ListNodeIDsMatching(ctx context.Context, storageID int64, f NodeFacets, limit int) ([]int64, error)
 
 	// Users
 	CreateUser(ctx context.Context, email, passwordHash, role, locale, tz string) (*model.User, error)
@@ -364,6 +371,10 @@ type Store interface {
 	// Node owner
 	SetNodeOwner(ctx context.Context, nodeID int64, ownerID *int64) error
 	GetNodeOwner(ctx context.Context, nodeID int64) (*int64, error)
+	// NodeOwners answers for a whole listing at once, already joined to the
+	// account's name. GetNodeOwner per row would be one query per file, and it
+	// would still leave the caller holding a number nobody can read.
+	NodeOwners(ctx context.Context, nodeIDs []int64) ([]NodeOwner, error)
 
 	// Trash retention
 	ListTrashedExpired(ctx context.Context, before time.Time, limit int) ([]*model.Node, error)
@@ -402,6 +413,9 @@ type Store interface {
 	InsertNotification(ctx context.Context, n *model.NotificationInput) (int64, error)
 	GetNotification(ctx context.Context, id int64) (*model.Notification, error)
 	ListNotifications(ctx context.Context, userID *int64, onlyUnread bool, limit, offset int) ([]*model.Notification, int64, error)
+	// ListNodeEvents is the same table read the other way round: everything
+	// recorded against ONE file, newest first — the per-node activity feed.
+	ListNodeEvents(ctx context.Context, storageID int64, path string, limit int) ([]*model.Notification, error)
 	MarkNotificationRead(ctx context.Context, id int64, userID *int64) error
 	MarkAllNotificationsRead(ctx context.Context, userID *int64) error
 	UnreadNotificationCount(ctx context.Context, userID *int64) (int64, error)
@@ -505,6 +519,43 @@ type ShareWithMeta struct {
 	CreatorEmail string       `json:"creator_email,omitempty"`
 	NodePath     string       `json:"node_path,omitempty"`
 	StorageName  string       `json:"storage_name,omitempty"`
+}
+
+// NodeFacets narrows a node set by the properties the advanced search filters
+// on. A zero value matches every live node of the storage.
+//
+// Exts carries EXTENSIONS, not a type group: which extensions count as
+// "documents" is the client's vocabulary, and a second copy of that taxonomy
+// here is a second copy to keep in step. The client sends the list it means.
+type NodeFacets struct {
+	// PathPrefix confines the search to one subtree, given clean and slashed
+	// ("/Docs"). Empty means the whole storage.
+	PathPrefix string
+	// Exts are lower-case and without the dot ("md", "pdf"). A node matches if
+	// its name ends in any of them; empty means any extension.
+	Exts          []string
+	ModifiedAfter *time.Time
+	SizeMin       *int64
+	SizeMax       *int64
+	OwnerID       *int64
+	// FilesOnly drops directories. Type and size are properties of files, so a
+	// filter on either is a filter for files; a date or an owner is not.
+	FilesOnly bool
+}
+
+// Any reports whether the facets narrow anything at all.
+func (f NodeFacets) Any() bool {
+	return f.PathPrefix != "" || len(f.Exts) > 0 || f.ModifiedAfter != nil ||
+		f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.FilesOnly
+}
+
+// NodeOwner is one node's owner, named. Nodes with no owner — anything a
+// storage sync found rather than a person uploading it — are simply absent from
+// the answer rather than carried as a null.
+type NodeOwner struct {
+	NodeID  int64  `json:"node_id"`
+	OwnerID int64  `json:"owner_id"`
+	Name    string `json:"name"`
 }
 
 // AuditEntryWithUser is an audit row joined with the user.email column

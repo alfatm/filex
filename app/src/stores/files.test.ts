@@ -7,6 +7,7 @@ import { useFilesStore } from './files';
 import { useToastStore } from './toast';
 import { useViewStore } from './view';
 import { useUndoStore } from '@/features/files/undoStore';
+import { useOperationsStore } from '@/features/files/operationsStore';
 import { OPERATION_PENDING } from '@/data/repository';
 
 async function setup() {
@@ -137,10 +138,11 @@ describe('files store', () => {
     expect(toast.toasts.at(-1)?.text).toBe('Trash emptied');
   });
 
-  it('a queued job the server has not finished says so, refreshes, and arms no Undo', async () => {
+  it('a queued job the server has not finished says so in the tray, refreshes, and arms no Undo', async () => {
     const files = await setup();
     const toast = useToastStore();
     const undo = useUndoStore();
+    const operations = useOperationsStore();
     const design = files.ordered.find((n) => n.name === 'Design')!;
     // What the HTTP repository raises when it stops waiting on the ops queue: taken, running, not finished.
     const spy = vi.spyOn(repository, 'moveToTrash').mockRejectedValue(new Error(OPERATION_PENDING));
@@ -150,12 +152,38 @@ describe('files store', () => {
       spy.mockRestore();
     }
 
-    expect(toast.toasts.map((t) => t.text)).toEqual(['Still running on the server — the list will show it when it finishes']);
-    // No Undo: half a move is not a step that can be taken back.
-    expect(toast.toasts[0].action).toBeUndefined();
+    expect(operations.shown.map((o) => [o.label, o.state])).toEqual([['Moving “Design” to trash', 'pending']]);
+    // No toast and no Undo: half a move is not a step that can be taken back, and the row is not a success.
+    expect(toast.toasts).toEqual([]);
     expect(undo.canUndo).toBe(false);
     // The listing was read again anyway — the folder is changing under the user right now.
     expect(files.revision).toBe(1);
+  });
+
+  it('a mutation that fails is a row in the tray carrying what the server said, not silence', async () => {
+    const files = await setup();
+    const operations = useOperationsStore();
+    const design = files.ordered.find((n) => n.name === 'Design')!;
+    const spy = vi.spyOn(repository, 'moveToTrash').mockRejectedValue(new Error('storage is read-only'));
+    try {
+      // It resolves: every caller of this was an unawaited click handler, so a rejection reached nobody at all.
+      await files.trash([design]);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(operations.shown.map((o) => [o.state, o.error])).toEqual([['failed', 'storage is read-only']]);
+    expect(files.ordered.map((n) => n.name)).toContain('Design');
+
+    operations.dismiss(operations.shown[0].id);
+    expect(operations.open).toBe(false);
+  });
+
+  it('an operation that simply works leaves no trace in the tray', async () => {
+    const files = await setup();
+    const operations = useOperationsStore();
+    await files.trash([files.ordered.find((n) => n.name === 'Design')!]);
+    expect(operations.items).toEqual([]);
   });
 
   it('trash listing sorts its date column by deletedAt', async () => {

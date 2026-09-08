@@ -370,43 +370,51 @@ tags row there would move everything below it; revisit when the refs do.
 ## 8. User settings modal (ref 5)
 
 Opened by the topbar gear or by Account → User settings; hosted by the shell,
-so it is reachable from every page. Panel 808 wide, max height 850, radius 16,
-padding 20. Header: 44 avatar, title 20/600 "User settings", subtitle 14 in
-`--c-text-3`, close X top right. Body below it: nav 142 wide (5 items, h 40,
-icon 18 + 15px label, active on `--c-primary-soft` in primary), then the
-content box (`--c-border`, radius 12, padding 14) which is the only scrolling
-area. Footer above the panel edge: 1px separator, Cancel (outline) and Save
-changes (primary), both h 44.
+so it is reachable from every page. Panel 800 wide, 680 high (capped at the
+viewport less 48), radius 16, padding 16 / 20 — a fixed height, so switching
+tabs never moves the footer out from under the pointer. Header: 44 avatar,
+title 20/600 "User settings", subtitle 14 in `--c-text-3`, close X top right.
+Body below it: a vertical tab strip 150 wide (5 tabs, h 40, icon 18 + 15px
+label, selected on `--c-primary-soft` in primary, arrows walk it), gap 32,
+then the panel of the selected tab — the only scrolling area, with a 24
+gutter and a 6px rail (`.scroll-thin`) rather than the platform's ~15. Footer
+above the panel edge: 1px separator, Cancel (outline) and Save changes
+(primary), both h 44.
 
-The content is one column of cards (radius 12, border, padding 16, 16/600
-heading + 13 caption): Profile full width, then a two-column grid
-(`1fr` / 236) with Preferences, Storage & uploads and Notifications on the
-left, Security and AI assistant on the right. The nav scrolls to a card and
-highlights whichever card has passed the top edge.
+One tab, one panel: only the selected panel is rendered, and it is flat — no
+cards inside the panel. A panel opens with a 16/600 heading and a 13 caption
+in `--c-text-3`; where it holds a second section (Storage & uploads, under
+Preferences, which has no tab of its own) the two are told apart by a 1px rule
+with 24 above and below it. Inside a section every setting is one row: the
+label 15 (with an optional 13 caption under it) on the left, the control
+right-aligned in a fixed 212 column; rows are 36 high, 52 when they carry a
+caption, with a 4 gap.
 
-Controls: Profile — 62 avatar with a camera badge, name + role pill + email,
-Change photo / Remove, then Full name, Display name, Email (read-only, muted)
-and Job title in a 2×2 grid. Preferences — Language and Time zone selects,
-Theme as a 3-segment control (Light / System / Dark, h 36), "Use compact file
-list" checkbox with a caption. Storage & uploads — default upload folder
-select, an auto-open-preview switch (44×24), upload conflict select.
-Notifications — three switches with captions. Security — three 52-high rows
-(icon, title 13/500, caption 12, chevron) and a Manage security button. The
-first row names the sign-in method and is read-only: the realm and its second
-step belong to the auth provider, and `GET /api/auth/methods` is what the card
-asks. The second offers a password change only where that realm allows one (an
-OIDC account's password lives at its identity provider); it opens in place into
-three fields with its own button, because a password is not part of the draft
-"Save changes" commits and "Cancel" throws away. Active sessions stays inert —
-filex has no endpoint listing them.
-AI assistant — enable switch, default search mode select, a note that the
-provider is set by the administrator.
+Controls: Profile — 62 avatar, name + role pill + email, Change photo (Remove
+appears only once there is a picture to remove), then Full name, Display name,
+Email (read-only, muted) and Job title in a 2×2 grid. Preferences — Language
+and Time zone selects, Theme as a 3-segment control (Light / System / Dark,
+h 36), a "Use compact file list" switch with a caption. Storage & uploads —
+default upload folder select, an auto-open-preview switch (44×24), upload
+conflict select. Notifications — three switches with captions. Security —
+three 40-high rows (icon 18, label 15, status 13 in `--c-text-3`, chevron):
+Password, Two-factor authentication, Active sessions. What those rows say
+comes from `GET /api/auth/methods`. The password row offers a change only
+where the realm allows one and otherwise names that realm, because an OIDC
+account's password lives at its identity provider; it opens in place into
+three fields with its own button, since a password is not part of the draft
+"Save changes" commits and "Cancel" throws away. Two-factor is filex's own
+TOTP on a local realm (a green dot when it is on) and the provider's business
+otherwise. AI assistant — enable switch, default search mode select, a note
+that the provider is set by the administrator.
 
 Editing works on a copy: Cancel drops it, Save changes commits everything at
 once. Theme, language and the compact list take effect immediately; the
 profile fields, notification switches and photo buttons are mocks until the
-backend grows the endpoints (see BACKEND-GAP.md); of the Security rows only
-Active sessions still is.
+backend grows the endpoints (see BACKEND-GAP.md). Of the Security rows only
+the password change acts: two-factor and Active sessions are read-only, the
+first because the second step belongs to the auth provider, the second because
+filex has no endpoint listing sessions.
 
 ## 9. Mock data (matches the refs)
 

@@ -2,19 +2,20 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Dialog, DialogPanel, DialogTitle } from '@headlessui/vue';
-import { Bell, Camera, ChevronRight, Folder, KeyRound, Monitor, Settings2, ShieldCheck, Sparkles, UserRound, X } from 'lucide-vue-next';
+import { Bell, ChevronRight, Folder, KeyRound, Monitor, Settings2, ShieldCheck, Sparkles, UserRound, X } from 'lucide-vue-next';
 import { repository } from '@/data';
 import { MIN_PASSWORD_LENGTH, WRONG_PASSWORD } from '@/data/repository';
 import type { AuthMethods, Node } from '@/data/types';
 import { useToastStore } from '@/stores/toast';
 import { LOCALES, setLocale, type Locale } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
-import { Avatar, Button, Checkbox, Input, Select } from '@/ui';
+import { Avatar, Button, Input, Select } from '@/ui';
 import Segmented from './Segmented.vue';
+import SettingRow from './SettingRow.vue';
 import Toggle from './Toggle.vue';
 import { ASSISTANT_MODE_VALUES, CONFLICT_BEHAVIORS, THEMES, TIME_ZONES, useSettingsStore, type Settings } from './settingsStore';
 
-/** Sections are anchors in one scrolling column, so the nav highlights whatever the reader has in view. */
+/** The nav is a vertical tab strip: one item, one panel, nothing else rendered. */
 const SECTIONS = [
   { id: 'profile', icon: UserRound },
   { id: 'preferences', icon: Settings2 },
@@ -38,16 +39,15 @@ const toast = useToastStore();
 const draft = ref<Settings>({ ...store.settings });
 const language = ref<Locale>(locale.value as Locale);
 const active = ref<SectionId>('profile');
-const scroller = ref<HTMLElement>();
-const sections = ref<Record<string, HTMLElement>>({});
 const folders = ref<Node[]>([]);
 // The picture belongs to the ACCOUNT, not to the local settings, so it is drafted on its own.
 const avatarUrl = ref('');
 const photoInput = ref<HTMLInputElement>();
+const tabs = ref<Record<string, HTMLButtonElement>>({});
 const saving = ref(false);
 
 /**
- * The Security card asks the server how this account signs in before it offers anything: a password form on an
+ * The Security section asks the server how this account signs in before it offers anything: a password form on an
  * OIDC realm could only ever fail, and the second factor belongs to whatever provider the realm names.
  */
 const auth = ref<AuthMethods | null>(null);
@@ -63,7 +63,12 @@ const providerLabel = computed(() => {
   return te(key) ? t(key) : t('settings.security.provider.unknown');
 });
 
-/** The second factor in one clause: filex's own TOTP on a local realm, otherwise the provider's business. */
+/** On a realm that owns the password, the row names that realm instead of offering a change it cannot make. */
+const passwordStatus = computed(() => (auth.value?.changePassword ? t('settings.security.passwordHint') : providerLabel.value));
+
+const secondFactorOn = computed(() => auth.value?.provider === 'local' && auth.value.totpEnabled);
+
+/** The second factor in one word: filex's own TOTP on a local realm, otherwise the provider's business. */
 const secondFactorLabel = computed(() => {
   if (!auth.value) return '';
   if (auth.value.provider !== 'local') return t('settings.security.twoFactorProvider');
@@ -171,16 +176,12 @@ async function pickPhoto(event: Event) {
   avatarUrl.value = canvas.toDataURL('image/jpeg', AVATAR_QUALITY);
 }
 
-function onScroll() {
-  const top = scroller.value?.getBoundingClientRect().top ?? 0;
-  // The last section whose heading has passed the top edge wins; anything above the fold keeps the first.
-  const passed = SECTIONS.filter((s) => (sections.value[s.id]?.getBoundingClientRect().top ?? Infinity) - top <= 8);
-  active.value = passed.at(-1)?.id ?? 'profile';
-}
-
-function goTo(id: SectionId) {
-  active.value = id;
-  sections.value[id]?.scrollIntoView({ block: 'start' });
+/** Arrows move between tabs and open them, as everywhere else; Tab itself reaches only the selected one. */
+function step(delta: number) {
+  const index = SECTIONS.findIndex((s) => s.id === active.value);
+  const next = SECTIONS[(index + delta + SECTIONS.length) % SECTIONS.length];
+  active.value = next.id;
+  tabs.value[next.id]?.focus();
 }
 
 /**
@@ -208,15 +209,21 @@ async function save() {
   store.open = false;
 }
 
-const CARD = 'rounded-lg border border-border p-4';
+/** Sections are told apart by a rule and the space around it — no card inside the card. */
+const SECTION = 'mt-6 border-t border-border pt-6';
 const LABEL = 'block text-13 leading-none text-text-3';
+const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 text-left';
 </script>
 
 <template>
   <Dialog open :initial-focus="panelEl" class="relative z-40" @close="store.open = false">
     <div class="fixed inset-0 bg-overlay" aria-hidden="true" />
     <div class="fixed inset-0 flex items-center justify-center overflow-y-auto p-6">
-      <DialogPanel ref="panel" tabindex="-1" class="flex max-h-[850px] w-[808px] flex-col rounded-2xl bg-bg px-4 py-5 focus:outline-none shadow-modal">
+      <DialogPanel
+        ref="panel"
+        tabindex="-1"
+        class="flex h-[680px] max-h-[calc(100vh-48px)] w-[800px] flex-col rounded-2xl bg-bg px-4 py-5 focus:outline-none shadow-modal"
+      >
         <div class="flex items-start">
           <Avatar :initial="files.user?.initial ?? ''" :src="avatarUrl" :size="44" class="!text-16" />
           <div class="ml-4 min-w-0 flex-1">
@@ -233,36 +240,47 @@ const LABEL = 'block text-13 leading-none text-text-3';
           </button>
         </div>
 
-        <div class="mt-5 flex min-h-0 flex-1 gap-4">
-          <nav class="w-[142px] shrink-0" :aria-label="t('settings.title')">
-            <ul class="flex flex-col gap-px">
-              <li v-for="item in nav" :key="item.id">
-                <button
-                  type="button"
-                  :aria-current="active === item.id ? 'true' : undefined"
-                  class="flex h-10 w-full items-center gap-3 rounded-md px-3 text-15 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
-                  :class="active === item.id ? 'bg-primary-soft font-medium text-primary' : 'text-text-2 hover:bg-hover-row'"
-                  @click="goTo(item.id)"
-                >
-                  <component :is="item.icon" :size="18" :stroke-width="1.75" class="shrink-0" />
-                  <span class="truncate-safe">{{ item.label }}</span>
-                </button>
-              </li>
-            </ul>
-          </nav>
+        <div class="mt-5 flex min-h-0 flex-1 gap-8">
+          <div
+            role="tablist"
+            aria-orientation="vertical"
+            :aria-label="t('settings.title')"
+            class="flex w-[150px] shrink-0 flex-col gap-px"
+            @keydown.up.prevent="step(-1)"
+            @keydown.down.prevent="step(1)"
+          >
+            <button
+              v-for="item in nav"
+              :key="item.id"
+              :ref="(el) => (tabs[item.id] = el as HTMLButtonElement)"
+              type="button"
+              role="tab"
+              :id="`settings-tab-${item.id}`"
+              :aria-selected="active === item.id"
+              :aria-controls="`settings-panel-${item.id}`"
+              :tabindex="active === item.id ? 0 : -1"
+              class="flex h-10 w-full items-center gap-3 rounded-md px-3 text-15 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+              :class="active === item.id ? 'bg-primary-soft font-medium text-primary' : 'text-text-2 hover:bg-hover-row'"
+              @click="active = item.id"
+            >
+              <component :is="item.icon" :size="18" :stroke-width="1.75" class="shrink-0" />
+              <span class="truncate-safe">{{ item.label }}</span>
+            </button>
+          </div>
 
-          <div ref="scroller" class="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border p-[14px]" @scroll="onScroll">
-            <section :ref="(el) => (sections.profile = el as HTMLElement)" :class="CARD" :aria-label="t('settings.nav.profile')">
+          <div
+            :id="`settings-panel-${active}`"
+            role="tabpanel"
+            :aria-labelledby="`settings-tab-${active}`"
+            tabindex="0"
+            class="scroll-thin min-h-0 flex-1 overflow-y-auto pr-6 focus:outline-none"
+          >
+            <section v-if="active === 'profile'">
               <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.profile') }}</h3>
               <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.profile.hint') }}</p>
 
-              <div class="mt-4 flex items-center">
-                <span class="relative shrink-0">
-                  <Avatar :initial="files.user?.initial ?? ''" :src="avatarUrl" :size="62" class="!text-22" />
-                  <span class="absolute -bottom-0.5 -right-0.5 flex h-6 w-6 items-center justify-center rounded-full border border-border bg-bg text-text-2">
-                    <Camera :size="13" />
-                  </span>
-                </span>
+              <div class="mt-5 flex items-center">
+                <Avatar :initial="files.user?.initial ?? ''" :src="avatarUrl" :size="62" class="!text-22 shrink-0" />
                 <div class="ml-4 min-w-0 flex-1">
                   <p class="flex items-center gap-2">
                     <span class="truncate-safe text-17 font-semibold leading-none">{{ displayName }}</span>
@@ -273,15 +291,16 @@ const LABEL = 'block text-13 leading-none text-text-3';
                   <p class="mt-2 truncate-safe text-14 leading-none text-text-3">{{ files.user?.email }}</p>
                 </div>
                 <input ref="photoInput" type="file" accept="image/*" class="sr-only" @change="pickPhoto" />
+                <!-- Removal is offered only once there is a picture to remove. -->
+                <Button v-if="avatarUrl" variant="outline" class="ml-3 shrink-0 !text-danger" @click="avatarUrl = ''">
+                  {{ t('settings.profile.removePhoto') }}
+                </Button>
                 <Button variant="outline" class="ml-3 shrink-0" @click="photoInput?.click()">
                   {{ t('settings.profile.changePhoto') }}
                 </Button>
-                <Button variant="outline" class="ml-2 shrink-0 !text-danger" :disabled="!avatarUrl" @click="avatarUrl = ''">
-                  {{ t('settings.profile.removePhoto') }}
-                </Button>
               </div>
 
-              <div class="mt-4 grid grid-cols-2 gap-x-4 gap-y-3">
+              <div class="mt-5 grid grid-cols-2 gap-x-6 gap-y-4">
                 <label>
                   <span :class="LABEL">{{ t('settings.profile.fullName') }}</span>
                   <Input v-model="draft.fullName" class="mt-2" :label="t('settings.profile.fullName')" />
@@ -304,161 +323,135 @@ const LABEL = 'block text-13 leading-none text-text-3';
               </div>
             </section>
 
-            <div class="mt-3 grid grid-cols-[minmax(0,1fr)_244px] items-start gap-[14px]">
-              <div class="flex flex-col gap-3">
-                <section :ref="(el) => (sections.preferences = el as HTMLElement)" :class="CARD" :aria-label="t('settings.nav.preferences')">
-                  <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.preferences') }}</h3>
-                  <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.prefs.hint') }}</p>
+            <section v-else-if="active === 'preferences'">
+              <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.preferences') }}</h3>
+              <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.prefs.hint') }}</p>
 
-                  <div class="mt-4 grid grid-cols-2 gap-4">
-                    <label>
-                      <span :class="LABEL">{{ t('settings.prefs.language') }}</span>
-                      <Select v-model="language" class="mt-2" :options="languageOptions" :label="t('settings.prefs.language')" />
-                    </label>
-                    <label>
-                      <span :class="LABEL">{{ t('settings.prefs.timeZone') }}</span>
-                      <Select v-model="draft.timeZone" class="mt-2" :options="zoneOptions" :label="t('settings.prefs.timeZone')" />
-                    </label>
-                  </div>
+              <div class="mt-3 flex flex-col gap-1">
+                <SettingRow :label="t('settings.prefs.language')">
+                  <Select v-model="language" :options="languageOptions" :width="212" :label="t('settings.prefs.language')" />
+                </SettingRow>
+                <SettingRow :label="t('settings.prefs.timeZone')">
+                  <Select v-model="draft.timeZone" :options="zoneOptions" :width="212" :label="t('settings.prefs.timeZone')" />
+                </SettingRow>
+                <SettingRow :label="t('settings.prefs.theme')">
+                  <Segmented v-model="draft.theme" :options="themeOptions" :label="t('settings.prefs.theme')" class="w-full" />
+                </SettingRow>
+                <SettingRow :label="t('settings.prefs.compact')" :hint="t('settings.prefs.compactHint')">
+                  <Toggle v-model="draft.compactList" :label="t('settings.prefs.compact')" />
+                </SettingRow>
+              </div>
 
-                  <div class="mt-4 flex items-center">
-                    <span class="w-[110px] shrink-0 text-15 leading-none">{{ t('settings.prefs.theme') }}</span>
-                    <Segmented v-model="draft.theme" :options="themeOptions" :label="t('settings.prefs.theme')" class="flex-1" />
-                  </div>
+              <!-- Upload defaults have no tab of their own: they are preferences, told apart by a rule. -->
+              <div :class="SECTION">
+                <h3 class="text-16 font-semibold leading-none">{{ t('settings.storage.title') }}</h3>
+                <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.storage.hint') }}</p>
 
-                  <div class="mt-4 flex items-start gap-2.5">
-                    <Checkbox v-model="draft.compactList" :label="t('settings.prefs.compact')" />
-                    <div class="-mt-0.5">
-                      <p class="text-15 leading-none">{{ t('settings.prefs.compact') }}</p>
-                      <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.prefs.compactHint') }}</p>
-                    </div>
-                  </div>
-                </section>
-
-                <section :class="CARD">
-                  <h3 class="text-16 font-semibold leading-none">{{ t('settings.storage.title') }}</h3>
-                  <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.storage.hint') }}</p>
-
-                  <div class="mt-4 flex items-center">
-                    <span class="flex-1 text-15 leading-none">{{ t('settings.storage.defaultFolder') }}</span>
+                <div class="mt-3 flex flex-col gap-1">
+                  <SettingRow :label="t('settings.storage.defaultFolder')">
                     <Select
                       v-model="draft.defaultUploadFolder"
                       :options="folderOptions"
                       :icon="Folder"
-                      :width="180"
+                      :width="212"
                       :label="t('settings.storage.defaultFolder')"
                     />
-                  </div>
-                  <div class="mt-3 flex items-center gap-3">
-                    <span class="w-[150px] shrink-0 text-15 leading-none">{{ t('settings.storage.autoPreview') }}</span>
+                  </SettingRow>
+                  <SettingRow :label="t('settings.storage.autoPreview')" :hint="t('settings.storage.autoPreviewHint')">
                     <Toggle v-model="draft.autoOpenPreview" :label="t('settings.storage.autoPreview')" />
-                    <span class="text-13 leading-tight text-text-3">{{ t('settings.storage.autoPreviewHint') }}</span>
-                  </div>
-                  <div class="mt-3 flex items-center">
-                    <span class="flex-1 text-15 leading-none">{{ t('settings.storage.conflict') }}</span>
-                    <Select v-model="draft.conflictBehavior" :options="conflictOptions" :width="180" :label="t('settings.storage.conflict')" />
-                  </div>
-                </section>
+                  </SettingRow>
+                  <SettingRow :label="t('settings.storage.conflict')">
+                    <Select v-model="draft.conflictBehavior" :options="conflictOptions" :width="212" :label="t('settings.storage.conflict')" />
+                  </SettingRow>
+                </div>
+              </div>
+            </section>
 
-                <section :ref="(el) => (sections.notifications = el as HTMLElement)" :class="CARD" :aria-label="t('settings.nav.notifications')">
-                  <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.notifications') }}</h3>
-                  <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.notify.hint') }}</p>
-                  <div class="mt-4 flex flex-col gap-3">
-                    <div v-for="key in (['notifyShared', 'notifyComments', 'notifyUploads'] as const)" :key="key" class="flex items-center">
-                      <div class="min-w-0 flex-1">
-                        <p class="text-15 leading-none">{{ t(`settings.notify.${key}`) }}</p>
-                        <p class="mt-1.5 text-13 leading-none text-text-3">{{ t(`settings.notify.${key}Hint`) }}</p>
-                      </div>
-                      <Toggle v-model="draft[key]" :label="t(`settings.notify.${key}`)" />
+            <section v-else-if="active === 'notifications'">
+              <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.notifications') }}</h3>
+              <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.notify.hint') }}</p>
+              <div class="mt-3 flex flex-col gap-1">
+                <SettingRow
+                  v-for="key in (['notifyShared', 'notifyComments', 'notifyUploads'] as const)"
+                  :key="key"
+                  :label="t(`settings.notify.${key}`)"
+                  :hint="t(`settings.notify.${key}Hint`)"
+                >
+                  <Toggle v-model="draft[key]" :label="t(`settings.notify.${key}`)" />
+                </SettingRow>
+              </div>
+            </section>
+
+            <section v-else-if="active === 'security'">
+              <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.security') }}</h3>
+              <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.security.hint') }}</p>
+              <ul class="mt-3 flex flex-col gap-1">
+                <li>
+                  <!-- Offered only where the realm allows it; an OIDC account's password lives elsewhere, and the
+                       row then names that realm instead of a change it could never make. -->
+                  <form v-if="passwordOpen" class="rounded-md border border-border p-3" @submit.prevent="submitPassword">
+                    <div class="flex flex-col gap-2">
+                      <Input v-model="currentPassword" type="password" :label="t('settings.security.currentPassword')" :placeholder="t('settings.security.currentPassword')" />
+                      <Input v-model="newPassword" type="password" :label="t('settings.security.newPassword')" :placeholder="t('settings.security.newPassword')" />
+                      <Input v-model="repeatPassword" type="password" :label="t('settings.security.repeatPassword')" :placeholder="t('settings.security.repeatPassword')" />
                     </div>
+                    <p v-if="passwordError" class="mt-2 text-12 leading-none text-danger" role="alert">{{ passwordError }}</p>
+                    <p v-else class="mt-2 text-12 leading-none text-text-3">{{ t('settings.security.otherSessions') }}</p>
+                    <div class="mt-3 flex gap-2">
+                      <Button type="submit" :disabled="passwordBusy">{{ t('settings.security.submit') }}</Button>
+                      <Button variant="outline" type="button" @click="passwordOpen = false">{{ t('settings.cancel') }}</Button>
+                    </div>
+                  </form>
+                  <button v-else-if="auth?.changePassword" type="button" :class="[SECURITY_ROW, 'hover:bg-hover-row']" @click="openPassword">
+                    <KeyRound :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
+                    <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ t('settings.security.password') }}</span>
+                    <span class="truncate-safe text-13 leading-none text-text-3">{{ passwordStatus }}</span>
+                    <ChevronRight :size="16" class="shrink-0 text-text-3" />
+                  </button>
+                  <div v-else :class="[SECURITY_ROW, 'cursor-default']">
+                    <KeyRound :size="18" :stroke-width="1.75" class="shrink-0 text-text-3" />
+                    <span class="min-w-0 flex-1 truncate-safe text-15 leading-none text-text-3">{{ t('settings.security.password') }}</span>
+                    <span class="truncate-safe text-13 leading-none text-text-3">{{ passwordStatus }}</span>
                   </div>
-                </section>
-              </div>
-
-              <div class="flex flex-col gap-3">
-                <section :ref="(el) => (sections.security = el as HTMLElement)" :class="CARD" :aria-label="t('settings.nav.security')">
-                  <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.security') }}</h3>
-                  <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.security.hint') }}</p>
-                  <ul class="mt-4 flex flex-col gap-2">
-                    <!-- How this account signs in. Read-only on purpose: the realm and its second step are the
-                         auth provider's, and this app is not where either is configured. -->
-                    <li>
-                      <div class="flex h-[52px] w-full items-center rounded-md border border-border px-2.5">
-                        <ShieldCheck :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
-                        <div class="ml-2.5 min-w-0 flex-1">
-                          <p class="truncate-safe text-13 font-medium leading-none">{{ t('settings.security.signIn') }}</p>
-                          <p class="mt-1.5 truncate-safe text-12 leading-none text-text-3">{{ providerLabel }} · {{ secondFactorLabel }}</p>
-                        </div>
-                      </div>
-                    </li>
-                    <li>
-                      <!-- Offered only where the realm allows it; an OIDC account's password lives elsewhere. -->
-                      <form v-if="passwordOpen" class="rounded-md border border-border p-2.5" @submit.prevent="submitPassword">
-                        <div class="flex flex-col gap-2">
-                          <Input v-model="currentPassword" type="password" :label="t('settings.security.currentPassword')" :placeholder="t('settings.security.currentPassword')" />
-                          <Input v-model="newPassword" type="password" :label="t('settings.security.newPassword')" :placeholder="t('settings.security.newPassword')" />
-                          <Input v-model="repeatPassword" type="password" :label="t('settings.security.repeatPassword')" :placeholder="t('settings.security.repeatPassword')" />
-                        </div>
-                        <p v-if="passwordError" class="mt-2 text-12 leading-none text-danger" role="alert">{{ passwordError }}</p>
-                        <p v-else class="mt-2 text-12 leading-none text-text-3">{{ t('settings.security.otherSessions') }}</p>
-                        <div class="mt-2.5 flex gap-2">
-                          <Button type="submit" :disabled="passwordBusy">{{ t('settings.security.submit') }}</Button>
-                          <Button variant="outline" type="button" @click="passwordOpen = false">{{ t('settings.cancel') }}</Button>
-                        </div>
-                      </form>
-                      <button
-                        v-else-if="auth?.changePassword"
-                        type="button"
-                        class="flex h-[52px] w-full items-center rounded-md border border-border px-2.5 text-left hover:bg-hover-row"
-                        @click="openPassword"
-                      >
-                        <KeyRound :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
-                        <div class="ml-2.5 min-w-0 flex-1">
-                          <p class="truncate-safe text-13 font-medium leading-none">{{ t('settings.security.password') }}</p>
-                          <p class="mt-1.5 truncate-safe text-12 leading-none text-text-3">{{ t('settings.security.passwordHint') }}</p>
-                        </div>
-                        <ChevronRight :size="16" class="shrink-0 text-text-3" />
-                      </button>
-                      <div v-else class="flex h-[52px] w-full cursor-default items-center rounded-md border border-border px-2.5">
-                        <KeyRound :size="18" :stroke-width="1.75" class="shrink-0 text-text-3" />
-                        <div class="ml-2.5 min-w-0 flex-1">
-                          <p class="truncate-safe text-13 font-medium leading-none text-text-3">{{ t('settings.security.password') }}</p>
-                          <p class="mt-1.5 truncate-safe text-12 leading-none text-text-3">{{ t('settings.security.passwordProvider') }}</p>
-                        </div>
-                      </div>
-                    </li>
-                    <li>
-                      <!-- Inert: filex has no session-listing endpoint (BACKEND-GAP.md). -->
-                      <div class="flex h-[52px] w-full cursor-default items-center rounded-md border border-border px-2.5" :title="t('common.comingSoon')">
-                        <Monitor :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
-                        <div class="ml-2.5 min-w-0 flex-1">
-                          <p class="truncate-safe text-13 font-medium leading-none">{{ t('settings.security.sessions') }}</p>
-                          <p class="mt-1.5 truncate-safe text-12 leading-none text-text-3">{{ t('settings.security.sessionsHint') }}</p>
-                        </div>
-                        <ChevronRight :size="16" class="shrink-0 text-text-3" />
-                      </div>
-                    </li>
-                  </ul>
-                  <Button variant="outline" class="mt-4 w-full cursor-default" aria-disabled="true" :title="t('common.comingSoon')">
-                    {{ t('settings.security.manage') }}
-                  </Button>
-                </section>
-
-                <section :ref="(el) => (sections.assistant = el as HTMLElement)" :class="CARD" :aria-label="t('settings.nav.assistant')">
-                  <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.assistant') }}</h3>
-                  <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.assistant.hint') }}</p>
-                  <div class="mt-4 flex items-center">
-                    <span class="min-w-0 flex-1 text-15 leading-none">{{ t('settings.assistant.enabled') }}</span>
-                    <Toggle v-model="draft.assistantEnabled" :label="t('settings.assistant.enabled')" />
+                </li>
+                <li>
+                  <!-- Read-only: the second step belongs to the auth provider, and `GET /api/auth/methods` is what
+                       this row asks. -->
+                  <div :class="[SECURITY_ROW, 'cursor-default']" :title="t('common.comingSoon')">
+                    <ShieldCheck :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
+                    <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ t('settings.security.twoFactor') }}</span>
+                    <span class="flex items-center gap-1.5 truncate-safe text-13 leading-none text-text-3">
+                      <span v-if="secondFactorOn" class="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
+                      {{ secondFactorLabel }}
+                    </span>
+                    <ChevronRight :size="16" class="shrink-0 text-text-3" />
                   </div>
-                  <label class="mt-4 block">
-                    <span :class="LABEL">{{ t('settings.assistant.defaultMode') }}</span>
-                    <Select v-model="draft.assistantMode" class="mt-2" :options="modeOptions" :label="t('settings.assistant.defaultMode')" />
-                  </label>
-                  <p class="mt-3 text-13 leading-tight text-text-3">{{ t('settings.assistant.providerNote') }}</p>
-                </section>
+                </li>
+                <li>
+                  <!-- Inert: filex has no session-listing endpoint (BACKEND-GAP.md). -->
+                  <div :class="[SECURITY_ROW, 'cursor-default']" :title="t('common.comingSoon')">
+                    <Monitor :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
+                    <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ t('settings.security.sessions') }}</span>
+                    <span class="truncate-safe text-13 leading-none text-text-3">{{ t('settings.security.sessionsHint') }}</span>
+                    <ChevronRight :size="16" class="shrink-0 text-text-3" />
+                  </div>
+                </li>
+              </ul>
+            </section>
+
+            <section v-else>
+              <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.assistant') }}</h3>
+              <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.assistant.hint') }}</p>
+              <div class="mt-3 flex flex-col gap-1">
+                <SettingRow :label="t('settings.assistant.enabled')">
+                  <Toggle v-model="draft.assistantEnabled" :label="t('settings.assistant.enabled')" />
+                </SettingRow>
+                <SettingRow :label="t('settings.assistant.defaultMode')">
+                  <Select v-model="draft.assistantMode" :options="modeOptions" :width="212" :label="t('settings.assistant.defaultMode')" />
+                </SettingRow>
               </div>
-            </div>
+              <p class="mt-3 text-13 leading-tight text-text-3">{{ t('settings.assistant.providerNote') }}</p>
+            </section>
           </div>
         </div>
 

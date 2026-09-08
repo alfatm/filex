@@ -15,7 +15,7 @@ const uploads = useUploadStore();
   <section
     v-if="uploads.open"
     :aria-label="t('upload.title', { done: uploads.doneCount, total: uploads.items.length })"
-    class="fixed bottom-6 right-6 z-30 w-[360px] overflow-hidden rounded-lg border border-border bg-bg shadow-menu"
+    class="w-[360px] overflow-hidden rounded-lg border border-border bg-bg shadow-menu"
   >
     <header class="flex h-12 items-center border-b border-border pl-4 pr-1">
       <span class="flex-1 text-15 font-medium leading-none" aria-live="polite">

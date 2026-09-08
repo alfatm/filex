@@ -420,6 +420,8 @@ func BuildRouter(d *Deps) http.Handler {
 	queueH := handlers.NewQueue(d.Queue)
 	notifH := handlers.NewNotifications(d.Notify)
 	replicaH := handlers.NewReplica(d.Store, d.ReplicaService, d.ReplicaCron, d.ReplicaReloader)
+	activityH := handlers.NewActivity(d.Store)
+	activityH.AttachACL(d.ACL)
 	trashH := handlers.NewTrash(d.Trash, d.Store)
 	trashH.AttachSearchIndex(d.Index)
 	trashH.AttachACL(d.ACL)
@@ -744,11 +746,21 @@ func BuildRouter(d *Deps) http.Handler {
 			r.Get("/manager", mh.List)
 			r.Post("/manager", mh.Mutate)
 			r.Get("/manager/trash", trashH.List)
+			// What happened to one file. Beside the listings rather than under
+			// /api/admin/audit: the audit page answers "what did this ACCOUNT
+			// do", this answers "what happened to this FILE", and only the
+			// second is a question an ordinary user asks about their own files.
+			r.Get("/activity", activityH.List)
 			// What OTHER people shared with me. Sits beside the trash listing
 			// because it is the same kind of surface: a virtual folder the
 			// navigation panel opens, not a path under a storage.
 			r.Get("/manager/shared-with-me", sharedH.SharedWithMe)
 			r.Post("/manager/restore", trashH.Restore)
+			// Purging one's OWN trash. `empty` is declared before the `{id}`
+			// route out of the same habit as the upload routes, though the
+			// methods already keep them apart.
+			r.Post("/manager/trash/empty", trashH.EmptySelf)
+			r.Delete("/manager/trash/{id}", trashH.PurgeSelf)
 			r.Get("/stat", mh.Stat)
 			r.Get("/read", mh.Read)
 			// Search — POST is the canonical body-carrying endpoint;

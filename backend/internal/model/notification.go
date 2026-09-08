@@ -20,6 +20,9 @@ type Notification struct {
 	WebhookStatus string          `json:"webhook_status"`
 	WebhookError  string          `json:"webhook_error,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
+	// The file this event is about, when it is about one. See NotificationInput.
+	NodeStorageID *int64 `json:"node_storage_id,omitempty"`
+	NodePath      string `json:"node_path,omitempty"`
 }
 
 // NotificationInput is the new-row payload — DB drivers turn this into
@@ -32,6 +35,12 @@ type NotificationInput struct {
 	Body     string
 	MetaJSON json.RawMessage
 	UserID   *int64
+	// NodeStorageID and NodePath address the file this event happened to, lifted
+	// out of the meta payload into columns of their own so a per-node feed does
+	// not have to scan and parse every row. Both empty for events about no
+	// particular file (a quota warning, an update notice).
+	NodeStorageID *int64
+	NodePath      string
 }
 
 // NotificationSettings captures per-user notification preferences. Stored

@@ -640,6 +640,7 @@ func (h *Manager) vfIndex(w http.ResponseWriter, r *http.Request, s *model.Stora
 		}
 	}
 	files := projectFileNodes(s.Name, nodes, dirsOnly, set)
+	attachOwners(r.Context(), h.Store, files)
 	if dirsOnly {
 		writeJSON(w, http.StatusOK, map[string]any{"folders": files})
 		return
@@ -971,6 +972,7 @@ func (h *Manager) vfSearch(w http.ResponseWriter, r *http.Request, s *model.Stor
 	}
 
 	files := projectFileNodes(s.Name, nodes, false, nil)
+	attachOwners(r.Context(), h.Store, files)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"adapter":   s.Name,
 		"storages":  storageNames,
@@ -1215,6 +1217,42 @@ func joinAdapterPath(adapter, rel string) string {
 		return adapter + "://"
 	}
 	return adapter + "://" + rel
+}
+
+// attachOwners stamps owner_id + owner_name onto projected listing entries.
+//
+// One query for the whole page, not GetNodeOwner per row — and it carries the
+// NAME, because an owner column that renders a number is a column nobody reads.
+// Nodes with no owner (anything a storage sync found rather than a person
+// uploading it) keep neither field: "unowned" and "owned by user 0" are not the
+// same statement.
+func attachOwners(ctx context.Context, store db.Store, files []map[string]any) {
+	if store == nil || len(files) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(files))
+	for _, f := range files {
+		if id, ok := f["id"].(int64); ok {
+			ids = append(ids, id)
+		}
+	}
+	owners, err := store.NodeOwners(ctx, ids)
+	if err != nil || len(owners) == 0 {
+		return
+	}
+	byNode := make(map[int64]db.NodeOwner, len(owners))
+	for _, o := range owners {
+		byNode[o.NodeID] = o
+	}
+	for _, f := range files {
+		id, ok := f["id"].(int64)
+		if !ok {
+			continue
+		}
+		if o, found := byNode[id]; found {
+			f["owner_id"], f["owner_name"] = o.OwnerID, o.Name
+		}
+	}
 }
 
 // projectFileNodes shapes DB nodes into the FileExplorer FileNode

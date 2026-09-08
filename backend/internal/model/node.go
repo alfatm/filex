@@ -25,12 +25,16 @@ const (
 
 // Node is the canonical representation of a file or directory in DB cache.
 type Node struct {
-	ID           int64      `json:"id"`
-	StorageID    int64      `json:"storage_id"`
-	ParentID     *int64     `json:"parent_id,omitempty"`
-	Name         string     `json:"name"`
-	Path         string     `json:"path"`
-	PathHash     string     `json:"path_hash"`
+	ID        int64  `json:"id"`
+	StorageID int64  `json:"storage_id"`
+	ParentID  *int64 `json:"parent_id,omitempty"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	PathHash  string `json:"path_hash"`
+	// OwnerID is the account that put the bytes there — written by quota
+	// accounting on every upload and save. Nil for anything a storage sync
+	// found rather than a person uploading it.
+	OwnerID      *int64     `json:"owner_id,omitempty"`
 	StorageKey   string     `json:"storage_key,omitempty"`
 	Type         NodeType   `json:"type"`
 	Size         int64      `json:"size"`

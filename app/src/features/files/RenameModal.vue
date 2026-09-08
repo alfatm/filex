@@ -31,8 +31,9 @@ async function submit() {
   try {
     await files.rename(props.node.id, trimmed.value);
   } catch (e) {
-    if (!(e instanceof Error && e.message === DUPLICATE_NAME)) throw e;
-    error.value = t('modal.duplicateName');
+    // A collision has its own sentence. Anything else is shown here too, in the server's words: rethrowing it left
+    // the modal open with no explanation, because nothing above this catches.
+    error.value = e instanceof Error && e.message === DUPLICATE_NAME ? t('modal.duplicateName') : String(e instanceof Error ? e.message : e);
     return;
   }
   emit('close');

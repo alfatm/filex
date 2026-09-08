@@ -165,7 +165,6 @@
     "deletedForeverOne": "“{name}” deleted forever",
     "deletedForeverMany": "{count} item deleted forever | {count} items deleted forever",
     "trashEmptied": "Trash emptied",
-    "stillRunning": "Still running on the server — the list will show it when it finishes",
     "starredOne": "“{name}” added to starred",
     "starredMany": "{count} item added to starred | {count} items added to starred",
     "unstarredOne": "“{name}” removed from starred",
@@ -506,19 +505,18 @@
     },
     "security": {
       "hint": "Keep your account safe and secure.",
-      "signIn": "Sign-in method",
+      "twoFactor": "Two-factor authentication",
       "provider": {
         "local": "Local account",
         "oidc": "Single sign-on",
         "proxyheader": "Reverse proxy",
         "unknown": "Unknown"
       },
-      "twoFactorOn": "two-factor on",
-      "twoFactorOff": "two-factor off",
-      "twoFactorProvider": "second step set by your provider",
+      "twoFactorOn": "Enabled",
+      "twoFactorOff": "Off",
+      "twoFactorProvider": "Set by your provider",
       "password": "Password",
       "passwordHint": "Change your password",
-      "passwordProvider": "Set where you sign in",
       "submit": "Change password",
       "currentPassword": "Current password",
       "newPassword": "New password",
@@ -529,8 +527,7 @@
       "tooShort": "Use at least {min} characters.",
       "mismatch": "The two new passwords do not match.",
       "sessions": "Active sessions",
-      "sessionsHint": "Devices signed in",
-      "manage": "Manage security"
+      "sessionsHint": "Devices signed in"
     },
     "assistant": {
       "hint": "How the AI assistant behaves for you.",
@@ -551,7 +548,44 @@
       "hint": "Check your connection and try again"
     }
   },
+  "op": {
+    "movingOne": "Moving “{name}” to {folder}",
+    "movingMany": "Moving {count} item to {folder} | Moving {count} items to {folder}",
+    "copyingOne": "Copying “{name}” to {folder}",
+    "copyingMany": "Copying {count} item to {folder} | Copying {count} items to {folder}",
+    "trashingOne": "Moving “{name}” to trash",
+    "trashingMany": "Moving {count} item to trash | Moving {count} items to trash",
+    "restoringOne": "Restoring “{name}”",
+    "restoringMany": "Restoring {count} item | Restoring {count} items",
+    "deletingOne": "Deleting “{name}” forever",
+    "deletingMany": "Deleting {count} item forever | Deleting {count} items forever",
+    "starringOne": "Updating “{name}”",
+    "starringMany": "Updating {count} item | Updating {count} items",
+    "taggingOne": "Saving the tags of “{name}”",
+    "taggingMany": "Saving tags",
+    "emptying": "Emptying the trash",
+    "title": "In progress",
+    "failed": "{n} operation failed | {n} operations failed",
+    "pending": "Still running on the server — refresh to see it land",
+    "close": "Dismiss",
+    "dismiss": "Dismiss this operation"
+  },
   "activity": {
+    "self": {
+      "created": "You created it",
+      "modified": "You changed the contents",
+      "renamed": "You renamed it from “{detail}”",
+      "moved": "You moved it to “{detail}”",
+      "linkShared": "You created a share link",
+      "linkRemoved": "You removed the share link",
+      "invited": "You gave {detail} access",
+      "revoked": "You removed {detail}’s access",
+      "trashed": "You moved it to trash",
+      "restored": "You restored it",
+      "starred": "You starred it",
+      "unstarred": "You removed the star",
+      "tagged": "You set the tags to {detail}"
+    },
     "created": "{actor} created it",
     "modified": "{actor} changed the contents",
     "renamed": "{actor} renamed it from “{detail}”",

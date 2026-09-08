@@ -12,14 +12,15 @@ Decide each row before writing the HTTP repository (stage 7).
 | `listFolder`, `resolvePath`, `getNode` | `GET /manager?storage&parent`, `?q=index&path`, `/stat` | ✅ | app `Node` needs `path`, `storageId`, `mime`; ids are int64 |
 | `getPath` | none | ⚠️ | derive from `node.path` |
 | `listPeople` | `GET /permissions` owner/admin only | ⚠️ | viewers get 403 → panel degrades to owner only |
-| `search` | `POST /search {storage_id, query, limit, scope}`; tags via `tag:` syntax; snippet with `«»` markers; no total | ❌ | not supported: current-folder prefix, shared-only, modified, file type, owner, size, path, whole phrase, case sensitive, OCR toggle, paths/tags scopes, total count. Options: (a) backend adds `path_prefix`, `mime_group`, `mtime`, `size`, `owner` filters and a count; (b) client post-filters the ≤500 candidates; (c) hide unsupported controls behind capabilities |
+| `search` | `POST /search {storage_id, query, limit, scope}` plus the facets `path_prefix`, `ext`, `modified_after`, `size_min`, `size_max`, `owner_id`; tags via `tag:` syntax; snippet with `«»` markers | ⚠️ | **added to the backend**: the date window, type group, size band, owner and current-folder scope are the server's work now, resolved against the node table and applied as an index restriction rather than sieved out of the first 100 hits. Still client-side or absent: the hand-typed custom size range, the free-text path prefix (it is typed in the FULL address space, `/demo/design/`, which the server has no form of), whole phrase, case sensitive, the OCR toggle, and a true total |
 | `assistantAsk` | none (only MCP `file_search` behind token scope) | ❌ | new endpoint: `POST /api/ai/assistant` SSE stream, server-side provider (OpenAI-compatible or Claude), tool-calling over the search index, conversation id; admin settings page for provider/key |
 | `listRecent` | `GET /manager/recent` fed by `POST /manager/recent` on open | ⚠️ | UI must call `recordOpen(id)` on open/preview |
+| `listActivity` | `GET /api/files/activity?path=…` | ✅ | **added to the backend**: the events were all being recorded already, as bell entries with the file buried in `meta_json`. Two indexed columns make them findable per node. Readable by whoever may read the file (≥viewer). Keyed by path, so a rename splits a file's history across its two names — and there is no backfill, so history starts at the upgrade |
 | `listStarred`, `setStarred` | `GET /manager/star/list`, `POST /manager/star` per node | ✅ | loop per id |
 | `listShared` | `GET /manager/shared-with-me` | ✅ | |
 | `listTrash` | `GET /manager/trash` paged, per storage, `ttl_days`, and `top_level_only=1` for one row per deletion | ✅ | **added to the backend**: the flat listing showed a deleted folder AND every file inside it, each offering a Restore only the folder's own restore performs. The app passes the flag; banner shows `ttl_days` |
 | `restore` | `POST /manager/restore {node_id}` | ✅ | loop per id |
-| `deleteForever`, `emptyTrash` | admin only (`/api/admin/trash/*`) | ❌ | either user endpoints, or hide behind capabilities |
+| `deleteForever`, `emptyTrash` | `DELETE /manager/trash/{id}` and `POST /manager/trash/empty` | ✅ | **added to the backend**: the trash was a room the user could put things into and never take anything out of. Both are scoped to what the caller could have deleted (confinement + ≥editor on the original path); `empty` purges top-level rows in bounded rounds and reports `more`, which `HttpRepository.emptyTrash` loops on while it is still making progress |
 | `createFolder`, `rename` | `POST /manager action=newfolder|rename` path-based, 409 on conflict | ⚠️ | map 409 → `DUPLICATE_NAME` |
 | `moveToTrash`, `move` | the ops queue (`POST /api/files/move\|delete` + `GET /ops/{id}`) | ✅ | **the repository now uses the queue**, as copy already did. The synchronous `?q=move\|delete` held one request open for the whole subtree, which is what a proxy cuts at sixty seconds and reports as a failure for work that was going to succeed; a submit answers in milliseconds and each poll is its own short request. The queued delete is the identical soft delete (`trash.Put` + retag), so nothing about the trash changes. A job still running when the app stops waiting raises `OPERATION_PENDING`: the listing refreshes, the toast says it is still running, and no Undo is armed for half a move |
 | `copy` | `POST /api/files/copy` + the ops queue; the handler refuses a copy whose source and target sit on different adapters | ⚠️ | cross-storage copy is out of scope for now (product decision): the destination picker keeps the other storages listed and greyed rather than pretending they are not there |
@@ -28,7 +29,7 @@ Decide each row before writing the HTTP repository (stage 7).
 | `listFolders` (Move picker) | none | ⚠️ | lazy tree via `listFolder` |
 | `listFolder`/`listRecent`/… with a `ListingFilter` | listings take no filter | ❌ | needs `mime_group`, `mtime`, `size` and `owner` params on the listing endpoints — the same four the search row asks for; without them the filter chips cannot stay server-side |
 | download of a folder or a selection | `GET /api/files/download/zip?path=…&path=…`, streamed | ✅ | **added to the backend**: a zip built on the fly from any mix of files and folders. A GET, because the download has to be a navigation for the browser to own the save dialog and the disk write |
-| `listFilterPeople` (People chip options) | none | ❌ | needs "people I share with" (permission tables); today derived from the owners present in the mock |
+| `listFilterPeople` (People chip options) | derived from the `owner_id`/`owner_name` the listings now carry | ✅ | the chip offers exactly the people a filter over those rows could match. No endpoint on purpose: a `DISTINCT` over the node table would name owners of folders the caller cannot open |
 
 ## User settings modal
 
@@ -72,6 +73,11 @@ is accepted behaviour, not a gap.
 | `GET /api/files/storages` → `{storages:[{name, read_only}]}` | the drive list was only reachable as a side effect of listing a folder, so a client could not draw its drive switcher before picking a drive. Same RBAC filter as `?q=index`; a root-confined caller sees only its own drive |
 | `/api/files/search` results carry `storage` (the name) | a hit held a path with no way to address it — the identical dead-row bug the starred and recently-opened listings were already fixed for |
 | `GET /api/files/download/zip` | the single-file `/read` was all there was, so the selection bar downloaded a selection one file at a time and went inert the moment a folder was in it. Streams `archive/zip` straight to the response; roots are stat'ed and authorised before the first byte, because after that the status is 200 whatever happens |
+| `DELETE /manager/trash/{id}` and `POST /manager/trash/empty` | purging was an admin action, so an ordinary account's trash only ever filled up: items sat there until the retention sweep and the app had to keep "Delete forever" and "Empty trash" switched off. The dangerous half was the guard, not the purge — `trash.PurgeOne` deletes the bytes at the row's CURRENT path, which for a LIVE row is where the file still is, and nothing checked that the node was in the trash at all. It does now, which protects the admin route too |
+| `owner_id` + `owner_name` on listing rows | the owner has been in the node table since migration 00004 and never left it: the listing projection did not carry it, so the app filled its Owner column with "You" for every row, on a shared drive included. One join for the whole page, not `GetNodeOwner` per file, and it carries the NAME because a column that renders a number is a column nobody reads |
+| search facets on `POST /api/files/search` | the index knows a document's name, path, mime and type and nothing else, so every other filter the advanced form offers was applied to the ANSWER — the first 100 hits for the text, minus what did not fit. Files ranked past the window were invisible and indistinguishable from "there are none". Now resolved against the node table and applied as an index restriction (the `tag:` mechanism), with an exact pass over the results for the paths that never consult the index |
+| `GET /api/files/activity` + migration 00034 | the details panel's Activity tab had no endpoint behind it and rendered empty against a live server. filex had in fact recorded every file event since notifications existed — but only as a BELL entry scoped to whoever acted, with the file buried in `meta_json`, so "what happened to THIS file" could not be asked without scanning and parsing the whole table. The migration lifts the node reference into two indexed columns; no backfill, so history starts at the upgrade |
+| `pending_ops.user_id` | the queue's worker runs on a server-lifetime context, so every event a queued move, delete or upload-commit emitted named NO actor — and the feed above would have said "somebody moved it to Docs" for the most common operations in the app. The submitter's id is written at submit time, where there still is a request, and put back on the context the steps run under |
 | `GET /api/auth/methods` | an ordinary user could not find out how they sign in: `/api/auth/me` carries a numeric `provider_id` and nothing else, and `/api/admin/auth-providers` is supertenant-only because it holds issuers and bind credentials. This one is scoped to the caller and carries a name and two flags — realm, whether it allows a password change, and their own TOTP state |
 | read-only is checked on the ops queue's SOURCE | the flag meant two different things depending on which door the request came through: `?q=move\|delete` refused a read-only storage from the start, the queue never asked. So the same delete answered 403 in one place and 202 in the other — and the 202 was the one that emptied the depo into its trash. Copy is deliberately still allowed: it only reads its source |
 | a move INTO A STORAGE ROOT no longer soft-deletes the node | `applyDBMove` stripped the leading slash before taking `path.Dir`, so a destination at the root came out as `"."` — a directory in no index — and the miss fell into the branch that flags the row deleted. The bytes arrived; the folder left every listing and appeared in the trash as a row whose bytes were never in `.filex-trash`, so Restore could not undo it either. Both callers shared the helper, so the synchronous move was breaking the same way |
@@ -82,7 +88,7 @@ is accepted behaviour, not a gap.
 | Question | What exists | Consequence |
 |---|---|---|
 | Listing filters | no query params | `HttpRepository` post-filters through `data/listingFilter.ts`, the same predicate the mock uses |
-| Advanced search facets | `q`, `scope`, `limit` only | date window, type group, size band and owner are applied to the answer |
+| Advanced search facets | `q`, `scope`, `limit`, and the six facet fields | what remains here is the hand-typed size range and the free-text path prefix; whole phrase, case sensitivity and OCR have no server form at all |
 | Item count per folder | not returned | known only for the folder currently open (its own listing length); everywhere else a folder shows its TYPE instead of a count, because "0 items" for a folder nobody counted is a lie |
 | Creation date | absent from the listing projection (`FileNode` carries `last_modified` only) | `Node.createdAt` is optional; the details panel omits the row rather than showing an invented date |
 | Modification date of a folder ROOT | a storage root is not a node and has none | `Node.modifiedAt` is optional too; the formatters render an em dash. Anything filex did date keeps its date |
@@ -93,10 +99,7 @@ is accepted behaviour, not a gap.
 
 | Repository method | State |
 |---|---|
-| `listActivity` | audit is admin-only; the panel's Activity tab is empty against a live server |
-| `listFilterPeople` | no per-listing owner set to offer, so the People chip has no options |
 | `assistantAsk` | no assistant endpoint; the capability is off, so the panel is unreachable |
-| `deleteForever` / `emptyTrash` | `/api/admin/trash` only — an ordinary account cannot purge, and the capability is off |
 | version authorship | `model.NodeVersion` records size and instant, not who wrote it |
 
 ## Capability snapshot
@@ -106,20 +109,26 @@ app maps those field for field: `upload`, `move`, `copy`, `delete`, `mkdir`,
 `search`, `versions`, `ocr`. Six more are the app's own axes and filex does not
 report them, so `HttpRepository.capabilities` decides them from whether an
 endpoint exists at all: `tags`, `permissions` and `folderDownload` on,
-`assistant`, `activity` and `deleteForever` (admin-only there) off. Reporting them
+`assistant` off; `activity` and `deleteForever` are now on for the same reason
+as `folderDownload` — the endpoints they need exist. Reporting them
 from the server would remove the last hard-coded feature assumptions in the
 client.
 
 | Repository method | filex today | Status | Decision needed |
 |---|---|---|---|
-| `capabilities` | `GET /api/files/capabilities` | ✅ | report the six app-level axes so they stop being hard-coded. `folderDownload` is now decided by the HTTP repository from the fact that the zip endpoint exists |
+| `capabilities` | `GET /api/files/capabilities` | ✅ | report the six app-level axes so they stop being hard-coded. `folderDownload` and `deleteForever` are decided by the HTTP repository from the fact that their endpoints exist |
 | `setTags` | `POST /api/files/manager/tags {node_id, tags}` replaces the list; `GET …/tags?node_id` reads it | ✅ | the server lower-cases and drops tags over 64 chars, so the UI should show what came back rather than what was typed |
 
 ## Model gaps
 
-- **Owner**: nodes have no owner. Decision from the product owner: "You" for
-  everything in personal storages; for shared drives the owner is the group.
-  Needs a `owner_group` on storages or nodes.
+- **Owner**: nodes DO have one — `nodes.owner_id`, written by quota accounting
+  on every upload and save since migration 00004. The earlier claim here that
+  there was none was wrong. The listing projection now carries `owner_id` and
+  `owner_name`, so a shared drive shows who put each file there instead of "You"
+  for everything. What is still missing is the GROUP owner the product decision
+  asks for on shared drives; a node a storage SYNC found has no owner at all and
+  falls back to the caller, which is the honest reading of "everything you can
+  see, you can see".
 - **Shared drives with a group owner** do not exist in filex yet.
 - **Folder item count** ("12 items") is not returned by the listing.
 - **Activity tab**: audit is admin-only; per-node activity needs a user-visible

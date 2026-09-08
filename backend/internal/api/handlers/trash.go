@@ -4,6 +4,8 @@
 //
 //	GET  /api/files/manager/trash                          (auth)  list trashed
 //	POST /api/files/manager/restore                        (auth)  body {node_id}
+//	DELETE /api/files/manager/trash/{id}                   (auth)  purge one entry of my own
+//	POST /api/files/manager/trash/empty                    (auth)  purge what I can see in the trash
 //	DELETE /api/admin/trash/{id}                           (admin) immediate single purge
 //	POST /api/admin/trash/empty?older_than_days=N          (admin) immediate batch purge
 package handlers
@@ -11,6 +13,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path"
 	"strconv"
@@ -157,6 +160,111 @@ func (h *Trash) announceRestore(ctx context.Context, nodeID int64) {
 	}
 	emitFolderChange(node.StorageID, path.Dir(node.Path), realtime.ChangeEvent{
 		Action: "create", Name: node.Name,
+	})
+}
+
+// trashEmptyMax is how many entries one Empty request purges. Purging is byte
+// work — a driver delete per file — so an unbounded "empty everything" is the
+// same long-held request the move to the ops queue was about. The answer says
+// whether more is left, and the caller asks again.
+const trashEmptyMax = 500
+
+// mayPurge answers whether this caller may destroy this trash entry, as an HTTP
+// status (0 = yes) and a message. The rule is the one Restore already applies —
+// confinement on the ORIGINAL path, ≥editor there — plus the entry having to be
+// in the trash at all.
+//
+// ≥editor rather than ownership: filex has no per-node owner, and the level that
+// let the caller delete the file in the first place is the honest bar for
+// letting them finish the job. A viewer sees the entry in the listing and cannot
+// purge it.
+func (h *Trash) mayPurge(r *http.Request, nodeID int64) (int, string) {
+	node, err := h.Store.GetNode(r.Context(), nodeID)
+	if err != nil || node == nil || node.DeletedAt == nil {
+		return http.StatusNotFound, "trash entry not found"
+	}
+	orig := node.StorageKey
+	if orig == "" {
+		orig = node.Path
+	}
+	if root, ok := confine.RootFrom(r.Context()); ok {
+		if !root.Within(h.storageName(r.Context(), node.StorageID), orig) {
+			return http.StatusForbidden, "path outside confined root"
+		}
+	}
+	if h.ACL != nil && !aclAllowID(r.Context(), h.ACL, h.Store, node.StorageID, orig, acl.LevelEditor) {
+		return http.StatusForbidden, "insufficient permission"
+	}
+	return 0, ""
+}
+
+// PurgeSelf destroys one entry of the caller's own trash.
+//
+// DELETE /api/files/manager/trash/{id}
+//
+// The admin route next to it (`/api/admin/trash/{id}`) takes any entry in the
+// deployment; this one takes only what the caller could have deleted, which is
+// what makes it safe to hand to an ordinary account. Without it a user's trash
+// was a room they could put things into and never take anything out of: items
+// sat there until the retention sweep, and "delete forever" was a button the
+// app had to keep switched off.
+func (h *Trash) PurgeSelf(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
+		return
+	}
+	if status, msg := h.mayPurge(r, id); status != 0 {
+		writeJSON(w, status, map[string]string{"error": msg})
+		return
+	}
+	if err := h.Service.PurgeOne(r.Context(), id); err != nil {
+		if errors.Is(err, trash.ErrNotTrashed) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "trash entry not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// EmptySelf destroys everything in the trash this caller may purge.
+//
+// POST /api/files/manager/trash/empty
+//
+// Top-level rows only, which is the same list the app shows: purging a deleted
+// FOLDER already takes its descendants with it, so walking every row would visit
+// the files inside it a second time and count them twice.
+//
+// An entry the caller may not purge is SKIPPED, not refused — a shared drive
+// where somebody else deleted something must not make "empty my trash" fail
+// altogether. `more` says the cap was reached and there is another round to ask
+// for; a caller that keeps getting `purged: 0` has purged everything it may.
+func (h *Trash) EmptySelf(w http.ResponseWriter, r *http.Request) {
+	entries, _, err := h.Service.List(r.Context(), nil, true, trashEmptyMax, 0)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	purged, failed, skipped := 0, 0, 0
+	for _, e := range entries {
+		if status, _ := h.mayPurge(r, e.ID); status != 0 {
+			skipped++
+			continue
+		}
+		if err := h.Service.PurgeOne(r.Context(), e.ID); err != nil {
+			failed++
+			continue
+		}
+		purged++
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"purged":  purged,
+		"failed":  failed,
+		"skipped": skipped,
+		"more":    len(entries) == trashEmptyMax,
 	})
 }
 

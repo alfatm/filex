@@ -165,7 +165,6 @@
     "deletedForeverOne": "“{name}” kalıcı olarak silindi",
     "deletedForeverMany": "{count} öğe kalıcı olarak silindi",
     "trashEmptied": "Çöp kutusu boşaltıldı",
-    "stillRunning": "Sunucuda hâlâ sürüyor — bittiğinde listede görünecek",
     "starredOne": "“{name}” yıldızlılara eklendi",
     "starredMany": "{count} öğe yıldızlılara eklendi",
     "unstarredOne": "“{name}” yıldızlılardan kaldırıldı",
@@ -506,19 +505,18 @@
     },
     "security": {
       "hint": "Hesabınızı güvende tutun.",
-      "signIn": "Oturum açma yöntemi",
+      "twoFactor": "İki adımlı doğrulama",
       "provider": {
         "local": "Yerel hesap",
         "oidc": "Tek oturum açma",
         "proxyheader": "Ters proxy",
         "unknown": "Bilinmiyor"
       },
-      "twoFactorOn": "iki adımlı doğrulama açık",
-      "twoFactorOff": "iki adımlı doğrulama kapalı",
-      "twoFactorProvider": "ikinci adım sağlayıcınızda ayarlanır",
+      "twoFactorOn": "Açık",
+      "twoFactorOff": "Kapalı",
+      "twoFactorProvider": "Sağlayıcınızda ayarlanır",
       "password": "Parola",
       "passwordHint": "Parolanızı değiştirin",
-      "passwordProvider": "Oturum açtığınız yerde ayarlanır",
       "submit": "Parolayı değiştir",
       "currentPassword": "Mevcut parola",
       "newPassword": "Yeni parola",
@@ -529,8 +527,7 @@
       "tooShort": "En az {min} karakter kullanın.",
       "mismatch": "Yeni parolalar eşleşmiyor.",
       "sessions": "Etkin oturumlar",
-      "sessionsHint": "Oturum açılmış cihazlar",
-      "manage": "Güvenliği yönet"
+      "sessionsHint": "Oturum açılmış cihazlar"
     },
     "assistant": {
       "hint": "AI asistanın sizin için nasıl davranacağı.",
@@ -551,7 +548,44 @@
       "hint": "Bağlantınızı kontrol edip yeniden deneyin"
     }
   },
+  "op": {
+    "movingOne": "“{name}” {folder} klasörüne taşınıyor",
+    "movingMany": "{count} öğe {folder} klasörüne taşınıyor | {count} öğe {folder} klasörüne taşınıyor",
+    "copyingOne": "“{name}” {folder} klasörüne kopyalanıyor",
+    "copyingMany": "{count} öğe {folder} klasörüne kopyalanıyor | {count} öğe {folder} klasörüne kopyalanıyor",
+    "trashingOne": "“{name}” çöp kutusuna taşınıyor",
+    "trashingMany": "{count} öğe çöp kutusuna taşınıyor | {count} öğe çöp kutusuna taşınıyor",
+    "restoringOne": "“{name}” geri yükleniyor",
+    "restoringMany": "{count} öğe geri yükleniyor | {count} öğe geri yükleniyor",
+    "deletingOne": "“{name}” kalıcı olarak siliniyor",
+    "deletingMany": "{count} öğe kalıcı olarak siliniyor | {count} öğe kalıcı olarak siliniyor",
+    "starringOne": "“{name}” güncelleniyor",
+    "starringMany": "{count} öğe güncelleniyor | {count} öğe güncelleniyor",
+    "taggingOne": "“{name}” etiketleri kaydediliyor",
+    "taggingMany": "Etiketler kaydediliyor",
+    "emptying": "Çöp kutusu boşaltılıyor",
+    "title": "Sürüyor",
+    "failed": "{n} işlem başarısız | {n} işlem başarısız",
+    "pending": "Sunucuda hâlâ sürüyor — sonucu görmek için listeyi yenileyin",
+    "close": "Kapat",
+    "dismiss": "Bu işlemi listeden kaldır"
+  },
   "activity": {
+    "self": {
+      "created": "Siz oluşturdunuz",
+      "modified": "Siz içeriği değiştirdiniz",
+      "renamed": "Siz “{detail}” adından yeniden adlandırdınız",
+      "moved": "Siz “{detail}” klasörüne taşıdınız",
+      "linkShared": "Siz paylaşım bağlantısı oluşturdunuz",
+      "linkRemoved": "Siz paylaşım bağlantısını kaldırdınız",
+      "invited": "Siz, {detail} kişisine erişim verdiniz",
+      "revoked": "Siz, {detail} kişisinin erişimini kaldırdınız",
+      "trashed": "Siz çöp kutusuna taşıdınız",
+      "restored": "Siz geri yüklediniz",
+      "starred": "Siz yıldızladınız",
+      "unstarred": "Siz yıldızı kaldırdınız",
+      "tagged": "Siz etiketleri {detail} yaptınız"
+    },
     "created": "{actor} oluşturdu",
     "modified": "{actor} içeriği değiştirdi",
     "renamed": "{actor} “{detail}” adından yeniden adlandırdı",

@@ -63,10 +63,17 @@ watch(
   { immediate: true },
 );
 
-/** "You renamed it from “notes.md”" — the actor, the verb, and at most one variable part. */
+/**
+ * "You renamed it from “notes.md”" — the actor, the verb, and at most one variable part.
+ *
+ * Two sentences per event rather than one with a name in a slot: Russian and Turkish agree the verb with who acted,
+ * so "Вы создал" and "Siz oluşturdu" are what a single form produces for oneself. The third-person Russian carries
+ * "(а)" because filex records no gender for anybody and inventing one is worse than admitting both.
+ */
 function sentence(event: ActivityEvent): string {
-  const actor = event.actorId === props.user?.id ? t('panel.you') : event.actorName;
-  return t(`activity.${event.kind}`, { actor, detail: event.detail ?? '' });
+  const detail = event.detail ?? '';
+  if (event.actorId === props.user?.id) return t(`activity.self.${event.kind}`, { detail });
+  return t(`activity.${event.kind}`, { actor: event.actorName, detail });
 }
 </script>
 

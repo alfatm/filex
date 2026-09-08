@@ -1,5 +1,5 @@
 import { fileTypeOf, TYPE_THUMBNAILS } from '../fileTypes';
-import type { Node, Quota, Storage } from '../types';
+import type { ActivityEvent, Node, Quota, Storage } from '../types';
 
 /**
  * filex's wire shapes → the app's model, and the addressing that ties them together.
@@ -54,6 +54,9 @@ export interface WireFileNode {
   /** The caller's effective level here — "" when the storage has RBAC off. */
   perm?: string;
   etag?: string;
+  /** Who owns the node, named. Absent for anything a storage sync found rather than a person uploading it. */
+  owner_id?: number;
+  owner_name?: string;
 }
 
 /** The `?q=index` envelope. `storages` is the caller's visible drive list, already RBAC-filtered. */
@@ -100,6 +103,72 @@ export interface WireTrashEntry {
 
 /** One row of `/api/files/storages`. */
 /** A row of filex's ops queue (`internal/ops.Op`); only the fields the app polls for are named. */
+/** One row of `GET /api/files/activity`: filex's own event name, plus the payload that tells a rename from a move. */
+export interface WireActivityEvent {
+  id: number;
+  event: string;
+  at: string;
+  actor_id?: number;
+  actor_name?: string;
+  meta?: Record<string, unknown>;
+}
+
+/**
+ * filex's file events, in the app's vocabulary. Only the events that ARE something happening to a file are mapped:
+ * `comment.added`, `file.infected` and `file.upload_failed` are about other surfaces, and `file.deleted` — the hard
+ * delete a driver without move support falls back to — is dropped because the node it names is gone, so nothing can
+ * open a panel on it.
+ *
+ * `file.moved` is two of the app's kinds at once: filex records one event with `from` and `to`, and which one it is
+ * depends on whether the folder changed. Renaming and moving are the same operation to a storage driver and two
+ * different sentences to a person.
+ */
+export function fromActivityEvent(wire: WireActivityEvent, storageName: string): ActivityEvent | null {
+  const from = typeof wire.meta?.from === 'string' ? wire.meta.from : '';
+  const to = typeof wire.meta?.to === 'string' ? wire.meta.to : '';
+  const renamed = Boolean(from && to) && dirOf(from) === dirOf(to);
+  const kind = renamed ? 'renamed' : ACTIVITY_KINDS[wire.event];
+  if (!kind) return null;
+  return {
+    id: String(wire.id),
+    at: wire.at,
+    actorId: wire.actor_id === undefined ? '' : String(wire.actor_id),
+    actorName: wire.actor_name ?? '',
+    kind,
+    detail: detailFor(kind, from, to, storageName),
+  };
+}
+
+const ACTIVITY_KINDS: Record<string, ActivityEvent['kind'] | undefined> = {
+  'file.uploaded': 'created',
+  'file.updated': 'modified',
+  'file.moved': 'moved',
+  'file.trashed': 'trashed',
+  'share.created': 'linkShared',
+};
+
+/** The one variable part each sentence takes: the name it had, or the folder it went to. */
+function detailFor(kind: ActivityEvent['kind'], from: string, to: string, storageName: string): string | undefined {
+  if (kind === 'renamed') return baseOf(from);
+  if (kind === 'moved') {
+    const folder = baseOf(dirOf(to));
+    // A move to the top of a drive has no folder above it to name; the drive is what the user sees there.
+    return folder || storageName;
+  }
+  return undefined;
+}
+
+const dirOf = (p: string) => p.slice(0, Math.max(0, p.lastIndexOf('/')));
+const baseOf = (p: string) => p.slice(p.lastIndexOf('/') + 1);
+
+/** What `POST /manager/trash/empty` answers: how much it took, and whether a round is left to ask for. */
+export interface WireTrashEmpty {
+  purged: number;
+  failed: number;
+  skipped: number;
+  more: boolean;
+}
+
 export interface WireOp {
   id: number;
   kind: string;
@@ -185,6 +254,8 @@ export function fromFileNode(wire: WireFileNode): Node {
     assetUrl: kind === 'file' ? previewUrl(wire.path) : undefined,
     shared: false,
     starred: false,
+    // `typed` fills ownerId with SELF; a row filex could name an owner for overrides that with the real one.
+    ...(wire.owner_id === undefined ? {} : { ownerId: String(wire.owner_id), ownerName: wire.owner_name }),
   };
 }
 

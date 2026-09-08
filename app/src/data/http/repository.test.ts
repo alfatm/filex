@@ -147,6 +147,128 @@ describe('HttpRepository', () => {
     expect(restore?.body).toEqual({ node_id: 7 });
   });
 
+  it('sends the advanced form as facets instead of sieving the answer', async () => {
+    routes = [['/api/files/search', { results: [] }]];
+    await new HttpRepository().search({
+      text: 'rapor',
+      scope: 'all',
+      searchIn: 'current',
+      folderPath: 'Docs/2026',
+      modified: 'week',
+      fileType: 'documents',
+      tags: [],
+      ownerId: '4',
+      size: { preset: 'medium', min: null, max: null, unit: 'MB' },
+      path: '',
+      wholePhrase: false,
+      caseSensitive: false,
+      ocr: false,
+    });
+
+    const body = calls[0].body as Record<string, unknown>;
+    expect(calls[0].method).toBe('POST');
+    expect(body.query).toBe('rapor');
+    expect(body.path_prefix).toBe('/Docs/2026');
+    // The taxonomy stays in the app: the server is told which extensions, never what "documents" means.
+    expect(body.ext).toEqual(['md', 'pdf']);
+    expect(body.size_min).toBe(1024 * 1024);
+    expect(body.size_max).toBe(100 * 1024 * 1024);
+    expect(body.owner_id).toBe(4);
+    expect(typeof body.modified_after).toBe('number');
+    // No storage id: the app addresses drives by name, so the server asks every drive the caller can see.
+    expect(body).not.toHaveProperty('storage_id');
+  });
+
+  it('shows the owner a listing named, and offers everyone seen as a People option', async () => {
+    routes = [
+      ['/api/auth/me', { user: { id: 1, email: 'ada@filex.test', display_name: 'Ada Lovelace', role: 'admin' } }],
+      [
+        'q=index',
+        index(
+          row({ id: 1, path: 'main://hers.txt', basename: 'hers.txt', type: 'file', owner_id: 4, owner_name: 'Ayşe' }),
+          row({ id: 2, path: 'main://found.txt', basename: 'found.txt', type: 'file' }),
+        ),
+      ],
+      ['/star/list', { nodes: [] }],
+    ];
+    const repo = new HttpRepository();
+    // The app loads the account before any listing (bootstrap does), which is what lets an unowned row be labelled
+    // with the caller's real id rather than the "me" placeholder.
+    await repo.currentUser();
+    const listed = await repo.listFolder('main://');
+
+    expect(listed.map((n) => [n.name, n.ownerId, n.ownerName])).toEqual([
+      ['hers.txt', '4', 'Ayşe'],
+      // A row filex named no owner for is the caller's own — everything they can see, they can see.
+      ['found.txt', '1', undefined],
+    ]);
+
+    // The chip offers who was actually seen, plus the account itself.
+    const people = await repo.listFilterPeople();
+    expect(people.map((p) => [p.id, p.name]).sort()).toEqual([['1', 'Ada Lovelace'], ['4', 'Ayşe']]);
+  });
+
+  it('reads the activity feed and tells a rename from a move', async () => {
+    routes = [
+      [
+        '/api/files/activity',
+        {
+          events: [
+            { id: 3, event: 'file.moved', at: '2026-07-11T09:00:00Z', actor_id: 4, actor_name: 'Ayşe', meta: { from: '/Docs/eski.md', to: '/Docs/notes.md' } },
+            { id: 2, event: 'file.moved', at: '2026-07-10T09:00:00Z', actor_id: 4, actor_name: 'Ayşe', meta: { from: '/eski.md', to: '/Docs/eski.md' } },
+            { id: 1, event: 'file.uploaded', at: '2026-07-09T09:00:00Z', actor_id: 4, actor_name: 'Ayşe' },
+            { id: 0, event: 'comment.added', at: '2026-07-09T10:00:00Z' },
+          ],
+        },
+      ],
+    ];
+    const events = await new HttpRepository().listActivity('main://Docs/notes.md');
+
+    expect(calls[0].url).toContain('path=main%3A%2F%2FDocs%2Fnotes.md');
+    // The comment has no sentence in this panel, so it is dropped rather than mislabelled.
+    expect(events.map((e) => e.kind)).toEqual(['renamed', 'moved', 'created']);
+    // Same folder on both sides of the move: a rename, named by what it was called before.
+    expect(events[0].detail).toBe('eski.md');
+    // Different folder: a move, named by where it landed.
+    expect(events[1].detail).toBe('Docs');
+    expect(events[0].actorId).toBe('4');
+  });
+
+  it('names the drive when a move lands at the top of it', async () => {
+    routes = [['/api/files/activity', { events: [{ id: 1, event: 'file.moved', at: '2026-07-11T09:00:00Z', meta: { from: '/Docs/a.md', to: '/a.md' } }] }]];
+    const [event] = await new HttpRepository().listActivity('main://a.md');
+    expect(event.kind).toBe('moved');
+    expect(event.detail).toBe('main');
+  });
+
+  it('purges one trash entry by the number the trash listing gave it', async () => {
+    routes = [
+      [
+        '/manager/trash',
+        {
+          entries: [
+            { id: 9, storage_id: 1, storage_name: 'main', path: '/Design', name: 'Design', size: 0, deleted_at: '2026-07-10T12:00:00Z' },
+          ],
+        },
+      ],
+    ];
+    const repo = new HttpRepository();
+    await repo.listTrash();
+    await repo.deleteForever(['main://Design']);
+
+    const purge = calls[calls.length - 1];
+    expect(purge.method).toBe('DELETE');
+    expect(purge.url).toContain('/manager/trash/9');
+  });
+
+  it('empties the trash in rounds, and stops when a round purges nothing', async () => {
+    let round = 0;
+    routes = [['/manager/trash/empty', () => ({ purged: ++round < 3 ? 500 : 0, failed: 0, skipped: 7, more: true })]];
+    await new HttpRepository().emptyTrash();
+    // Three requests: two that took something, and the one that reported nothing left it may purge.
+    expect(calls.filter((c) => c.url.includes('/trash/empty'))).toHaveLength(3);
+  });
+
   it('moves through the ops queue and polls the job to its end', async () => {
     let asked = 0;
     routes = [

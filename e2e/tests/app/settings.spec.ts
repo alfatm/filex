@@ -10,13 +10,23 @@ test.describe('User settings', () => {
     await page.getByRole('button', { name: 'Settings' }).click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name: 'User settings' })).toBeVisible();
-    const nav = dialog.getByRole('navigation', { name: 'User settings' });
+    const nav = dialog.getByRole('tablist', { name: 'User settings' });
     for (const name of ['Profile', 'Preferences', 'Notifications', 'Security', 'AI assistant']) {
-      await expect(nav.getByRole('button', { name })).toBeVisible();
+      await expect(nav.getByRole('tab', { name })).toBeVisible();
     }
     // The account fields come from the repository, not from the form's own defaults.
     await expect(dialog.getByRole('textbox', { name: 'Full name' })).toHaveValue('demo');
     await expect(dialog.getByText('demo@filex.local').first()).toBeVisible();
+
+    // One tab, one panel: the others are not rendered at all, so a stale control cannot be reached.
+    await nav.getByRole('tab', { name: 'AI assistant' }).click();
+    await expect(dialog.getByText('The model and API key are configured by your administrator.')).toBeVisible();
+    await expect(nav.getByRole('tab', { name: 'AI assistant' })).toHaveAttribute('aria-selected', 'true');
+    await expect(dialog.getByRole('textbox', { name: 'Full name' })).toBeHidden();
+
+    // Arrows walk the strip, as in every other tab strip in the app.
+    await page.keyboard.press('ArrowDown');
+    await expect(nav.getByRole('tab', { name: 'Profile' })).toHaveAttribute('aria-selected', 'true');
 
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden();
@@ -29,8 +39,9 @@ test.describe('User settings', () => {
   test('Security names the sign-in method and changes the password on its own', async ({ page }) => {
     await page.getByRole('button', { name: 'Settings' }).click();
     const dialog = page.getByRole('dialog');
+    await dialog.getByRole('tab', { name: 'Security' }).click();
     // The realm comes from the server, and it is what decides whether a password form is offered at all.
-    await expect(dialog.getByText('Local account · two-factor off')).toBeVisible();
+    await expect(dialog.getByRole('listitem').filter({ hasText: 'Two-factor authentication' })).toContainText('Off');
 
     await dialog.getByRole('button', { name: 'Password Change your password' }).click();
     const current = dialog.getByRole('textbox', { name: 'Current password' });
@@ -67,11 +78,13 @@ test.describe('User settings', () => {
     await expect(html).not.toHaveAttribute('data-theme', /.*/);
 
     await page.getByRole('button', { name: 'Settings' }).click();
+    await page.getByRole('tab', { name: 'Preferences' }).click();
     await page.getByRole('radio', { name: 'Dark' }).click();
     await page.getByRole('button', { name: 'Cancel' }).click();
     await expect(html).not.toHaveAttribute('data-theme', /.*/);
 
     await page.getByRole('button', { name: 'Settings' }).click();
+    await page.getByRole('tab', { name: 'Preferences' }).click();
     await page.getByRole('radio', { name: 'Dark' }).click();
     await page.getByRole('button', { name: 'Save changes' }).click();
     await expect(page.getByRole('dialog')).toBeHidden();
@@ -85,6 +98,7 @@ test.describe('User settings', () => {
 
   test('the language switch translates the shell and survives a reload', async ({ page }) => {
     await page.getByRole('button', { name: 'Settings' }).click();
+    await page.getByRole('tab', { name: 'Preferences' }).click();
     await page.getByRole('dialog').getByRole('combobox', { name: 'Language' }).selectOption('ru');
     await page.getByRole('button', { name: 'Save changes' }).click();
 
@@ -100,7 +114,8 @@ test.describe('User settings', () => {
     expect((await row.boundingBox())?.height).toBe(42);
 
     await page.getByRole('button', { name: 'Settings' }).click();
-    await page.getByRole('checkbox', { name: 'Use compact file list' }).click();
+    await page.getByRole('tab', { name: 'Preferences' }).click();
+    await page.getByRole('switch', { name: 'Use compact file list' }).click();
     await page.getByRole('button', { name: 'Save changes' }).click();
     expect((await row.boundingBox())?.height).toBe(34);
   });
@@ -120,9 +135,9 @@ test.describe('User settings', () => {
     await expect(page.getByRole('dialog').getByRole('textbox', { name: 'Display name' })).toHaveValue('Ada Lovelace');
   });
 
-  test('the remove-photo button is inert until there is a photo to remove', async ({ page }) => {
+  test('the remove-photo button appears only once there is a photo to remove', async ({ page }) => {
     await page.getByRole('button', { name: 'Settings' }).click();
-    await expect(page.getByRole('dialog').getByRole('button', { name: 'Remove' })).toBeDisabled();
+    await expect(page.getByRole('dialog').getByRole('button', { name: 'Remove' })).toBeHidden();
     await expect(page.getByRole('dialog').getByRole('button', { name: 'Change photo' })).toBeEnabled();
   });
 });

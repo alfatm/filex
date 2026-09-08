@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/brf-tech/filex/backend/internal/acl"
 	"github.com/brf-tech/filex/backend/internal/auth"
@@ -116,6 +118,134 @@ func tagFilterAccepts(f *search.Filter, id int64) bool {
 	return false
 }
 
+// resolveFacetFilter turns the request's facets into the id set the index may
+// return from. Nil means "no facets asked for", which is not the same as an
+// empty set: an empty set is a filter that matched nothing, and the search
+// honours it by answering nothing.
+func resolveFacetFilter(ctx context.Context, store db.Store, storageID int64, f db.NodeFacets) ([]int64, bool, error) {
+	if !f.Any() {
+		return nil, false, nil
+	}
+	if store == nil {
+		return nil, false, nil
+	}
+	// The facet query is per storage, and a client that addresses drives by name
+	// — which the end-user app does, because that is what every other endpoint
+	// takes — cannot name a numeric one. So an unscoped search asks each drive
+	// and unions the answers rather than giving up on the filter.
+	//
+	// Widening the CANDIDATE set across drives the caller cannot see is safe:
+	// the RBAC pass at the end of Search drops those hits anyway, and it is the
+	// only thing standing between any search and a cross-user leak.
+	storages := []int64{storageID}
+	if storageID == 0 {
+		all, err := store.ListEnabledStorages(ctx)
+		if err != nil {
+			return nil, false, err
+		}
+		storages = storages[:0]
+		for _, st := range all {
+			storages = append(storages, st.ID)
+		}
+	}
+	ids := []int64{}
+	truncated := false
+	for _, id := range storages {
+		batch, err := store.ListNodeIDsMatching(ctx, id, f, facetIDCeiling)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(batch) >= facetIDCeiling {
+			truncated = true
+		}
+		ids = append(ids, batch...)
+	}
+	return ids, truncated, nil
+}
+
+// facetIDCeiling mirrors the store's own cap; asking for exactly it is how the
+// caller learns the set was truncated.
+const facetIDCeiling = 10000
+
+// intersectFilter narrows an existing restriction to `ids`, or creates one.
+func intersectFilter(f *search.Filter, ids []int64) *search.Filter {
+	keep := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		keep[id] = true
+	}
+	if f == nil || !f.Restrict {
+		out := &search.Filter{Restrict: true, IncludeIDs: ids}
+		if f != nil {
+			out.ExcludeIDs = f.ExcludeIDs
+		}
+		return out
+	}
+	narrowed := make([]int64, 0, len(f.IncludeIDs))
+	for _, id := range f.IncludeIDs {
+		if keep[id] {
+			narrowed = append(narrowed, id)
+		}
+	}
+	f.IncludeIDs = narrowed
+	return f
+}
+
+// keepMatching narrows the nodes a bare `tag:` listing answers with.
+func keepMatching(nodes []*model.Node, f db.NodeFacets) []*model.Node {
+	out := nodes[:0]
+	for _, n := range nodes {
+		if matchesFacets(n, f) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// matchesFacets is the exact predicate, over a node row rather than an id set.
+// It is what makes the answer right on the paths that never consult the index,
+// and what makes a truncated id set harmless for the hits that did come back.
+func matchesFacets(n *model.Node, f db.NodeFacets) bool {
+	if n == nil {
+		return false
+	}
+	if f.FilesOnly && n.Type != model.NodeTypeFile {
+		return false
+	}
+	if f.PathPrefix != "" && f.PathPrefix != "/" && n.Path != f.PathPrefix && !strings.HasPrefix(n.Path, f.PathPrefix+"/") {
+		return false
+	}
+	if len(f.Exts) > 0 {
+		name := strings.ToLower(n.Name)
+		hit := false
+		for _, ext := range f.Exts {
+			if strings.HasSuffix(name, "."+ext) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			return false
+		}
+	}
+	// A node filex could never date cannot be inside a "modified since" window.
+	if f.ModifiedAfter != nil && (n.BackendMtime == nil || n.BackendMtime.Before(*f.ModifiedAfter)) {
+		return false
+	}
+	if f.SizeMin != nil && n.Size < *f.SizeMin {
+		return false
+	}
+	if f.SizeMax != nil && n.Size > *f.SizeMax {
+		return false
+	}
+	if f.OwnerID != nil {
+		owner := n.OwnerID
+		if owner == nil || *owner != *f.OwnerID {
+			return false
+		}
+	}
+	return true
+}
+
 // sortByRank puts fallback rows in the same tier order the index path
 // uses. Without it an index-less install would answer the same query in
 // a different order — `ORDER BY name` — and "exact matches rank first"
@@ -146,6 +276,59 @@ type searchRequest struct {
 	// (default all — name hits ranked first, so pre-v0.2 clients see the
 	// same ordering they always did, plus content hits after).
 	Scope string `json:"scope"`
+
+	// ── facets ──
+	//
+	// The properties the full-text index cannot answer for: its documents
+	// carry a name, a path, a mime and a type, and nothing else. They are
+	// resolved against the node table and applied as a restriction on which
+	// documents the index may return — the same mechanism `tag:` uses.
+	//
+	// Before them, a client asking for "report, modified this week" got the
+	// first N hits for "report" and threw away the ones outside the window:
+	// if the three files it wanted ranked 200th, it saw nothing and could not
+	// tell that from "there are none".
+
+	// PathPrefix confines the search to one subtree, storage-relative.
+	PathPrefix string `json:"path_prefix,omitempty"`
+	// Exts are extensions without the dot ("md","pdf"). Extensions rather than
+	// a type-group name on purpose: which extensions count as "documents" is
+	// the client's vocabulary, and a second copy of it here is a second copy to
+	// keep in step.
+	Exts []string `json:"ext,omitempty"`
+	// ModifiedAfter is epoch milliseconds; 0 means no window.
+	ModifiedAfter int64 `json:"modified_after,omitempty"`
+	SizeMin       int64 `json:"size_min,omitempty"`
+	// SizeMax 0 means no ceiling — a search for files of at most zero bytes is
+	// not a thing anyone asks for, and treating it as "no ceiling" is what lets
+	// the field be omitted.
+	SizeMax int64 `json:"size_max,omitempty"`
+	OwnerID int64 `json:"owner_id,omitempty"`
+}
+
+// facets turns the request's filter fields into the store's query shape.
+func (req searchRequest) facets() db.NodeFacets {
+	f := db.NodeFacets{PathPrefix: req.PathPrefix, Exts: req.Exts}
+	// A filter on extension or size is a filter for files: a folder has no
+	// extension and its size is a rollup. A date or an owner keeps folders.
+	f.FilesOnly = len(req.Exts) > 0 || req.SizeMin > 0 || req.SizeMax > 0
+	if req.ModifiedAfter > 0 {
+		t := time.UnixMilli(req.ModifiedAfter).UTC()
+		f.ModifiedAfter = &t
+	}
+	if req.SizeMin > 0 {
+		v := req.SizeMin
+		f.SizeMin = &v
+	}
+	if req.SizeMax > 0 {
+		v := req.SizeMax
+		f.SizeMax = &v
+	}
+	if req.OwnerID > 0 {
+		v := req.OwnerID
+		f.OwnerID = &v
+	}
+	return f
 }
 
 // searchResult is one hit in the response: the node row plus the v0.2
@@ -209,6 +392,19 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	facets := req.facets()
+	facetIDs, facetTruncated, err := resolveFacetFilter(r.Context(), h.Store, req.StorageID, facets)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	// Two restrictions on the same axis. A tag filter and a facet filter both
+	// say "only these documents", so the search sees their intersection —
+	// narrowing twice, never widening.
+	if facetIDs != nil {
+		tagFilter = intersectFilter(tagFilter, facetIDs)
+		tagged = keepMatching(tagged, facets)
+	}
 
 	results := []searchResult{}
 	switch {
@@ -269,6 +465,22 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 			sortByRank(results, plan)
 		}
 	}
+	// The index restriction covers the branch that consults the index. The bare
+	// `tag:` listing and the SQL LIKE fallback do not go through it at all, and
+	// a facet that quietly does nothing on an index-less install is worse than
+	// one that is refused — so the predicate is applied to the results too.
+	// It is also the belt to the index's braces: the restriction was built from
+	// a possibly-truncated id set, this is exact over what came back.
+	if facets.Any() {
+		kept := results[:0]
+		for _, res := range results {
+			if matchesFacets(res.Node, facets) {
+				kept = append(kept, res)
+			}
+		}
+		results = kept
+	}
+
 	// Multi-tenant: drop hits in storages outside the caller's tenant. This is
 	// the file-data (layer-1) confinement — an unfiltered search is the classic
 	// cross-tenant leak (content, not just a name). No-op unless a scope is set.
@@ -311,5 +523,11 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 		nodes[i] = results[i].Node
 	}
 	attachStorageNames(r.Context(), h.Store, nodes)
-	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+	out := map[string]any{"results": results}
+	if facetTruncated {
+		// Said out loud rather than absorbed: past the ceiling the facet set is
+		// a sample, so a hit outside it cannot be found however well it matches.
+		out["facets_truncated"] = true
+	}
+	writeJSON(w, http.StatusOK, out)
 }

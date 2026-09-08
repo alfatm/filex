@@ -3,6 +3,7 @@ import { watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import FileModals from './features/files/FileModals.vue';
 import ItemMenuHost from './features/files/ItemMenuHost.vue';
+import OperationsTray from './features/files/OperationsTray.vue';
 import UploadTray from './features/files/UploadTray.vue';
 import AppShell from './layout/AppShell.vue';
 import { useSettingsStore } from './features/settings/settingsStore';
@@ -35,6 +36,11 @@ if (import.meta.env.DEV) void import('./dev/screenshotQuery').then(({ installScr
     <!-- App-wide: the New menu (sidebar) and every page open these. Dialogs portal to <body>; the rest is fixed. -->
     <FileModals />
     <ItemMenuHost />
-    <UploadTray />
+    <!-- One corner, two trays: a column so neither has to guess the other's height. Operations sit above the
+         uploads — an upload is watched while it runs, an operation row is usually read after something went wrong. -->
+    <div class="fixed bottom-6 right-6 z-30 flex flex-col items-end gap-3">
+      <OperationsTray />
+      <UploadTray />
+    </div>
   </AppShell>
 </template>
