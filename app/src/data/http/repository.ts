@@ -1,7 +1,7 @@
 import { DUPLICATE_NAME, OPERATION_PENDING, WRONG_PASSWORD, type Repository } from '../repository';
 import { matchesFilter, MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
-import { noCapabilities, type Access, type ActivityEvent, type AssistantConversation, type AssistantMode, type AssistantSession, type AssistantEvent, type AuthMethods, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type User, type Version } from '../types';
+import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantConversation, type AssistantMode, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type User, type Version } from '../types';
 import { HttpError, putChunk, request, streamJSON } from './client';
 import {
   fromFileNode,
@@ -92,6 +92,62 @@ interface WireAssistantEvent {
   kind?: string;
   path?: string;
   reason?: string;
+  /** `card` of kind `plan`: the stored plan, its work and its state. */
+  plan_id?: string;
+  plan_kind?: string;
+  summary?: string;
+  status?: string;
+  items?: WirePlanItem[];
+}
+
+interface WirePlanItem {
+  path: string;
+  action: string;
+  args?: Record<string, string>;
+  size?: number;
+  at?: string;
+}
+
+interface WirePlanResult {
+  path: string;
+  state: string;
+  code?: string;
+  reason?: string;
+}
+
+/** A stored card, as the messages endpoint redraws it — a plan is hydrated from the plan row, not from the message. */
+interface WireCard {
+  kind: string;
+  path?: string;
+  reason?: string;
+  plan_id?: string;
+  plan_kind?: string;
+  summary?: string;
+  status?: string;
+  items?: WirePlanItem[];
+  results?: WirePlanResult[];
+}
+
+function fromPlanResult(wire: WirePlanResult): PlanResult {
+  const state = wire.state === 'done' || wire.state === 'skipped' ? wire.state : 'failed';
+  return { path: wire.path, state, ...(wire.code ? { code: wire.code } : {}), ...(wire.reason ? { reason: wire.reason } : {}) };
+}
+
+/** One stored card in the shape the panel draws. An unknown kind is dropped rather than rendered as an empty box. */
+function fromCard(wire: WireCard): AssistantCard | null {
+  if (wire.kind === 'plan') {
+    return {
+      kind: 'plan',
+      id: wire.plan_id ?? '',
+      planKind: wire.plan_kind ?? '',
+      summary: wire.summary ?? '',
+      items: wire.items ?? [],
+      status: wire.status === 'done' || wire.status === 'cancelled' ? wire.status : 'pending',
+      ...(wire.results?.length ? { results: wire.results.map(fromPlanResult) } : {}),
+    };
+  }
+  if (wire.kind === 'approval') return { kind: 'approval', path: wire.path ?? '', reason: wire.reason };
+  return null;
 }
 
 /**
@@ -226,8 +282,8 @@ interface WireChatMessage {
   aborted: boolean;
   secret_notice: boolean;
   created_at: string;
-  /** Permission requests this turn raised; they are stored with it, so a reopened chat still shows the question. */
-  cards?: { kind: string; path: string; reason?: string }[];
+  /** The questions this turn raised; a plan card is redrawn from the plan row, so its state is current. */
+  cards?: WireCard[];
 }
 
 function fromChatSession(wire: WireChatSession): AssistantSession {
@@ -947,7 +1003,10 @@ export class HttpRepository implements Repository {
       if (event.type === 'meta') yield { type: 'meta', conversationId: event.conversation_id ?? conversationId };
       else if (event.type === 'text') yield { type: 'text', delta: event.delta ?? '' };
       else if (event.type === 'tool') yield { type: 'tool', tool: event.tool ?? '', target: event.target };
-      else if (event.type === 'card') yield { type: 'card', card: { kind: 'approval', path: event.path ?? '', reason: event.reason } };
+      else if (event.type === 'card') {
+        const card = fromCard(event as WireCard);
+        if (card) yield { type: 'card', card };
+      }
       else if (event.type === 'error') yield { type: 'error', message: event.message ?? '' };
       else if (event.type === 'done') yield { type: 'done' };
     }
@@ -991,7 +1050,7 @@ export class HttpRepository implements Repository {
         text: m.content,
         at: m.created_at,
         ...(m.aborted ? { aborted: true } : {}),
-        ...(m.cards?.length ? { cards: m.cards.map((c) => ({ kind: 'approval' as const, path: c.path, reason: c.reason })) } : {}),
+        ...(m.cards?.length ? { cards: m.cards.map(fromCard).filter((c): c is AssistantCard => c !== null) } : {}),
       })),
       granted: granted ?? [],
     };
@@ -1000,6 +1059,22 @@ export class HttpRepository implements Repository {
   /** One path, one permission. The server takes no other shape of this call. */
   async approveAssistantRead(id: string, path: string): Promise<void> {
     await request(`${ASSISTANT_SESSIONS}/${id}/approvals`, { method: 'POST', body: { path } });
+  }
+
+  /** The body is empty on purpose: the work is the plan the server already stored, not anything sent from here. */
+  async decideAssistantPlan(id: string, planId: string, approve: boolean): Promise<PlanOutcome> {
+    const verb = approve ? 'approve' : 'cancel';
+    const wire = await request<{ status: string; items?: WirePlanResult[]; done?: number; skipped?: number; failed?: number }>(
+      `${ASSISTANT_SESSIONS}/${id}/plans/${planId}/${verb}`,
+      { method: 'POST', body: {} },
+    );
+    return {
+      status: wire.status === 'cancelled' ? 'cancelled' : 'done',
+      results: (wire.items ?? []).map(fromPlanResult),
+      done: wire.done ?? 0,
+      skipped: wire.skipped ?? 0,
+      failed: wire.failed ?? 0,
+    };
   }
 
   async renameAssistantSession(id: string, title: string): Promise<AssistantSession> {

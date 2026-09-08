@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -32,11 +33,14 @@ import (
 	"github.com/brf-tech/filex/backend/internal/config"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/model"
+	"github.com/brf-tech/filex/backend/internal/pathkey"
 	"github.com/brf-tech/filex/backend/internal/share"
 	"github.com/brf-tech/filex/backend/internal/storage"
 	"github.com/brf-tech/filex/backend/internal/storage/drivers/local"
 	syncpkg "github.com/brf-tech/filex/backend/internal/sync"
 	"github.com/brf-tech/filex/backend/internal/testutil"
+	"github.com/brf-tech/filex/backend/internal/trash"
+	"github.com/brf-tech/filex/backend/internal/versioning"
 )
 
 // scriptedProvider answers each call with the next canned stream and records
@@ -131,6 +135,21 @@ func assistantFiles(t *testing.T, provider *scriptedProvider) (*httptest.Server,
 	})
 	require.NoError(t, err)
 
+	// The node rows the bytes on disk correspond to. Everything that CHANGES a
+	// file is addressed by node id — tags, versions, the trash — so a fixture
+	// that only wrote files would exercise the read tools and nothing else.
+	mk := func(clean string, kind model.NodeType, size int64, parent *int64) *model.Node {
+		n, cerr := store.CreateNode(context.Background(), &model.Node{
+			StorageID: st.ID, ParentID: parent, Name: path.Base(clean),
+			Path: clean, PathHash: pathkey.Hash(st.ID, clean), Type: kind, Size: size,
+		})
+		require.NoError(t, cerr)
+		return n
+	}
+	notes := mk("/notes", model.NodeTypeDirectory, 0, nil)
+	mk("/notes/hello.txt", model.NodeTypeFile, 19, &notes.ID)
+	mk("/notes/pay.csv", model.NodeTypeFile, 21, &notes.ID)
+
 	localDrv := authlocal.New(store)
 	require.NoError(t, localDrv.Init(context.Background(), nil))
 	auth.SetEnabled([]auth.Driver{localDrv})
@@ -142,15 +161,20 @@ func assistantFiles(t *testing.T, provider *scriptedProvider) (*httptest.Server,
 	// assistant refuses to store it — see internal/assistant/config.go.
 	cfg.SecretKey = "assistant-tools-test-key"
 
+	resolver := func(id int64) (storage.Driver, error) {
+		if id != st.ID {
+			return nil, fmt.Errorf("unknown storage %d", id)
+		}
+		return drv, nil
+	}
 	srv := httptest.NewServer(api.BuildRouter(&api.Deps{
 		Cfg: cfg, Store: store, Worker: syncpkg.New(store), Caps: capability.New(store),
-		Share: share.NewService(store), LocalAuth: localDrv,
-		StorageResolver: func(id int64) (storage.Driver, error) {
-			if id != st.ID {
-				return nil, fmt.Errorf("unknown storage %d", id)
-			}
-			return drv, nil
-		},
+		Share: share.NewService(store), LocalAuth: localDrv, StorageResolver: resolver,
+		// The services behind the operations that change something. Without
+		// them the plan tools would report the feature as unavailable, which is
+		// the right answer for a server that has none and the wrong one here.
+		Versions: versioning.New(store, resolver),
+		Trash:    trash.New(store, resolver, nil),
 	}))
 	t.Cleanup(srv.Close)
 

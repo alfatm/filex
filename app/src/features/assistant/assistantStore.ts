@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { repository } from '@/data';
-import type { ApprovalCard, AssistantMessage, AssistantMode, AssistantSession } from '@/data/types';
+import type { ApprovalCard, AssistantCard, AssistantMessage, AssistantMode, AssistantSession, PlanCard, PlanOutcome } from '@/data/types';
 
 export const ASSISTANT_MODES: AssistantMode[] = ['filename', 'content', 'tags'];
 
@@ -154,6 +154,26 @@ export const useAssistantStore = defineStore('assistant', () => {
     return granted.value.includes(card.path);
   }
 
+  /**
+   * Runs a plan the person approved, or drops it.
+   *
+   * The request carries no work — the plan is already stored, resolved and fingerprinted, and the server executes
+   * that. What comes back is what actually happened, which is written onto the card so the person sees per item
+   * whether it was done, skipped or failed.
+   */
+  async function decidePlan(card: PlanCard, approve: boolean): Promise<PlanOutcome | null> {
+    if (!sessionId.value || card.status !== 'pending') return null;
+    const outcome = await repository.decideAssistantPlan(sessionId.value, card.id, approve);
+    card.status = outcome.status;
+    if (outcome.results.length) card.results = outcome.results;
+    return outcome;
+  }
+
+  /** Narrowing helper, so a template does not have to know the union's shape. */
+  function isPlan(card: AssistantCard): card is PlanCard {
+    return card.kind === 'plan';
+  }
+
   /** Screenshot / e2e fixture: replaces the conversation without streaming. */
   function seed(list: AssistantMessage[]) {
     abort();
@@ -172,6 +192,8 @@ export const useAssistantStore = defineStore('assistant', () => {
     send,
     approveRead,
     isGranted,
+    decidePlan,
+    isPlan,
     abort,
     seed,
     loadSessions,

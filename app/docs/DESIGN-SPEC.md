@@ -250,6 +250,20 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
   line. **Not in the reference**, which was drawn before the assistant could
   open anything. One card per file, always: there is no button anywhere in this
   flow that approves more than the one file it names.
+- Plan card (same box as the permission card): the assistant's one-line summary
+  14/500, then EVERY item on its own line — the full address, an em dash, what
+  will happen to it, and a second 12 gray line with its size and date. Two pill
+  buttons, primary "Approve and run" and outlined "Don't do this"; after the
+  decision they are replaced by the refusal line, or by "Done" and a per-item
+  outcome list. Also not in the reference.
+  **The whole list is always drawn, never a count.** A card reading "12 changes"
+  with an Approve button is a button with nothing behind it — the plan is
+  approved by reading it.
+  ⚠ The item wording and the numbers come from the SERVER as a code plus raw
+  values (`tag`, `purge`, a byte count, an ISO date), and the panel renders them
+  through i18n and its own formatters. The first version had the server compose
+  the sentence, which put "44 bytes, deleted 2026-09-08T13:47:58Z" into a
+  Russian conversation.
 - Activity line (13 gray with a spinning `Loader2` 14, under the last message
   while a tool runs): "Looking in main://Docs", "Reading …". Also not in the
   reference. It exists because a turn that lists a folder, searches and then

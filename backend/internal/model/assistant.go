@@ -14,6 +14,60 @@ const (
 	AssistantTitleMaxRunes = 60
 )
 
+// What a plan does. Each kind has its own executor; there is no generic
+// "apply these changes" path, so a kind nobody wrote an executor for cannot be
+// run at all.
+const (
+	// PlanKindTags applies tags to files. The one bulk-safe operation the
+	// owner allowed: a tag adds a label and destroys nothing.
+	PlanKindTags = "tags"
+	// PlanKindRestoreVersion puts an older revision back. Only on a direct
+	// request, and it snapshots the current bytes first, so it is reversible.
+	PlanKindRestoreVersion = "restore_version"
+	// PlanKindRevokeShare closes a public link. Only on a direct request.
+	PlanKindRevokeShare = "revoke_share"
+	// PlanKindEmptyTrash destroys files for good. Only on a direct request,
+	// never as a tidy-up step inside another plan.
+	PlanKindEmptyTrash = "empty_trash"
+)
+
+// A plan's life: proposed, then either run once or dropped.
+const (
+	PlanPending   = "pending"
+	PlanDone      = "done"
+	PlanCancelled = "cancelled"
+)
+
+// How much one plan may carry.
+//
+// ⚠ Two ceilings, not one, because the two kinds of work are not comparable. A
+// mistake in a thousand tags is a thousand labels to remove; a mistake in a
+// thousand deletions is a thousand files that are gone. So anything that moves
+// or destroys is capped low enough that a person can actually READ the list
+// they are approving, and tagging — which adds a label and takes nothing away —
+// is capped where bulk work stops being useful.
+const (
+	MaxPlanItems    = 50
+	MaxPlanTagItems = 1000
+)
+
+// AssistantPlan is work the assistant proposed and the person may approve. See
+// the migration for why the model never executes it itself.
+type AssistantPlan struct {
+	ID        int64  `json:"id"`
+	SessionID int64  `json:"session_id"`
+	Kind      string `json:"kind"`
+	Summary   string `json:"summary"`
+	// ItemsJSON is the resolved work: ids and fingerprints, not paths to be
+	// re-interpreted later. Its shape belongs to the assistant handlers.
+	ItemsJSON string `json:"items_json"`
+	Status    string `json:"status"`
+	// ResultJSON is what happened, per item, once it ran.
+	ResultJSON string     `json:"result_json"`
+	CreatedAt  time.Time  `json:"created_at"`
+	DecidedAt  *time.Time `json:"decided_at,omitempty"`
+}
+
 // Assistant message roles.
 const (
 	AssistantRoleUser      = "user"

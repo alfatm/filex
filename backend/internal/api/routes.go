@@ -422,6 +422,9 @@ func BuildRouter(d *Deps) http.Handler {
 		ACL:      d.ACL,
 		Index:    d.Index,
 		Body:     d.Body,
+		Versions: d.Versions,
+		Share:    d.Share,
+		Trash:    d.Trash,
 	})
 	assistantProviderH := handlers.NewAssistantProviderAdmin(d.Store, assistantBox, assistantAI)
 	dashH := handlers.NewDashboard(d.Store, d.Caps, d.Worker)
@@ -686,6 +689,10 @@ func BuildRouter(d *Deps) http.Handler {
 		// Permission to read ONE file, given by the person, for this
 		// conversation only — the gate in front of read_file.
 		r.Post("/api/assistant/sessions/{id}/approvals", assistantH.Approve)
+		// A plan of work the assistant proposed: the person decides, and the
+		// SERVER runs what the stored plan says — see handlers/assistant_plans.go.
+		r.Post("/api/assistant/sessions/{id}/plans/{planID}/approve", assistantH.ApprovePlan)
+		r.Post("/api/assistant/sessions/{id}/plans/{planID}/cancel", assistantH.CancelPlan)
 		r.Get("/api/assistant/sessions", assistantH.Sessions)
 		r.Post("/api/assistant/sessions", assistantH.CreateSession)
 		r.Get("/api/assistant/sessions/{id}", assistantH.Messages)

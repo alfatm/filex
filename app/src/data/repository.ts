@@ -2,6 +2,7 @@ import type {
   Access,
   ActivityEvent,
   AssistantConversation,
+  PlanOutcome,
   AssistantSession,
   AssistantEvent,
   AuthMethods,
@@ -107,6 +108,11 @@ export interface Repository {
    * a pattern or everything — that is the rule it exists to keep.
    */
   approveAssistantRead(id: string, path: string): Promise<void>;
+  /**
+   * Runs a plan the person approved, or drops it. The call carries no work: everything that will happen is already
+   * in the plan the server stored, so there is nothing here for a compromised client to rewrite.
+   */
+  decideAssistantPlan(id: string, planId: string, approve: boolean): Promise<PlanOutcome>;
   /** A name chosen by hand; the title generator never overwrites one. */
   renameAssistantSession(id: string, title: string): Promise<AssistantSession>;
   deleteAssistantSession(id: string): Promise<void>;

@@ -1,10 +1,11 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AssistantEvent, AssistantMode, SearchHit } from '@/data/types';
+import type { ApprovalCard, AssistantEvent, AssistantMode, PlanCard, SearchHit } from '@/data/types';
 import { useAssistantStore } from './assistantStore';
 
 const calls: { prompt: string; mode: AssistantMode; conversationId: string | null; signal: AbortSignal }[] = [];
 const approvals: { id: string; path: string }[] = [];
+const decisions: { id: string; planId: string; approve: boolean }[] = [];
 let script: AssistantEvent[] = [];
 /** When set, the generator throws this instead of yielding once the script is exhausted. */
 let failWith: Error | null = null;
@@ -19,6 +20,12 @@ vi.mock('@/data', () => ({
     assistantMessages: async () => ({ messages: [{ id: 'm1', role: 'assistant', text: 'earlier', at: '', cards: [{ kind: 'approval', path: 'main://pay.csv' }] }], granted: ['main://pay.csv'] }),
     approveAssistantRead: async (id: string, path: string) => {
       approvals.push({ id, path });
+    },
+    decideAssistantPlan: async (id: string, planId: string, approve: boolean) => {
+      decisions.push({ id, planId, approve });
+      return approve
+        ? { status: 'done' as const, results: [{ path: 'main://Docs/a.pdf', state: 'done' as const }], done: 1, skipped: 0, failed: 0 }
+        : { status: 'cancelled' as const, results: [], done: 0, skipped: 0, failed: 0 };
     },
     async *assistantAsk(prompt: string, mode: AssistantMode, conversationId: string | null, signal: AbortSignal) {
       calls.push({ prompt, mode, conversationId, signal });
@@ -52,6 +59,7 @@ describe('assistant store', () => {
     setActivePinia(createPinia());
     calls.length = 0;
     approvals.length = 0;
+    decisions.length = 0;
     release = null;
     failWith = null;
   });
@@ -252,13 +260,13 @@ describe('assistant store', () => {
     await step();
     await turn;
 
-    const card = store.messages[1].cards?.[0];
+    const card = store.messages[1].cards?.[0] as ApprovalCard;
     expect(card).toMatchObject({ path: 'main://Docs/pay.csv', reason: 'to total the salaries' });
-    expect(store.isGranted(card!)).toBe(false);
+    expect(store.isGranted(card)).toBe(false);
 
     await store.approveRead('main://Docs/pay.csv');
     expect(approvals).toEqual([{ id: 's1', path: 'main://Docs/pay.csv' }]);
-    expect(store.isGranted(card!)).toBe(true);
+    expect(store.isGranted(card)).toBe(true);
     // Approving one file says nothing about the next one.
     expect(store.isGranted({ kind: 'approval', path: 'main://Docs/other.csv' })).toBe(false);
 
@@ -270,8 +278,52 @@ describe('assistant store', () => {
   it('reopens a conversation with its pending questions and the permissions already given', async () => {
     const store = useAssistantStore();
     await store.openSession('s9');
-    expect(store.messages[0].cards?.[0].path).toBe('main://pay.csv');
+    expect((store.messages[0].cards?.[0] as ApprovalCard).path).toBe('main://pay.csv');
     expect(store.granted).toEqual(['main://pay.csv']);
     expect(store.isGranted({ kind: 'approval', path: 'main://pay.csv' })).toBe(true);
+  });
+
+  it('runs a plan only once the person approves it, and writes the outcome onto the card', async () => {
+    script = [
+      { type: 'text', delta: 'I have proposed tagging them.' },
+      {
+        type: 'card',
+        card: { kind: 'plan', id: '7', planKind: 'tags', summary: 'Tag the invoices', status: 'pending', items: [{ path: 'main://Docs/a.pdf', action: 'tag as invoices' }] },
+      },
+      { type: 'done' },
+    ];
+    const store = useAssistantStore();
+    const turn = store.send('tag the invoices');
+    await step();
+    await step();
+    await step();
+    await turn;
+
+    const card = store.messages[1].cards?.[0] as PlanCard;
+    expect(card).toMatchObject({ kind: 'plan', id: '7', status: 'pending' });
+    expect(store.isPlan(card)).toBe(true);
+    // Proposing changes nothing on its own: no call has been made.
+    expect(decisions).toHaveLength(0);
+
+    const outcome = await store.decidePlan(card, true);
+    expect(decisions).toEqual([{ id: 's1', planId: '7', approve: true }]);
+    expect(outcome?.done).toBe(1);
+    expect(card.status).toBe('done');
+    expect(card.results).toEqual([{ path: 'main://Docs/a.pdf', state: 'done' }]);
+
+    // A decided plan is not asked again, however many times the button is pressed.
+    expect(await store.decidePlan(card, true)).toBeNull();
+    expect(decisions).toHaveLength(1);
+  });
+
+  it('refusing a plan runs nothing and marks it refused', async () => {
+    const store = useAssistantStore();
+    store.sessionId = 's1';
+    const card: PlanCard = { kind: 'plan', id: '9', planKind: 'empty_trash', summary: 'Empty the trash', status: 'pending', items: [] };
+    store.seed([{ id: 'm1', role: 'assistant', text: 'Proposed.', at: '', cards: [card] }]);
+    const outcome = await store.decidePlan(card, false);
+    expect(outcome?.status).toBe('cancelled');
+    expect(card.status).toBe('cancelled');
+    expect(decisions).toEqual([{ id: 's1', planId: '9', approve: false }]);
   });
 });

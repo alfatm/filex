@@ -135,6 +135,9 @@ func (h *Assistant) Messages(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	// A plan card is redrawn from the PLAN, not from the message it was stored
+	// in: a plan that has since been run must not still show an Approve button.
+	plans := h.planViews(r.Context(), session.ID)
 	out := make([]map[string]any, 0, len(rows))
 	for _, m := range rows {
 		row := map[string]any{
@@ -146,7 +149,7 @@ func (h *Assistant) Messages(w http.ResponseWriter, r *http.Request) {
 			"created_at":    m.CreatedAt.UTC().Format(time.RFC3339),
 		}
 		if cards := storedCards(m.PayloadJSON); len(cards) > 0 {
-			row["cards"] = cards
+			row["cards"] = hydratePlans(cards, plans)
 		}
 		out = append(out, row)
 	}
@@ -256,4 +259,27 @@ func storedCards(payload string) []assistant.Card {
 		return nil
 	}
 	return stored.Cards
+}
+
+// hydratePlans replaces each stored plan card with the plan's current state.
+// A card whose plan is gone (the row was removed) is dropped rather than shown
+// as a button that would 404.
+func hydratePlans(cards []assistant.Card, plans map[string]map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(cards))
+	for _, card := range cards {
+		if card.Kind != assistant.CardPlan {
+			out = append(out, map[string]any{"kind": card.Kind, "path": card.Path, "reason": card.Reason})
+			continue
+		}
+		view, ok := plans[card.PlanID]
+		if !ok {
+			continue
+		}
+		row := map[string]any{"kind": card.Kind, "plan_id": card.PlanID}
+		for key, value := range view {
+			row[key] = value
+		}
+		out = append(out, row)
+	}
+	return out
 }

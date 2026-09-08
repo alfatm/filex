@@ -320,6 +320,60 @@ export interface ApprovalCard {
   reason?: string;
 }
 
+/**
+ * One line of a plan: what will happen to what.
+ *
+ * `action` is a CODE (`tag`, `restore_version`, `revoke_share`, `purge`), not a sentence, and the size and date are
+ * raw — the panel says it in the reader's language and formats them the way the rest of the app does.
+ */
+export interface PlanItem {
+  path: string;
+  action: string;
+  /** Values the wording interpolates: the tags being applied, the version number, a download count. */
+  args?: Record<string, string>;
+  size?: number;
+  /** ISO timestamp; what it means depends on the plan (when a version was taken, when a file was deleted). */
+  at?: string;
+}
+
+/** What happened to one item once the plan ran. */
+export interface PlanResult {
+  path: string;
+  state: 'done' | 'skipped' | 'failed';
+  /** Why, from a closed set the interface has words for: `gone`, `changed`, `forbidden`, `missing`, `broken`. */
+  code?: string;
+  /** The same thing in English, shown only when the code is one this build does not know. */
+  reason?: string;
+}
+
+/**
+ * Work the assistant proposed and the person decides on. The model wrote this plan and then stopped being involved:
+ * approving it runs what the SERVER stored, item by item, so nothing the model says afterwards can change it.
+ */
+export interface PlanCard {
+  kind: 'plan';
+  id: string;
+  /** What sort of work: `tags`, `restore_version`, `revoke_share`, `empty_trash`. */
+  planKind: string;
+  summary: string;
+  items: PlanItem[];
+  status: 'pending' | 'done' | 'cancelled';
+  /** Present once it ran. */
+  results?: PlanResult[];
+}
+
+/** What came back from running a plan. */
+export interface PlanOutcome {
+  status: 'done' | 'cancelled';
+  results: PlanResult[];
+  done: number;
+  skipped: number;
+  failed: number;
+}
+
+/** A card is either a request to open one file or a plan of work. Both are answered by the person, not the model. */
+export type AssistantCard = ApprovalCard | PlanCard;
+
 /** One conversation as the server holds it: the turns, and the files this conversation may open. */
 export interface AssistantConversation {
   messages: AssistantMessage[];
@@ -333,8 +387,9 @@ export interface AssistantMessage {
   /** ISO timestamp. */
   at: string;
   hits?: SearchHit[];
-  /** Permission requests raised by this turn. They survive a reload — the question is still waiting. */
-  cards?: ApprovalCard[];
+  /** Questions this turn raised for the person: permission to open a file, or a plan to approve. They survive a
+   * reload, because the question is still waiting. */
+  cards?: AssistantCard[];
   /** The stream failed while this message was open; the text so far stays. */
   error?: boolean;
   /** The stream was stopped (panel closed) while this message was open. */
@@ -353,8 +408,8 @@ export type AssistantEvent =
   | { type: 'hits'; hits: SearchHit[] }
   /** A tool is running: what it is doing, so twenty seconds of looking around does not read as a stall. */
   | { type: 'tool'; tool: string; target?: string }
-  /** Something for the person to decide — today only a request to read one file. */
-  | { type: 'card'; card: ApprovalCard }
+  /** Something for the person to decide: permission to open one file, or a plan of work. */
+  | { type: 'card'; card: AssistantCard }
   /** The model call failed part-way. Whatever was streamed before it stays on screen and in the log. */
   | { type: 'error'; message: string }
   | { type: 'done' };

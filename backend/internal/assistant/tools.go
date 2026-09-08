@@ -48,18 +48,58 @@ type ToolCall struct {
 	Args string
 }
 
-// Card is something shown to the PERSON rather than to the model: today the
-// one kind is an approval request, which is how a content read gets consent
-// for one specific file.
+// Card is something shown to the PERSON rather than to the model: a request to
+// open one file, or a plan of work waiting for their decision. It is the only
+// thing in a turn that the person, and not the model, answers.
 type Card struct {
 	Kind string `json:"kind"`
-	Path string `json:"path"`
-	// Reason is why permission is being asked for, in the person's terms.
-	Reason string `json:"reason"`
+	// Approval: the file being asked for, and why.
+	Path   string `json:"path,omitempty"`
+	Reason string `json:"reason,omitempty"`
+	// Plan: which stored plan this is, what it does, and every item in it. The
+	// items are carried in full because a plan is approved by reading it — a
+	// card that said "12 changes" would be a button with nothing behind it.
+	PlanID string `json:"plan_id,omitempty"`
+	// PlanKind is WHAT the plan does (tags, empty_trash…), as distinct from
+	// Kind, which is what sort of card this is. Two different words for two
+	// different questions — collapsing them into one field is how a plan card
+	// ends up announcing itself as a "tags" card.
+	PlanKind string     `json:"plan_kind,omitempty"`
+	Summary  string     `json:"summary,omitempty"`
+	Items    []CardItem `json:"items,omitempty"`
 }
 
-// CardApproval is the only card kind so far.
-const CardApproval = "approval"
+// CardItem is one line of a plan.
+//
+// ⚠ Action is a CODE, not a sentence, and the numbers are raw. The panel is
+// read in three languages and formats sizes and dates its own way; a server
+// that composed "44 bytes, deleted 2026-09-08T13:47:58Z" would put English and
+// an ISO timestamp into a Russian conversation — which is exactly what the
+// first version of this did.
+type CardItem struct {
+	Path   string `json:"path"`
+	Action string `json:"action"`
+	// Args are the values the action's wording interpolates: the tags being
+	// applied, the version number, how many times a link was downloaded.
+	Args map[string]string `json:"args,omitempty"`
+	// Size and At are the item as it stands, for the interface to format.
+	Size int64  `json:"size,omitempty"`
+	At   string `json:"at,omitempty"`
+}
+
+// What a plan item does. The interface has words for each of these.
+const (
+	ActionTag            = "tag"
+	ActionRestoreVersion = "restore_version"
+	ActionRevokeShare    = "revoke_share"
+	ActionPurge          = "purge"
+)
+
+// The kinds of card.
+const (
+	CardApproval = "approval"
+	CardPlan     = "plan"
+)
 
 // ToolOutcome is one tool's result: what the model reads, and optionally
 // something for the person to act on.

@@ -456,6 +456,34 @@
       "list_folder": "Klasöre bakılıyor:",
       "search_files": "Aranıyor:",
       "read_file": "Okunuyor:"
+    },
+    "plan": {
+      "title": "Önerilen değişiklikler",
+      "approve": "Onayla ve uygula",
+      "refuse": "Yapma",
+      "cancelled": "Bu planı reddettiniz",
+      "ran": "Tamamlandı — sonuç:",
+      "itemDone": "yapıldı",
+      "approvedPrompt": "Planı onayladım. {done} yapıldı, {skipped} yapılmadı.",
+      "refusedPrompt": "Bu planı onaylamıyorum.",
+      "reason": {
+        "gone": "artık yoktu",
+        "changed": "plan yapıldıktan sonra değişmişti",
+        "forbidden": "buna izniniz yok",
+        "missing": "zaten yoktu",
+        "broken": "başarısız oldu"
+      },
+      "action": {
+        "tag": "{tags} etiketini ekle",
+        "restore_version": "{version} numaralı sürümü geri getir (mevcut içerik önce saklanır)",
+        "revoke_share": "herkese açık bağlantıyı kapat — bağlantısı olan herkes erişimi kaybeder",
+        "purge": "kalıcı olarak yok et — bu geri alınamaz"
+      },
+      "detail": {
+        "deleted": "{size}, {at} tarihinde silindi",
+        "taken": "{size}, {at} tarihinde alındı",
+        "link": "{at} tarihinde oluşturuldu, {downloads} indirme"
+      }
     }
   },
   "settings": {

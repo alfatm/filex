@@ -2952,6 +2952,72 @@ func (s *Store) CountAssistantSessions(ctx context.Context, userID int64) (int, 
 	return n, err
 }
 
+// CreateAssistantPlan stores proposed work, pending the person's decision.
+func (s *Store) CreateAssistantPlan(ctx context.Context, p *model.AssistantPlan) (*model.AssistantPlan, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO assistant_plans (session_id, kind, summary, items_json, status, result_json)
+		 VALUES ($1, $2, $3, $4, $5, '{}') RETURNING id`,
+		p.SessionID, p.Kind, p.Summary, p.ItemsJSON, model.PlanPending).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetAssistantPlan(ctx, id)
+}
+
+func (s *Store) GetAssistantPlan(ctx context.Context, id int64) (*model.AssistantPlan, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, session_id, kind, summary, items_json, status, result_json, created_at, decided_at
+		 FROM assistant_plans WHERE id=$1`, id)
+	return scanAssistantPlan(row)
+}
+
+func (s *Store) ListAssistantPlans(ctx context.Context, sessionID int64) ([]*model.AssistantPlan, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, session_id, kind, summary, items_json, status, result_json, created_at, decided_at
+		 FROM assistant_plans WHERE session_id=$1 ORDER BY id`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*model.AssistantPlan{}
+	for rows.Next() {
+		p, err := scanAssistantPlan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// FinishAssistantPlan closes a plan, and only from `pending` — see the note on
+// the interface for why the WHERE clause is the whole point.
+func (s *Store) FinishAssistantPlan(ctx context.Context, id int64, status, resultJSON string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE assistant_plans SET status=$1, result_json=$2, decided_at=NOW() WHERE id=$3 AND status=$4`,
+		status, resultJSON, id, model.PlanPending)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// scanAssistantPlan reads one row from either a QueryRow or a Rows cursor.
+func scanAssistantPlan(row interface{ Scan(...any) error }) (*model.AssistantPlan, error) {
+	var p model.AssistantPlan
+	var decided sql.NullTime
+	if err := row.Scan(&p.ID, &p.SessionID, &p.Kind, &p.Summary, &p.ItemsJSON, &p.Status, &p.ResultJSON, &p.CreatedAt, &decided); err != nil {
+		return nil, err
+	}
+	if decided.Valid {
+		t := decided.Time
+		p.DecidedAt = &t
+	}
+	return &p, nil
+}
+
 // GrantAssistantRead records consent for one file in one conversation. ON
 // CONFLICT DO NOTHING makes a repeat approval a no-op — approving the same file
 // twice is one permission.

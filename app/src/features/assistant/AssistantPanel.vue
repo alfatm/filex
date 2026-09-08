@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Compon
 import { useI18n } from 'vue-i18n';
 import { File, Loader2, MessagesSquare, Search, Send, Sparkles, SquarePen, Tag, X } from 'lucide-vue-next';
 import { useFormat } from '@/composables/useFormat';
-import type { ApprovalCard, AssistantMode } from '@/data/types';
+import type { ApprovalCard, AssistantMode, PlanCard, PlanItem, PlanResult } from '@/data/types';
 import { useFilesStore } from '@/stores/files';
 import { Avatar, IconButton, SidePanel } from '@/ui';
 import { ASSISTANT_MODES, useAssistantStore } from './assistantStore';
@@ -13,7 +13,7 @@ import SessionList from './SessionList.vue';
 const emit = defineEmits<{ close: [] }>();
 
 const { t } = useI18n();
-const { formatTime } = useFormat();
+const { formatDate, formatSize, formatTime } = useFormat();
 const files = useFilesStore();
 const assistant = useAssistantStore();
 
@@ -77,6 +77,45 @@ async function allowRead(card: ApprovalCard) {
 
 function refuseRead(card: ApprovalCard) {
   send(t('assistant.card.deniedPrompt', { path: card.path }));
+}
+
+/**
+ * The person's answer to a plan. Approving runs what the SERVER stored — this sends no work of its own — and the
+ * outcome is then said in the chat, so the assistant learns what actually happened rather than assuming.
+ */
+async function decidePlan(card: PlanCard, approve: boolean) {
+  const outcome = await assistant.decidePlan(card, approve);
+  if (!outcome) return;
+  send(approve ? t('assistant.plan.approvedPrompt', { done: outcome.done, skipped: outcome.skipped + outcome.failed }) : t('assistant.plan.refusedPrompt'));
+}
+
+/** A skip or a failure, in the reader's language; an unknown code falls back to the server's English sentence. */
+const RESULT_CODES = ['gone', 'changed', 'forbidden', 'missing', 'broken'] as const;
+
+function resultReason(result: PlanResult) {
+  if (result.code && (RESULT_CODES as readonly string[]).includes(result.code)) return t(`assistant.plan.reason.${result.code}`);
+  return result.reason ?? '';
+}
+
+/** What one line of a plan does, in the reader's language. An action this build has no words for shows its code. */
+const PLAN_ACTIONS = ['tag', 'restore_version', 'revoke_share', 'purge'] as const;
+
+function itemAction(item: PlanItem) {
+  if (!(PLAN_ACTIONS as readonly string[]).includes(item.action)) return item.action;
+  return t(`assistant.plan.action.${item.action}`, item.args ?? {});
+}
+
+/**
+ * The second line: the item as it stands. Which numbers matter depends on the plan — a version has a size and when
+ * it was taken, a trashed file has a size and when it was deleted, a link has a date and a download count.
+ */
+function itemDetail(card: PlanCard, item: PlanItem) {
+  const size = item.size ? formatSize(item.size) : '';
+  const at = item.at ? formatDate(item.at) : '';
+  if (card.planKind === 'empty_trash' && at) return t('assistant.plan.detail.deleted', { size, at });
+  if (card.planKind === 'restore_version' && at) return t('assistant.plan.detail.taken', { size, at });
+  if (card.planKind === 'revoke_share' && at) return t('assistant.plan.detail.link', { at, downloads: item.args?.downloads ?? '0' });
+  return size;
 }
 
 async function startNewChat() {
@@ -198,7 +237,47 @@ onBeforeUnmount(() => {
             <ResultCard v-for="hit in message.hits" :key="hit.node.id" :hit="hit" />
 
             <!-- Spec §6: permission is asked for one file at a time, and the card says which file and why. -->
-            <div v-for="card in message.cards" :key="card.path" class="rounded-xl border border-border p-4">
+            <template v-for="(card, at) in message.cards" :key="at">
+              <!-- A plan: everything it would do, listed, before anything is done. -->
+              <div v-if="assistant.isPlan(card)" class="rounded-xl border border-border p-4">
+                <p class="text-14 font-medium leading-snug">{{ card.summary || t('assistant.plan.title') }}</p>
+                <ul class="mt-2 space-y-1.5">
+                  <li v-for="item in card.items" :key="item.path" class="text-13 leading-snug">
+                    <span class="break-all text-text">{{ item.path }}</span>
+                    <span class="text-text-3"> — {{ itemAction(item) }}</span>
+                    <span v-if="itemDetail(card, item)" class="block text-12 text-text-3">{{ itemDetail(card, item) }}</span>
+                  </li>
+                </ul>
+                <div v-if="card.status === 'pending'" class="mt-3 flex flex-wrap gap-[10px]">
+                  <button
+                    type="button"
+                    :disabled="!canSend"
+                    class="inline-flex h-9 items-center rounded-full bg-primary px-4 text-14 leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                    @click="decidePlan(card, true)"
+                  >
+                    {{ t('assistant.plan.approve') }}
+                  </button>
+                  <button
+                    type="button"
+                    :disabled="!canSend"
+                    class="inline-flex h-9 items-center rounded-full border border-border px-4 text-14 leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                    @click="decidePlan(card, false)"
+                  >
+                    {{ t('assistant.plan.refuse') }}
+                  </button>
+                </div>
+                <p v-else-if="card.status === 'cancelled'" class="mt-3 text-13 leading-none text-text-3">{{ t('assistant.plan.cancelled') }}</p>
+                <template v-else>
+                  <p class="mt-3 text-13 leading-none text-success">{{ t('assistant.plan.ran') }}</p>
+                  <ul v-if="card.results?.length" class="mt-2 space-y-1">
+                    <li v-for="result in card.results" :key="result.path" class="text-12 leading-snug text-text-3">
+                      <span class="break-all">{{ result.path }}</span> — {{ result.state === 'done' ? t('assistant.plan.itemDone') : resultReason(result) }}
+                    </li>
+                  </ul>
+                </template>
+              </div>
+
+              <div v-else class="rounded-xl border border-border p-4">
               <p class="text-14 font-medium leading-snug">{{ t('assistant.card.title') }}</p>
               <p class="mt-1 break-all text-14 leading-snug text-text-3">{{ card.path }}</p>
               <p v-if="card.reason" class="mt-1 text-13 leading-snug text-text-3">{{ card.reason }}</p>
@@ -221,7 +300,8 @@ onBeforeUnmount(() => {
                   {{ t('assistant.card.deny') }}
                 </button>
               </div>
-            </div>
+              </div>
+            </template>
           </div>
         </template>
         <p v-if="activityLabel" class="flex items-center text-13 leading-snug text-text-3">

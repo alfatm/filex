@@ -349,6 +349,20 @@ type Store interface {
 	// ListAssistantReadGrants is what the panel redraws its approvals from
 	// when a stored conversation is reopened.
 	ListAssistantReadGrants(ctx context.Context, sessionID int64) ([]string, error)
+	// CreateAssistantPlan stores proposed work. It is created pending and is
+	// the only thing the executor will act on — the model's tool call wrote
+	// this row and then stopped being involved.
+	CreateAssistantPlan(ctx context.Context, p *model.AssistantPlan) (*model.AssistantPlan, error)
+	GetAssistantPlan(ctx context.Context, id int64) (*model.AssistantPlan, error)
+	ListAssistantPlans(ctx context.Context, sessionID int64) ([]*model.AssistantPlan, error)
+	// FinishAssistantPlan records the outcome and closes the plan.
+	//
+	// ⚠ It moves the row out of `pending` ONLY while it is still pending, and
+	// reports whether it did. That is what makes a plan run at most once: two
+	// approvals racing (a double click, a retried request) leave exactly one
+	// winner, and the loser is told the work was already decided rather than
+	// repeating it.
+	FinishAssistantPlan(ctx context.Context, id int64, status, resultJSON string) (bool, error)
 	// CountAssistantSessions is the admin overview's figure: how many
 	// conversations an account holds, never what is in them.
 	CountAssistantSessions(ctx context.Context, userID int64) (int, error)

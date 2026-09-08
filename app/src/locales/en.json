@@ -456,6 +456,34 @@
       "list_folder": "Looking in",
       "search_files": "Searching for",
       "read_file": "Reading"
+    },
+    "plan": {
+      "title": "Proposed changes",
+      "approve": "Approve and run",
+      "refuse": "Don't do this",
+      "cancelled": "You refused this plan",
+      "ran": "Done — this is what happened:",
+      "itemDone": "done",
+      "approvedPrompt": "I approved the plan. {done} done, {skipped} not done.",
+      "refusedPrompt": "I did not approve that plan.",
+      "reason": {
+        "gone": "it was no longer there",
+        "changed": "it had changed since the plan was made",
+        "forbidden": "you may not do this to it",
+        "missing": "it was already gone",
+        "broken": "it failed"
+      },
+      "action": {
+        "tag": "tag as {tags}",
+        "restore_version": "put version {version} back (the current contents are saved first)",
+        "revoke_share": "close the public link — anyone holding it loses access",
+        "purge": "destroy permanently — this cannot be undone"
+      },
+      "detail": {
+        "deleted": "{size}, deleted {at}",
+        "taken": "{size}, taken {at}",
+        "link": "created {at}, {downloads} downloads"
+      }
     }
   },
   "settings": {

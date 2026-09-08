@@ -663,4 +663,59 @@ describe('HttpRepository', () => {
       body: { path: 'main://Docs/pay.csv' },
     });
   });
+  it('reads a plan card as the server currently holds it, not as the message froze it', async () => {
+    routes = [
+      [
+        '/api/assistant/sessions/7',
+        {
+          messages: [
+            {
+              id: '2',
+              role: 'assistant',
+              content: 'Proposed.',
+              aborted: false,
+              secret_notice: false,
+              created_at: '2026-07-01T10:00:01Z',
+              cards: [
+                {
+                  kind: 'plan',
+                  plan_id: '3',
+                  plan_kind: 'tags',
+                  summary: 'Tag the invoices',
+                  status: 'done',
+                  items: [{ path: 'main://Docs/a.pdf', action: 'tag as invoices' }],
+                  results: [{ path: 'main://Docs/a.pdf', state: 'skipped', code: 'changed', reason: 'the file changed after the plan was made' }],
+                },
+              ],
+            },
+          ],
+          granted: [],
+        },
+      ],
+    ];
+    const conversation = await new HttpRepository().assistantMessages('7');
+    expect(conversation.messages[0].cards).toEqual([
+      {
+        kind: 'plan',
+        id: '3',
+        planKind: 'tags',
+        summary: 'Tag the invoices',
+        status: 'done',
+        items: [{ path: 'main://Docs/a.pdf', action: 'tag as invoices' }],
+        results: [{ path: 'main://Docs/a.pdf', state: 'skipped', code: 'changed', reason: 'the file changed after the plan was made' }],
+      },
+    ]);
+  });
+
+  it('approves a plan with an empty body: the work is the plan the server already holds', async () => {
+    routes = [['/plans/3/approve', { ok: true, status: 'done', items: [{ path: 'main://Docs/a.pdf', state: 'done' }], done: 1, skipped: 0, failed: 0 }]];
+    const outcome = await new HttpRepository().decideAssistantPlan('7', '3', true);
+    expect(calls.at(-1)).toMatchObject({ url: '/api/assistant/sessions/7/plans/3/approve', method: 'POST', body: {} });
+    expect(outcome).toEqual({ status: 'done', results: [{ path: 'main://Docs/a.pdf', state: 'done' }], done: 1, skipped: 0, failed: 0 });
+
+    routes = [['/plans/3/cancel', { ok: true, status: 'cancelled' }]];
+    const refused = await new HttpRepository().decideAssistantPlan('7', '3', false);
+    expect(calls.at(-1)?.url).toBe('/api/assistant/sessions/7/plans/3/cancel');
+    expect(refused.status).toBe('cancelled');
+  });
 });

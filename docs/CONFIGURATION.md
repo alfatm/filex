@@ -700,11 +700,29 @@ exists, the variable is inert and the value is edited through
 
 ### What it can do
 
-**Read-only, and one of the four reads needs permission.** The assistant can
-list the drives, list a folder, search a drive by name and content, and read a
-text file. It can change **nothing**: there is no tool that writes, moves,
-deletes, tags, shares or restores, so no configuration can make it do any of
-those.
+**It looks, and it proposes.** The assistant can list the drives, list a folder,
+search by name and content, read a text file, and list a file's versions, its
+public links and the trash. Reading a file's CONTENTS needs the person's
+permission for that exact file (below).
+
+Changing anything works differently, and the difference is the point: **the
+model holds no tool that changes anything.** Its `plan_*` tools only write a
+plan — every item resolved to a node id and fingerprinted as it is at that
+moment — which the person reads and approves in the panel. The SERVER then
+executes what the stored plan says. The model is not consulted at execution
+time and cannot alter a single item of it, so a prompt injection that talks the
+model into "delete everything" produces, at worst, a plan the person is looking
+at and can refuse.
+
+Four kinds of plan exist, and no others: apply tags, restore a version (the
+current contents are snapshotted first), revoke a public link, empty the trash.
+There is **no** tool — and no plan kind — that writes, moves, renames or deletes
+a live file, creates a share link, or changes anyone's permissions.
+
+An item whose fingerprint no longer matches when the plan runs is **skipped and
+reported**: the person approved the file they were shown, not whatever now sits
+at that path. A plan runs at most once, and a plan may carry at most 50 items —
+1000 for tagging, which adds a label and destroys nothing.
 
 `read_file` refuses unless the person has approved that **exact path** in that
 conversation. The approval is a row in `assistant_read_grants`, given through a

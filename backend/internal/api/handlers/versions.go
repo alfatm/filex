@@ -112,8 +112,18 @@ func (h *Versions) Restore(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if node, gerr := h.Store.GetNode(r.Context(), req.NodeID); gerr == nil && node != nil {
-		protocolsync.New(h.Store, h.Index, nil, "").IndexNode(r.Context(), node)
+	afterVersionRestore(r.Context(), h.Store, h.Index, req.NodeID)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// afterVersionRestore is everything a restore owes the rest of the system:
+// re-index the node, scan the bytes that just went live, and tell the open
+// browsers. Shared with the assistant's plan executor, which restores through
+// the same service — a second copy of this would be a second place to forget
+// the antivirus step.
+func afterVersionRestore(ctx context.Context, store db.Store, index *search.Index, nodeID int64) {
+	if node, gerr := store.GetNode(ctx, nodeID); gerr == nil && node != nil {
+		protocolsync.New(store, index, nil, "").IndexNode(ctx, node)
 		// ⚠⚠ The bytes in `.versions/` were never scanned. queue's Eligible()
 		// skips that prefix outright, deliberately: snapshotting is now what
 		// every destructive write does, so scanning each snapshot would
@@ -130,12 +140,11 @@ func (h *Versions) Restore(w http.ResponseWriter, r *http.Request) {
 		// has, and the queue is what makes a slow scanner unable to stall a
 		// write. Blocking here would make restore the one write surface in
 		// filex that waits on ClamAV.
-		enqueueAntivirusScan(r.Context(), node)
+		enqueueAntivirusScan(ctx, node)
 		emitFolderChange(node.StorageID, path.Dir(node.Path), realtime.ChangeEvent{
 			Action: "upload", Name: node.Name,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // HardDelete erases a version row + its storage object (admin only).

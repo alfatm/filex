@@ -165,3 +165,48 @@ func TestAssistantReadGrantsAreExactAndDieWithTheConversation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, paths, "deleting a chat takes what it was allowed to read with it")
 }
+
+// A plan runs at most once, and only from pending. Two approvals racing is not
+// hypothetical: it is a double click.
+func TestAssistantPlanIsDecidedExactlyOnce(t *testing.T) {
+	_, store := testutil.NewTestDB(t)
+	ctx := context.Background()
+	user, err := store.CreateUser(ctx, "mo@filex.test", "x", "user", "en", "UTC")
+	require.NoError(t, err)
+	session, err := store.CreateAssistantSession(ctx, &model.AssistantSession{UserID: user.ID})
+	require.NoError(t, err)
+
+	plan, err := store.CreateAssistantPlan(ctx, &model.AssistantPlan{
+		SessionID: session.ID, Kind: model.PlanKindTags,
+		Summary: "Tag the invoices", ItemsJSON: `[{"path":"main://a.pdf","node_id":7}]`,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, model.PlanPending, plan.Status, "a plan starts as a question, not as work")
+	assert.Nil(t, plan.DecidedAt)
+
+	ran, err := store.FinishAssistantPlan(ctx, plan.ID, model.PlanDone, `{"items":[{"path":"main://a.pdf","state":"done"}]}`)
+	require.NoError(t, err)
+	assert.True(t, ran)
+
+	// The second attempt changes nothing and says so — that is what stops a
+	// retried request from running the work twice.
+	ran, err = store.FinishAssistantPlan(ctx, plan.ID, model.PlanDone, "{}")
+	require.NoError(t, err)
+	assert.False(t, ran)
+
+	again, err := store.GetAssistantPlan(ctx, plan.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.PlanDone, again.Status)
+	assert.Contains(t, again.ResultJSON, "done")
+	require.NotNil(t, again.DecidedAt)
+
+	plans, err := store.ListAssistantPlans(ctx, session.ID)
+	require.NoError(t, err)
+	require.Len(t, plans, 1)
+
+	// Deleting the conversation takes its plans with it.
+	require.NoError(t, store.DeleteAssistantSession(ctx, session.ID))
+	plans, err = store.ListAssistantPlans(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Empty(t, plans)
+}

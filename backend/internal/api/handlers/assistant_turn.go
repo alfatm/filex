@@ -182,10 +182,19 @@ func (h *Assistant) Turn(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}
 			cards = append(cards, *event.Card)
-			return send(map[string]any{
-				"type": "card", "kind": event.Card.Kind,
-				"path": event.Card.Path, "reason": event.Card.Reason,
-			})
+			out := map[string]any{"type": "card", "kind": event.Card.Kind}
+			switch event.Card.Kind {
+			case assistant.CardPlan:
+				out["plan_id"] = event.Card.PlanID
+				out["plan_kind"] = event.Card.PlanKind
+				out["summary"] = event.Card.Summary
+				out["items"] = event.Card.Items
+				out["status"] = model.PlanPending
+			default:
+				out["path"] = event.Card.Path
+				out["reason"] = event.Card.Reason
+			}
+			return send(out)
 		}
 		return nil
 	})

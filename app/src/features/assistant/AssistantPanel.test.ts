@@ -10,6 +10,7 @@ import { useAssistantStore } from './assistantStore';
 
 const calls: { prompt: string; mode: AssistantMode }[] = [];
 const approvals: { id: string; path: string }[] = [];
+const decisions: { id: string; planId: string; approve: boolean }[] = [];
 let script: AssistantEvent[] = [];
 let release: (() => void) | null = null;
 
@@ -26,6 +27,12 @@ vi.mock('@/data', () => ({
     },
     async approveAssistantRead(id: string, path: string) {
       approvals.push({ id, path });
+    },
+    async decideAssistantPlan(id: string, planId: string, approve: boolean) {
+      decisions.push({ id, planId, approve });
+      return approve
+        ? { status: 'done' as const, results: [{ path: 'main://Docs/a.pdf', state: 'skipped' as const, code: 'changed' }], done: 0, skipped: 1, failed: 0 }
+        : { status: 'cancelled' as const, results: [], done: 0, skipped: 0, failed: 0 };
     },
     async *assistantAsk(prompt: string, mode: AssistantMode) {
       calls.push({ prompt, mode });
@@ -176,5 +183,53 @@ describe('AssistantPanel', () => {
     expect(calls.at(-1)?.prompt).toBe('You may read `main://Docs/pay.csv`.');
     await nextTick();
     expect(wrapper.text()).toContain('You allowed this file');
+  });
+
+  it('shows a plan item by item before anything happens, and reports what actually did', async () => {
+    script = [{ type: 'done' }];
+    const { wrapper, store } = await setup();
+    cleanup = () => wrapper.unmount();
+    store.sessionId = 's1';
+    store.seed([
+      { id: 'm1', role: 'user', text: 'tag the invoices', at: '2026-07-01T10:00:00Z' },
+      {
+        id: 'm2',
+        role: 'assistant',
+        text: 'I have proposed tagging them.',
+        at: '2026-07-01T10:00:01Z',
+        cards: [
+          {
+            kind: 'plan',
+            id: '7',
+            planKind: 'tags',
+            summary: 'Tag two invoices',
+            status: 'pending',
+            items: [
+              { path: 'main://Docs/a.pdf', action: 'tag', args: { tags: 'invoices' }, size: 12000 },
+              { path: 'main://Docs/b.pdf', action: 'tag', args: { tags: 'invoices' } },
+            ],
+          },
+        ],
+      },
+    ]);
+    await nextTick();
+
+    // Every item is on screen: a plan is approved by reading it.
+    expect(wrapper.text()).toContain('Tag two invoices');
+    expect(wrapper.text()).toContain('main://Docs/a.pdf');
+    expect(wrapper.text()).toContain('main://Docs/b.pdf');
+    // The action is written in the reader's language from a code, not echoed from the server.
+    expect(wrapper.text()).toContain('tag as invoices');
+    expect(decisions).toHaveLength(0);
+
+    await wrapper.findAll('button').find((b) => b.text() === 'Approve and run')!.trigger('click');
+    await flushPromises();
+    await nextTick();
+
+    expect(decisions).toEqual([{ id: 's1', planId: '7', approve: true }]);
+    // The outcome is per item, in the reader's language, not the server's English.
+    expect(wrapper.text()).toContain('it had changed since the plan was made');
+    expect(calls.at(-1)?.prompt).toBe('I approved the plan. 0 done, 1 not done.');
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Approve and run')).toBe(false);
   });
 });

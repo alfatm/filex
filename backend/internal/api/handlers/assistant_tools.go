@@ -30,14 +30,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/brf-tech/filex/backend/internal/acl"
 	"github.com/brf-tech/filex/backend/internal/assistant"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/filebody"
+	"github.com/brf-tech/filex/backend/internal/model"
+	"github.com/brf-tech/filex/backend/internal/pathkey"
 	"github.com/brf-tech/filex/backend/internal/search"
+	"github.com/brf-tech/filex/backend/internal/share"
 	"github.com/brf-tech/filex/backend/internal/storage"
+	"github.com/brf-tech/filex/backend/internal/trash"
+	"github.com/brf-tech/filex/backend/internal/versioning"
 )
 
 // Ceilings the tools apply. They are about the model's attention, not about
@@ -59,26 +65,62 @@ type AssistantToolDeps struct {
 	ACL      *acl.Resolver
 	Index    *search.Index
 	Body     *filebody.Resolver
+	// The three services behind the operations that CHANGE something. Each is
+	// nil-checked where it is used: a deployment without one is missing that
+	// operation, not broken.
+	Versions *versioning.Service
+	Share    *share.Service
+	Trash    *trash.Service
 }
 
 // assistantTools is one conversation's toolbox. It is built per turn, because
-// the session id is half of every permission question it asks.
+// the session id is half of every permission question it asks — and again to
+// execute an approved plan, for the same reason.
 type assistantTools struct {
 	ops       *aiOps
 	index     *search.Index
 	store     db.Store
+	acl       *acl.Resolver
+	versions  *versioning.Service
+	share     *share.Service
+	trash     *trash.Service
 	sessionID int64
 }
 
 // newAssistantTools binds the file surface to one conversation.
 func newAssistantTools(deps AssistantToolDeps, sessionID int64) *assistantTools {
-	ops := newAIOps(deps.Store, deps.Resolver, nil, "", nil)
+	ops := newAIOps(deps.Store, deps.Resolver, deps.Share, "", nil)
 	ops.acl = deps.ACL
 	ops.attachSearchIndex(deps.Index)
 	if deps.Body != nil {
 		ops.attachBody(deps.Body)
 	}
-	return &assistantTools{ops: ops, index: deps.Index, store: deps.Store, sessionID: sessionID}
+	return &assistantTools{
+		ops: ops, index: deps.Index, store: deps.Store, acl: deps.ACL,
+		versions: deps.Versions, share: deps.Share, trash: deps.Trash,
+		sessionID: sessionID,
+	}
+}
+
+// resolveNode turns an address into the cached node row every write operation
+// is addressed by. It goes through resolveStorage first, so a path the caller
+// may not even see never gets as far as a lookup.
+func (t *assistantTools) resolveNode(ctx context.Context, path string) (*model.Node, error) {
+	storage, rel, err := t.ops.resolveStorage(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if rel == "" {
+		return nil, fmt.Errorf("%s is a drive, not a file", path)
+	}
+	node, err := t.store.GetNodeByPath(ctx, storage.ID, pathkey.Hash(storage.ID, rel))
+	if err != nil || node == nil {
+		return nil, fmt.Errorf("filex has no record of %s yet — list the folder it is in first", path)
+	}
+	if node.DeletedAt != nil {
+		return nil, fmt.Errorf("%s is in the trash", path)
+	}
+	return node, nil
 }
 
 // Specs describes the tools to the model.
@@ -110,6 +152,59 @@ func (t *assistantTools) Specs() []assistant.ToolSpec {
 			}, []string{"path", "query"}),
 		},
 		{
+			Name:        "list_versions",
+			Description: "List the stored revisions of one file, newest first, with their ids. Needed before proposing a restore.",
+			Schema: object(map[string]any{
+				"path": str("The file, as `<drive>://<path>`."),
+			}, []string{"path"}),
+		},
+		{
+			Name:        "list_shares",
+			Description: "List the public links that exist on one file or folder, with their ids. Needed before proposing to revoke one.",
+			Schema: object(map[string]any{
+				"path": str("The file or folder, as `<drive>://<path>`."),
+			}, []string{"path"}),
+		},
+		{
+			Name:        "list_trash",
+			Description: "List what is in the person's trash, with sizes and deletion dates. Deleted items can still be restored from the Trash page — until the trash is emptied, which destroys them.",
+			Schema:      object(nil, nil),
+		},
+		{
+			Name:        "plan_tags",
+			Description: "PROPOSE tagging files. This does not tag anything: it writes a plan the person sees and approves, and the server applies it. Tags are added, never replaced. Say what you propose in one sentence and then wait.",
+			Schema: object(map[string]any{
+				"paths":   arr("The files to tag, each as `<drive>://<path>`.", str("")),
+				"tags":    arr("The tags to add.", str("")),
+				"summary": str("One sentence describing the plan, for the person to read."),
+			}, []string{"paths", "tags", "summary"}),
+		},
+		{
+			Name:        "plan_restore_version",
+			Description: "PROPOSE putting an older revision of a file back. Only when the person asked for that restore directly. The current contents are saved as a new revision first, so it is reversible. This does not restore anything by itself: the person approves the plan and the server does it.",
+			Schema: object(map[string]any{
+				"path":       str("The file, as `<drive>://<path>`."),
+				"version_id": num("Which revision, from list_versions."),
+				"summary":    str("One sentence describing the plan, for the person to read."),
+			}, []string{"path", "version_id", "summary"}),
+		},
+		{
+			Name:        "plan_revoke_share",
+			Description: "PROPOSE closing a public link. Only when the person asked for it directly. Anyone holding the link loses access. This does not revoke anything by itself: the person approves the plan and the server does it.",
+			Schema: object(map[string]any{
+				"path":     str("The shared file or folder, as `<drive>://<path>`."),
+				"share_id": num("Which link, from list_shares."),
+				"summary":  str("One sentence describing the plan, for the person to read."),
+			}, []string{"path", "share_id", "summary"}),
+		},
+		{
+			Name:        "plan_empty_trash",
+			Description: "PROPOSE destroying everything in the trash. ONLY when the person asked for exactly this, never as a tidy-up step inside anything else. It cannot be undone and there is no version history behind it. The plan lists every item that would be destroyed; the person approves it and the server does it.",
+			Schema: object(map[string]any{
+				"summary": str("One sentence describing the plan, for the person to read."),
+			}, []string{"summary"}),
+		},
+		{
 			Name:        "read_file",
 			Description: "Read a text file's contents. REQUIRES the person's permission for that exact file: if they have not approved it, this returns a refusal and they are shown the request. Ask before you call it, prefer metadata, and never call it to work around a refusal.",
 			Schema: object(map[string]any{
@@ -133,6 +228,20 @@ func (t *assistantTools) Run(ctx context.Context, call assistant.ToolCall) assis
 		return t.searchFiles(ctx, call.Args)
 	case "read_file":
 		return t.readFile(ctx, call.Args)
+	case "list_versions":
+		return t.listVersions(ctx, call.Args)
+	case "list_shares":
+		return t.listShares(ctx, call.Args)
+	case "list_trash":
+		return t.listTrash(ctx)
+	case "plan_tags":
+		return t.planTags(ctx, call.Args)
+	case "plan_restore_version":
+		return t.planRestoreVersion(ctx, call.Args)
+	case "plan_revoke_share":
+		return t.planRevokeShare(ctx, call.Args)
+	case "plan_empty_trash":
+		return t.planEmptyTrash(ctx, call.Args)
 	}
 	return failure("there is no tool called %q", call.Name)
 }
@@ -275,6 +384,84 @@ func withoutBookkeeping(entries []aiEntry) []aiEntry {
 	return out
 }
 
+func (t *assistantTools) listVersions(ctx context.Context, raw string) assistant.ToolOutcome {
+	var args struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(raw), &args); err != nil {
+		return failure("could not read the arguments: %v", err)
+	}
+	if t.versions == nil {
+		return failure("versioning is not available on this server")
+	}
+	node, err := t.resolveNode(ctx, args.Path)
+	if err != nil {
+		return failure("%v", err)
+	}
+	stored, err := t.versions.List(ctx, node.ID)
+	if err != nil {
+		return failure("%v", err)
+	}
+	out := make([]map[string]any, 0, len(stored))
+	for _, v := range stored {
+		out = append(out, map[string]any{
+			"version_id": v.ID, "number": v.VersionN, "size": v.Size,
+			"taken_at": v.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return payload(map[string]any{"path": args.Path, "versions": out})
+}
+
+func (t *assistantTools) listShares(ctx context.Context, raw string) assistant.ToolOutcome {
+	var args struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(raw), &args); err != nil {
+		return failure("could not read the arguments: %v", err)
+	}
+	if t.share == nil {
+		return failure("sharing is not enabled on this server")
+	}
+	node, err := t.resolveNode(ctx, args.Path)
+	if err != nil {
+		return failure("%v", err)
+	}
+	links, err := t.share.ListByNode(ctx, node.ID)
+	if err != nil {
+		return failure("%v", err)
+	}
+	out := make([]map[string]any, 0, len(links))
+	for _, sh := range links {
+		// ⚠ The token is NOT reported. It is the credential itself: anyone
+		// holding it can download the file, and there is no reason for it to
+		// travel to a model provider. The id is enough to revoke by.
+		out = append(out, map[string]any{
+			"share_id": sh.ID, "created_at": sh.CreatedAt.UTC().Format(time.RFC3339),
+			"downloads": sh.DownloadCount, "has_pin": sh.HasPin,
+		})
+	}
+	return payload(map[string]any{"path": args.Path, "links": out})
+}
+
+func (t *assistantTools) listTrash(ctx context.Context) assistant.ToolOutcome {
+	if t.trash == nil {
+		return failure("the trash is not available on this server")
+	}
+	entries, total, err := t.trash.List(ctx, nil, true, assistantListDefault, 0)
+	if err != nil {
+		return failure("%v", err)
+	}
+	out := make([]map[string]any, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, map[string]any{
+			"path": e.StorageName + "://" + strings.TrimPrefix(e.Path, "/"),
+			"name": e.Name, "size": e.Size,
+			"deleted_at": e.DeletedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return payload(map[string]any{"entries": out, "total": total})
+}
+
 // payload is a successful result: JSON, because a model reads structure more
 // reliably than prose and the fields are what the answer is built from.
 func payload(v map[string]any) assistant.ToolOutcome {
@@ -313,4 +500,8 @@ func str(description string) map[string]any {
 
 func num(description string) map[string]any {
 	return map[string]any{"type": "integer", "description": description}
+}
+
+func arr(description string, items map[string]any) map[string]any {
+	return map[string]any{"type": "array", "description": description, "items": items}
 }

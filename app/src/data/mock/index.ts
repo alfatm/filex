@@ -312,6 +312,11 @@ export const mockRepository: Repository = {
   async approveAssistantRead() {
     // Nothing to record — see above.
   },
+
+  async decideAssistantPlan(_id: string, _planId: string, approve: boolean) {
+    // The mock's assistant proposes nothing, so there is no plan to run: it answers the shape and no more.
+    return { status: approve ? ('done' as const) : ('cancelled' as const), results: [], done: 0, skipped: 0, failed: 0 };
+  },
   async renameAssistantSession(id, title) {
     const session = chatSessions.find((s) => s.id === id);
     if (!session) throw new Error(`unknown chat session: ${id}`);
