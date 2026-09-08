@@ -198,6 +198,15 @@ const routes: RouteRecordRaw[] = [
         meta: { breadcrumb: 'nav.trash' },
       },
       {
+        // The AI assistant: the model provider for the whole installation,
+        // and the conversation history each account holds — as metadata, the
+        // only form there is a route for (docs/ASSISTANT.md).
+        path: 'assistant',
+        name: 'assistant',
+        component: () => import('@/views/Assistant.vue'),
+        meta: { breadcrumb: 'nav.assistant' },
+      },
+      {
         // koru:k3 — data-protection settings (trash retention, version
         // policy, antivirus status).
         path: 'protection',

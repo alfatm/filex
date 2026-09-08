@@ -116,7 +116,8 @@
     "branding": "Branding",
     "updates": "Updates",
     "connections": "Connections",
-    "plugins": "Plugins"
+    "plugins": "Plugins",
+    "assistant": "AI assistant"
   },
   "login": {
     "title": "Sign in",
@@ -360,6 +361,55 @@
     "testFail": "Health check failed",
     "envManaged": "Set by the environment",
     "envManagedHint": "Pinned by an environment variable. A change here applies immediately but is reset from the environment the next time filex restarts."
+  },
+  "assistant": {
+    "title": "AI assistant",
+    "subtitle": "The model this installation talks to, and the conversation history it keeps.",
+    "savedOk": "Assistant settings saved.",
+    "removeKey": "Remove the stored key",
+    "removeKeyConfirm": "Remove the stored API key? The assistant stops answering until a new one is saved.",
+    "keyRemoved": "The stored key was removed.",
+    "supertenantOnly": "The model provider serves the whole instance and is managed by the platform operator.",
+    "testOk": "{model} answered: {reply}",
+    "state": {
+      "ready": "Answering",
+      "off": "Off",
+      "incomplete": "Not usable yet",
+      "unknown": "Unknown"
+    },
+    "provider": {
+      "title": "Model provider"
+    },
+    "fields": {
+      "enabled": "Enable the assistant",
+      "enabledHint": "Off by default. Nothing is sent to a model provider until this is on.",
+      "provider": "Protocol",
+      "providerHint": "The wire protocol, not the vendor: openai also covers vLLM, Ollama, LiteLLM and any compatible gateway.",
+      "baseUrl": "Base URL",
+      "baseUrlHint": "Leave empty for the provider's own endpoint. Must start with http:// or https://.",
+      "model": "Model",
+      "modelHint": "Spelled the way your provider spells it. There is no default: it decides both the bill and the quality.",
+      "turnsPerMinute": "Turns per minute, per account",
+      "turnsPerMinuteHint": "The loop-breaker, not a cost control. A person cannot type past it; an agent talking in circles reaches it at once.",
+      "apiKey": "API key",
+      "apiKeyHint": "Stored encrypted with FILEX_SECRET_KEY and never shown again.",
+      "apiKeyStored": "A key is stored. Leave this empty to keep it, or type a new one to replace it."
+    },
+    "sessions": {
+      "title": "Conversations",
+      "subtitle": "How much history each account holds. You can clear a conversation; you cannot read one — there is no endpoint that returns its messages.",
+      "none": "No conversations yet.",
+      "unnamed": "Not named yet",
+      "delete": "Delete this conversation",
+      "deleteConfirm": "Delete this conversation belonging to {email}? It cannot be recovered.",
+      "deleted": "The conversation was deleted.",
+      "fields": {
+        "owner": "Account",
+        "name": "Name",
+        "messages": "Messages",
+        "lastActive": "Last active"
+      }
+    }
   },
   "authProviders": {
     "title": "Auth providers",

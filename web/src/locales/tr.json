@@ -116,7 +116,8 @@
     "branding": "Kurumsal Kimlik",
     "updates": "Güncellemeler",
     "connections": "Bağlantılar",
-    "plugins": "Eklentiler"
+    "plugins": "Eklentiler",
+    "assistant": "Yapay zekâ asistanı"
   },
   "login": {
     "title": "Oturum aç",
@@ -360,6 +361,55 @@
     "testFail": "Sağlık kontrolü başarısız",
     "envManaged": "Ortam değişkeniyle ayarlı",
     "envManagedHint": "Bir ortam değişkeniyle sabitlenmiş. Buradaki değişiklik hemen uygulanır ama filex bir sonraki açılışta ortamdaki değeri geri yazar."
+  },
+  "assistant": {
+    "title": "Yapay zekâ asistanı",
+    "subtitle": "Bu kurulumun konuştuğu model ve sakladığı sohbet geçmişi.",
+    "savedOk": "Asistan ayarları kaydedildi.",
+    "removeKey": "Kayıtlı anahtarı kaldır",
+    "removeKeyConfirm": "Kayıtlı API anahtarı kaldırılsın mı? Yenisi kaydedilene kadar asistan yanıt vermez.",
+    "keyRemoved": "Kayıtlı anahtar kaldırıldı.",
+    "supertenantOnly": "Model sağlayıcısı tüm örneğe hizmet eder ve platform işletmecisi tarafından yönetilir.",
+    "testOk": "{model} yanıtladı: {reply}",
+    "state": {
+      "ready": "Yanıt veriyor",
+      "off": "Kapalı",
+      "incomplete": "Henüz kullanılamaz",
+      "unknown": "Bilinmiyor"
+    },
+    "provider": {
+      "title": "Model sağlayıcısı"
+    },
+    "fields": {
+      "enabled": "Asistanı etkinleştir",
+      "enabledHint": "Varsayılan olarak kapalı. Bu açılmadan model sağlayıcısına hiçbir şey gönderilmez.",
+      "provider": "Protokol",
+      "providerHint": "Sağlayıcı değil, protokol: openai aynı zamanda vLLM, Ollama, LiteLLM ve uyumlu her ağ geçidini kapsar.",
+      "baseUrl": "Temel URL",
+      "baseUrlHint": "Sağlayıcının kendi adresi için boş bırakın. http:// veya https:// ile başlamalıdır.",
+      "model": "Model",
+      "modelHint": "Sağlayıcınızın yazdığı biçimde yazın. Varsayılanı yoktur: hem faturayı hem kaliteyi bu belirler.",
+      "turnsPerMinute": "Hesap başına dakikadaki tur",
+      "turnsPerMinuteHint": "Maliyet denetimi değil, döngü kırıcıdır. Bir insan bu sınıra yazarak ulaşamaz; döngüye giren bir ajan hemen ulaşır.",
+      "apiKey": "API anahtarı",
+      "apiKeyHint": "FILEX_SECRET_KEY ile şifrelenerek saklanır ve bir daha gösterilmez.",
+      "apiKeyStored": "Bir anahtar saklanıyor. Korumak için boş bırakın, değiştirmek için yenisini yazın."
+    },
+    "sessions": {
+      "title": "Sohbetler",
+      "subtitle": "Her hesabın ne kadar geçmiş tuttuğu. Bir sohbeti silebilirsiniz; okuyamazsınız — mesajlarını döndüren bir uç nokta yoktur.",
+      "none": "Henüz sohbet yok.",
+      "unnamed": "Henüz adlandırılmadı",
+      "delete": "Bu sohbeti sil",
+      "deleteConfirm": "{email} hesabına ait bu sohbet silinsin mi? Geri alınamaz.",
+      "deleted": "Sohbet silindi.",
+      "fields": {
+        "owner": "Hesap",
+        "name": "Ad",
+        "messages": "Mesaj",
+        "lastActive": "Son etkinlik"
+      }
+    }
   },
   "authProviders": {
     "title": "Kimlik sağlayıcılar",

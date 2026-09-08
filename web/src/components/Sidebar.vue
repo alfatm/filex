@@ -31,6 +31,7 @@ import {
   Palette /* wiring:e1 */,
   ArrowUpCircle,
   Cable,
+  Sparkles,
 } from 'lucide-vue-next';
 import { useI18n } from 'vue-i18n';
 import LogoMark from './LogoMark.vue';
@@ -92,6 +93,7 @@ const items = computed<NavItem[]>(() => [
   { to: { name: 'settings' }, label: t('nav.settings'), icon: Settings, group: 'ops' },
   { to: { name: 'branding' }, label: t('nav.branding'), icon: Palette, group: 'ops' } /* wiring:e1 */,
   { to: { name: 'protection' }, label: t('nav.protection'), icon: Shield, group: 'ops' } /* koru:k3 */,
+  { to: { name: 'assistant' }, label: t('nav.assistant'), icon: Sparkles, group: 'ops' },
   { to: { name: 'external' }, label: t('nav.external'), icon: PlugZap, group: 'ops' },
   { to: { name: 'replica' }, label: t('nav.replica'), icon: GitBranch, group: 'ops' },
   { to: { name: 'queue' }, label: t('nav.queue'), icon: ListChecks, group: 'ops' },

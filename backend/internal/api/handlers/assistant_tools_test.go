@@ -66,7 +66,6 @@ type scriptedProvider struct {
 // recorded request says which kind of call it was.
 const titleSystemPrompt = "You name conversations"
 
-
 func newScriptedProvider(t *testing.T, frames ...string) *scriptedProvider {
 	t.Helper()
 	p := &scriptedProvider{frames: frames, titleFrame: textFrame("Looking around a folder")}

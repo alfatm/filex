@@ -8,8 +8,19 @@ a small, closed set of changes for them to approve.
 It is **off** on every installation until an operator configures a model
 provider. filex ships with no provider, no key and no default model; an
 installation that has not configured one reports no assistant at all and the
-panel is never drawn. Setting it up is five settings and a key —
+panel is never drawn.
+
+Setting it up is one screen: **Admin → AI assistant**. Protocol, base URL,
+model, the per-account rate limit and the API key, plus a **Test** button that
+makes one real call — the only thing that proves the model name and the key
+work, as opposed to proving the form saved. Below it, the conversation list:
+who holds how much history, and a delete button. The same five settings can be
+seeded from the environment on a first boot —
 [Configuration → AI assistant](CONFIGURATION.md#ai-assistant).
+
+⚠ Two things that screen cannot do, because there is no route behind either:
+show the stored key (it is written and never read back), and open a
+conversation ([below](#privacy-of-conversations)).
 
 - [The problem this page is really about](#the-problem-this-page-is-really-about)
 - [What it can see](#what-it-can-see)

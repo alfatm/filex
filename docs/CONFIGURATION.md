@@ -678,8 +678,11 @@ panel is never drawn.
 
 All five settings live in the database and are **seeded** from these variables
 on first boot only (see [Zero-touch seeding](#zero-touch-seeding)): once a row
-exists, the variable is inert and the value is edited through
-`PUT /api/admin/assistant/provider`.
+exists, the variable is inert and the value is edited in the admin panel under
+**AI assistant** (or through `PUT /api/admin/assistant/provider`). That screen
+also holds the Test button — one real call to the provider, which is the only
+thing that tells an operator the model name and the key actually work — and the
+conversation list as metadata.
 
 | Env var | Where it lives now | Default | Description |
 |---|---|---|---|
