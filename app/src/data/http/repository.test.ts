@@ -442,6 +442,18 @@ describe('HttpRepository', () => {
     expect(saved).toEqual({ in_app_enabled: true, muted_events: ['replica_fail', 'file.uploaded'] });
   });
 
+  it('reads a node’s tags back from the server rather than from a listing row that has none', async () => {
+    routes = [
+      ['star/list', { nodes: [] }],
+      ['manager/tags', { node_id: 2, tags: ['design', 'q3'] }],
+      ['q=index', index(row({ id: 2, path: 'main://Docs/notes.md', basename: 'notes.md', type: 'file' }))],
+    ];
+    const repo = new HttpRepository();
+    await repo.listFolder('main://Docs');
+    expect(await repo.listTags('main://Docs/notes.md')).toEqual(['design', 'q3']);
+    expect(calls.at(-1)?.url).toContain('node_id=2');
+  });
+
   it('asks for a whole phrase in quotes, and keeps the tag terms outside them', async () => {
     routes = [['/api/files/search', { results: [] }]];
     const repo = new HttpRepository();

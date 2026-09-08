@@ -1,8 +1,10 @@
 # Backend gap — what the user UI needs that filex does not offer yet
 
 Compiled from the reviews of stages 3–5 against `backend/internal/api/routes.go`,
-`docs/SEARCH.md`, `docs/TRASH-VERSIONING.md`, `docs/SHARING.md`, `docs/MCP.md`.
-Decide each row before writing the HTTP repository (stage 7).
+`docs/SEARCH.md`, `docs/TRASH-VERSIONING.md`, `docs/SHARING.md`, `docs/MCP.md`,
+and kept in step with the code since. ✅ means the app and filex agree; ⚠️ means
+something is still done in the client, or done in a way worth knowing about; ❌
+means there is nothing on the server to talk to.
 
 ## Repository ↔ API
 
@@ -10,24 +12,24 @@ Decide each row before writing the HTTP repository (stage 7).
 |---|---|---|---|
 | `listStorages` / `getStorage` | `GET /api/files/storages` now carries `used_bytes`; the ceiling is still the account's (`GET /quota/me`) | ✅ | **added to the backend**: every drive card repeated the ACCOUNT's figure and called it that drive's. Each drive now answers for itself, measured against the one ceiling filex has |
 | `listFolder`, `resolvePath`, `getNode` | `GET /manager?storage&parent`, `?q=index&path`, `/stat` | ✅ | app `Node` needs `path`, `storageId`, `mime`; ids are int64 |
-| `getPath` | none | ⚠️ | derive from `node.path` |
+| `getPath` | none needed | ✅ | derived, not fetched: every ancestor is a prefix of the node's own address, so the chain costs no requests |
 | `listPeople` | `GET /permissions`, ≥viewer to read, owner to change | ✅ | **added to the backend**: reading the list was gated at owner, so everyone else opened "People with access" and saw themselves alone. The answer carries `can_manage`, and the modal renders read-only for anybody who does not have it |
 | `search` | `POST /search {storage_id, query, limit, scope}` plus the facets `path_prefix`, `ext`, `modified_after`, `size_min`, `size_max`, `owner_id`; tags via `tag:` syntax; snippet with `«»` markers | ⚠️ | **added to the backend**: the date window, type group, size band, owner and current-folder scope are the server's work now, resolved against the node table and applied as an index restriction rather than sieved out of the first 100 hits. Still client-side or absent: the hand-typed custom size range, the free-text path prefix (it is typed in the FULL address space, `/demo/design/`, which the server has no form of), and a true total. Whole phrase is the server's work now (a quoted query); the case and OCR boxes were REMOVED rather than implemented — see the design spec §7 |
 | `assistantAsk` | none (only MCP `file_search` behind token scope) | ❌ | new endpoint: `POST /api/ai/assistant` SSE stream, server-side provider (OpenAI-compatible or Claude), tool-calling over the search index, conversation id; admin settings page for provider/key |
-| `listRecent` | `GET /manager/recent` fed by `POST /manager/recent` on open | ⚠️ | UI must call `recordOpen(id)` on open/preview |
+| `listRecent` | `GET /manager/recent` fed by `POST /manager/recent` on open | ✅ | the preview modal records every file it shows (`recordOpen`), which is what Recent orders by |
 | `listActivity` | `GET /api/files/activity?path=…` | ✅ | **added to the backend**: the events were all being recorded already, as bell entries with the file buried in `meta_json`. Two indexed columns make them findable per node. Readable by whoever may read the file (≥viewer). Keyed by path, so a rename splits a file's history across its two names — and there is no backfill, so history starts at the upgrade |
 | `listStarred`, `setStarred` | `GET /manager/star/list`, `POST /manager/star` per node | ✅ | loop per id |
 | `listShared` | `GET /manager/shared-with-me` | ✅ | |
 | `listTrash` | `GET /manager/trash` paged, per storage, `ttl_days`, and `top_level_only=1` for one row per deletion | ✅ | **added to the backend**: the flat listing showed a deleted folder AND every file inside it, each offering a Restore only the folder's own restore performs. The app passes the flag; banner shows `ttl_days` |
 | `restore` | `POST /manager/restore {node_id}` | ✅ | loop per id |
 | `deleteForever`, `emptyTrash` | `DELETE /manager/trash/{id}` and `POST /manager/trash/empty` | ✅ | **added to the backend**: the trash was a room the user could put things into and never take anything out of. Both are scoped to what the caller could have deleted (confinement + ≥editor on the original path); `empty` purges top-level rows in bounded rounds and reports `more`, which `HttpRepository.emptyTrash` loops on while it is still making progress |
-| `createFolder`, `rename` | `POST /manager action=newfolder|rename` path-based, 409 on conflict | ⚠️ | map 409 → `DUPLICATE_NAME` |
+| `createFolder`, `rename` | `POST /manager action=newfolder|rename` path-based, 409 on conflict | ✅ | 409 becomes `DUPLICATE_NAME`, which is the error the modals already show |
 | `moveToTrash`, `move` | the ops queue (`POST /api/files/move\|delete` + `GET /ops/{id}`) | ✅ | **the repository now uses the queue**, as copy already did. The synchronous `?q=move\|delete` held one request open for the whole subtree, which is what a proxy cuts at sixty seconds and reports as a failure for work that was going to succeed; a submit answers in milliseconds and each poll is its own short request. The queued delete is the identical soft delete (`trash.Put` + retag), so nothing about the trash changes. A job still running when the app stops waiting raises `OPERATION_PENDING`: the listing refreshes, the toast says it is still running, and no Undo is armed for half a move |
 | `copy` | `POST /api/files/copy` + the ops queue; the handler refuses a copy whose source and target sit on different adapters | ⚠️ | cross-storage copy is out of scope for now (product decision): the destination picker keeps the other storages listed and greyed rather than pretending they are not there |
 | `uploadFile` | the staged resumable path (`/upload/begin`, `PUT /upload/{id}`, `/commit`) | ⚠️ | **the repository uses the staged path**: 1 MiB chunks, real progress per accepted chunk, and the commit's op awaited so a finished row means the storage has the file. Still open: resuming after a page reload needs the session ids persisted, and there is no cancel — `GET /upload/{id}` would answer the offset either way. Folder upload still rebuilds the tree with `createFolder`, one round trip per new folder |
-| `createShareLink`, `removeShareLink` | `POST /share` → share id + url; `DELETE /share/{id}`; many shares per node | ⚠️ | node carries share list; UI shows first link, "Manage" for the rest |
-| `listFolders` (Move picker) | none | ⚠️ | lazy tree via `listFolder` |
-| `listFolder`/`listRecent`/… with a `ListingFilter` | listings take no filter | ❌ | needs `mime_group`, `mtime`, `size` and `owner` params on the listing endpoints — the same four the search row asks for; without them the filter chips cannot stay server-side |
+| `createShareLink`, `removeShareLink`, `shareLink` | `POST /share`; `GET /share?path=` (≥editor, and a non-admin is shown only their OWN links); `DELETE /share/{id}` | ⚠️ | the panel and the modal read the caller's live link when they open — before that they only ever knew about a link they had just minted, so a shared file reopened tomorrow said "Not shared" and offered to mint a second one. filex allows many links per node; the app shows the first and removes all of the caller's. `DELETE` takes the id the list calls `uuid` — reading `id` there sent `/share/undefined` and left the link open |
+| `listFolders` (Move picker) | `GET /manager?q=subfolders&path=` | ⚠️ | walked breadth-first from the root, one request per folder. Fine for a demo tree, one round trip per node on a deep one — the picker would want a lazy tree that asks only for what the user expands |
+| `listFolder`/`listRecent`/… with a `ListingFilter` | listings take no filter | ⚠️ | post-filtered in the client. The folder listing is not paged at all, so there it is exact; the flat listings are asked for at their ceiling (500 trash and starred, 200 recent) and the filter is exact below it. Past those counts a chip silently narrows a window rather than the listing, which is what `mime_group`, `mtime`, `size` and `owner` params on the listing endpoints would fix |
 | download of a folder or a selection | `GET /api/files/download/zip?path=…&path=…`, streamed | ✅ | **added to the backend**: a zip built on the fly from any mix of files and folders. A GET, because the download has to be a navigation for the browser to own the save dialog and the disk write |
 | `listFilterPeople` (People chip options) | derived from the `owner_id`/`owner_name` the listings now carry | ✅ | the chip offers exactly the people a filter over those rows could match. No endpoint on purpose: a `DISTINCT` over the node table would name owners of folders the caller cannot open |
 
@@ -36,8 +38,8 @@ Decide each row before writing the HTTP repository (stage 7).
 | What the modal writes | filex today | Status | Decision needed |
 |---|---|---|---|
 | profile: full name, display name, job title | `PATCH /api/auth/profile` takes `display_name`, `email`, `username`, `locale`, `timezone`, `avatar_url` and now `full_name`, `job_title` | ✅ | **added to the backend** (migration 00035): the two fields had no column, so the modal kept them in this browser's localStorage — a "profile" that did not follow the account to another machine. Both are optional: nullable, absent means "leave alone", an empty string clears |
-| account email + role badge | `/api/auth/me` carries them | ⚠️ | map onto the app's `User` (`email`, `role`) |
-| avatar upload / removal | `avatar_url` on the profile PATCH — a small `data:image/…` URI, `""` removes it | ⚠️ | wireable as it stands; downscale before encoding (the admin profile page uses 160px) because the avatar rides inside every presence frame |
+| account email + role badge | `/api/auth/me` carries them | ✅ | mapped onto the app's `User`; filex's role names map onto the badge's three |
+| avatar upload / removal | `avatar_url` on the profile PATCH — a small `data:image/…` URI, `""` removes it | ✅ | re-encoded to a 160px square at quality 0.85 before it is sent, centre-cropped rather than squashed; the avatar rides inside every presence frame, so the size is not cosmetic |
 | password, 2FA | `POST /api/auth/password`; TOTP under `/api/auth/totp/*` | ✅ | **the password change is wired**, gated on the realm's `change_password`. 2FA is deliberately NOT rebuilt here: the second factor belongs to the auth provider, and the app only reports its state |
 | active sessions | `GET /api/auth/sessions`, `DELETE /api/auth/sessions/{id}` | ✅ | **added to the backend**: filex had recorded a row per sign-in since its first migration and never showed it to the person who made it. The row now carries the count, opens in place into the list, and ends one sign-in at a time; the session the app is calling with is marked and cannot be ended (that is what signing out is). `ip` and `user_agent` were also never WRITTEN — both login drivers passed empty strings — so they are filled from now on and older rows read "Unknown device" |
 | notification switches | `GET/PATCH /api/notifications/settings` | ✅ | **the endpoint existed and nothing read it**: `notify.Send` inserted every row whatever the user had muted, so wiring the switches to it alone would have drawn a working-looking control over a preference no code consulted. The send path honours the matrix now. The three switches map onto `share.created`, `comment.added` and `file.uploaded`; `file.upload_failed` is deliberately NOT part of "finished uploads", and the app rewrites only those three keys so an event set elsewhere survives |
@@ -85,6 +87,7 @@ is accepted behaviour, not a gap.
 | `GET /api/auth/methods` | an ordinary user could not find out how they sign in: `/api/auth/me` carries a numeric `provider_id` and nothing else, and `/api/admin/auth-providers` is supertenant-only because it holds issuers and bind credentials. This one is scoped to the caller and carries a name and two flags — realm, whether it allows a password change, and their own TOTP state |
 | read-only is checked on the ops queue's SOURCE | the flag meant two different things depending on which door the request came through: `?q=move\|delete` refused a read-only storage from the start, the queue never asked. So the same delete answered 403 in one place and 202 in the other — and the 202 was the one that emptied the depo into its trash. Copy is deliberately still allowed: it only reads its source |
 | a move INTO A STORAGE ROOT no longer soft-deletes the node | `applyDBMove` stripped the leading slash before taking `path.Dir`, so a destination at the root came out as `"."` — a directory in no index — and the miss fell into the branch that flags the row deleted. The bytes arrived; the folder left every listing and appeared in the trash as a row whose bytes were never in `.filex-trash`, so Restore could not undo it either. Both callers shared the helper, so the synchronous move was breaking the same way |
+| — (client-side) the listing table has a minimum width and scrolls | not a backend row, but the same class of defect: below roughly 1200px the name column was the only flexible one, so it absorbed every lost pixel and vanished — at 1100 the "Name" and "Owner" headings printed on top of each other and the right-hand columns were cut off with nothing to scroll. Measured, not guessed. The table now stops at `63 + 60 + 200 + Σ(column widths)` and its own container scrolls horizontally; the 1672 the design is drawn for is wider than that in every state, assistant panel included, so no reference pixel moved |
 | a fully quoted query is a phrase search inside files | the advanced form's "whole phrase" box had nothing behind it: the app never sent it and the content side ran an AND match, which finds a document that says "annual" in one paragraph and "report" in another. A quoted query now becomes a Bleve `match_phrase` — no index change, because the default text mapping already records term positions (measured before writing it). Deliberately content-only: `PrepareQuery` strips quotes before the NAME side sees them, and it must, since filename matching is subsequence matching by design (`invoice 2026` → `invoice_2026.pdf`, issue #15) |
 | reading `GET /api/files/permissions` needs viewer, not owner | "who else can see this file" is a question anybody who can open the file may ask, and it was answered only to owners — so a shared folder's access panel showed a non-owner nothing but their own row. The mutating verbs keep the owner bar, and the answer says `can_manage` so the client renders a list instead of controls that would 403. Below viewer it is still refused: naming people to somebody who cannot open the file is a leak of its own |
 | `used_bytes` per drive on `GET /api/files/storages` | the drive cards drew their figure from `/quota/me`, which meters the ACCOUNT — so two drives showed one number twice, each labelled as that drive's. One grouped SUM over the node table answers per drive; the ceiling stays the account's, because that is the only ceiling filex has. Trashed files count (the bytes are still on the driver), directory rows do not (they carry an aggregate of their subtree) |
@@ -113,18 +116,24 @@ is accepted behaviour, not a gap.
 
 `GET /api/files/capabilities` reports what the storage DRIVERS can do, and the
 app maps those field for field: `upload`, `move`, `copy`, `delete`, `mkdir`,
-`search`, `versions`, `ocr`. Six more are the app's own axes and filex does not
-report them, so `HttpRepository.capabilities` decides them from whether an
-endpoint exists at all: `tags`, `permissions` and `folderDownload` on,
-`assistant` off; `activity` and `deleteForever` are now on for the same reason
-as `folderDownload` — the endpoints they need exist. Reporting them
-from the server would remove the last hard-coded feature assumptions in the
-client.
+`search`, `versions`. (`ocr` is reported too and no longer read — OCR happens at
+extraction time, so there is no OCR surface for a flag to gate.) Five more are
+the app's own axes and filex does not report them, so
+`HttpRepository.capabilities` decides them from whether an endpoint exists at
+all: `tags`, `permissions`, `folderDownload`, `activity` and `deleteForever` on,
+`assistant` off.
+
+Reporting them from the server was considered and **deliberately not done**: in
+a build where those routes are compiled in, every one of them can only be
+`true`, so the server would be sending a constant for the client to read instead
+of assuming — the assumption moves, it does not go away. The one axis that will
+genuinely vary is `assistant`, and its flag belongs with the endpoint that makes
+it vary.
 
 | Repository method | filex today | Status | Decision needed |
 |---|---|---|---|
-| `capabilities` | `GET /api/files/capabilities` | ✅ | report the six app-level axes so they stop being hard-coded. `folderDownload` and `deleteForever` are decided by the HTTP repository from the fact that their endpoints exist |
-| `setTags` | `POST /api/files/manager/tags {node_id, tags}` replaces the list; `GET …/tags?node_id` reads it | ✅ | the server lower-cases and drops tags over 64 chars, so the UI should show what came back rather than what was typed |
+| `capabilities` | `GET /api/files/capabilities` | ✅ | the driver axes come from the server; the app-level ones are decided by the HTTP repository from the fact that their endpoints exist (see above for why that is not a gap) |
+| `setTags`, `listTags` | `POST /api/files/manager/tags {node_id, tags}` replaces the list; `GET …/tags?node_id` reads it | ✅ | the read was missing entirely: no listing carries tags, so the modal opened EMPTY on a file that had them — and since the modal writes the whole list, saving from there erased what was there. It reads the node's tags when it opens, which also means it shows what the server actually stored (lower-cased, nothing over 64 chars) rather than what was typed |
 
 ## Model gaps
 
@@ -137,9 +146,7 @@ client.
   falls back to the caller, which is the honest reading of "everything you can
   see, you can see".
 - **Shared drives with a group owner** do not exist in filex yet.
-- **Activity tab**: audit is admin-only; per-node activity needs a user-visible
-  endpoint (versions + comments + recent actions).
-- **Capabilities**: the UI should read `GET /capabilities` to hide assistant,
-  content search, delete-forever when the server lacks them. OCR is no longer
-  among them: it is an extraction-time property (text found in an image is
-  content like any other), so there is no OCR surface for a flag to hide.
+- **Capabilities**: the UI reads `GET /capabilities` and hides what the server
+  cannot serve. OCR is not among them: it is an extraction-time property (text
+  found in an image is content like any other), so there is no OCR surface for a
+  flag to hide.

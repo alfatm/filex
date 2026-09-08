@@ -658,6 +658,16 @@ export class HttpRepository implements Repository {
     }
   }
 
+  /**
+   * Read per node, because no listing carries tags: without this the tag modal opened EMPTY on a file that had
+   * tags, and saving from there wiped them. The server also normalises what it stores — lower case, nothing over
+   * 64 characters — so what comes back is what the file actually has, not what somebody typed.
+   */
+  async listTags(id: string): Promise<string[]> {
+    const { tags } = await request<{ tags: string[] | null }>(`${MANAGER}/tags`, { query: { node_id: this.nodeId(id) } });
+    return tags ?? [];
+  }
+
   async setTags(id: string, tags: string[]): Promise<void> {
     await request(`${MANAGER}/tags`, { method: 'POST', body: { node_id: this.nodeId(id), tags } });
   }

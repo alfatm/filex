@@ -385,6 +385,9 @@ export const mockRepository: Repository = {
       history.record(id, starred ? 'starred' : 'unstarred');
     }
   },
+  async listTags(id) {
+    return [...(byId(id).tags ?? [])];
+  },
   async setTags(id, tags) {
     // Trimmed, de-duplicated, order preserved: what the user typed, minus the noise.
     const clean = [...new Set(tags.map((t) => t.trim()).filter(Boolean))];

@@ -115,6 +115,8 @@ export interface Repository {
   deleteForever(ids: string[]): Promise<void>;
   emptyTrash(): Promise<void>;
   setStarred(ids: string[], starred: boolean): Promise<void>;
+  /** The node's tags as the server holds them — lower-cased, over-long ones dropped. */
+  listTags(id: string): Promise<string[]>;
   /** Replaces the node's tag list; an empty array clears it. */
   setTags(id: string, tags: string[]): Promise<void>;
   move(ids: string[], targetFolderId: string): Promise<void>;

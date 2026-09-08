@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { X } from 'lucide-vue-next';
+import { repository } from '@/data';
 import type { Node } from '@/data/types';
 import { useFilesStore } from '@/stores/files';
 import { Button, Input } from '@/ui';
@@ -14,10 +15,20 @@ const emit = defineEmits<{ close: [] }>();
 const { t } = useI18n();
 const files = useFilesStore();
 
-const tags = ref<string[]>([...(props.node.tags ?? [])]);
+// Read when the modal opens: a listing row carries no tags, so the node the modal was handed knows none — and the
+// list is what gets WRITTEN BACK, so opening on a stale empty list and saving would erase what the file had.
+const saved = ref<string[]>([]);
+const tags = ref<string[]>([]);
 const draft = ref('');
 const input = ref<InstanceType<typeof Input>>();
-const changed = computed(() => tags.value.join(' ') !== (props.node.tags ?? []).join(' '));
+const changed = computed(() => tags.value.join(' ') !== saved.value.join(' '));
+
+onMounted(async () => {
+  saved.value = await repository.listTags(props.node.id);
+  // Merged, not assigned: the box is usable while the read is in flight, and a tag typed in that window is an
+  // addition to what the file has. Overwriting here would silently swallow it.
+  tags.value = [...saved.value, ...tags.value.filter((tag) => !saved.value.includes(tag))];
+});
 
 function add() {
   const value = draft.value.trim();

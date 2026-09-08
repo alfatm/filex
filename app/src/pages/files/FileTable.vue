@@ -16,6 +16,10 @@ import { Avatar, Checkbox, IconButton } from '@/ui';
 /** Columns right of Name; the flat listings (Shared, Trash) swap in their own. */
 export type TableColumn = 'owner' | 'lastModified' | 'fileSize' | 'sharedBy' | 'sharedOn' | 'deleted' | 'originalPath';
 
+// The keyboard scope (tabindex, aria-activedescendant, keydown) belongs on the grid, and the grid is no longer the
+// root element — it sits inside the scroll container below. So attrs are placed by hand rather than inherited.
+defineOptions({ inheritAttrs: false });
+
 const props = withDefaults(
   defineProps<{
     columns?: TableColumn[];
@@ -50,6 +54,25 @@ const COLUMN_DEFS = {
 
 const columns = computed(() => props.columns.map((id) => ({ id, ...(COLUMN_DEFS[id] as { sort?: SortKey; width: number }) })));
 
+// The fixed ends of every row, and the narrowest the flex name column may become.
+const CHECKBOX_WIDTH = 63;
+const MENU_WIDTH = 60;
+// 200, not more: at the 1672 the design is drawn for, the narrowest the table ever gets is with the assistant panel
+// open, and a floor above that would start moving the reference layout instead of only rescuing broken ones.
+const NAME_MIN_WIDTH = 200;
+
+/**
+ * The width below which the table stops shrinking and its container scrolls instead.
+ *
+ * Without it the name column is the only flexible one, so it absorbed every pixel the window lost: at a 1400
+ * viewport it was down to a couple of characters and at 1100 it was GONE — the "Name" and "Owner" headings printed
+ * on top of each other and the right-hand columns were cut off the edge with nothing to scroll. The reference
+ * geometry is unaffected: at the 1672 the design is drawn for, the table is far wider than this and `w-full` wins.
+ */
+const minWidth = computed(
+  () => CHECKBOX_WIDTH + MENU_WIDTH + NAME_MIN_WIDTH + columns.value.reduce((total, col) => total + col.width, 0),
+);
+
 const rows = computed(() =>
   files.ordered.map((node, i, all) => {
     const key = props.groupBy?.(node);
@@ -79,117 +102,127 @@ function onContextMenu(node: Node, event: MouseEvent) {
 </script>
 
 <template>
-  <!-- The page owns the keyboard scope (tabindex, aria-activedescendant, keydown) and passes it through $attrs. -->
-  <table class="w-full table-fixed border-collapse focus:outline-none" role="grid" aria-multiselectable="true">
-    <colgroup>
-      <col style="width: 63px" />
-      <col />
-      <col v-for="col in columns" :key="col.id" :style="{ width: `${col.width}px` }" />
-      <col style="width: 60px" />
-    </colgroup>
-    <thead>
-      <tr class="h-[38px] border-b border-border text-15 leading-none text-text-2 [&>th]:p-0">
-        <th class="!pl-3 text-left font-normal">
-          <Checkbox
-            :label="t('files.selectAll')"
-            :model-value="files.allState === 'all'"
-            @update:model-value="onHeaderCheckbox"
-          />
-        </th>
-        <th class="text-left font-normal" :aria-sort="view.sortKey === 'name' ? (view.sortDir === 'asc' ? 'ascending' : 'descending') : undefined">
-          <button type="button" class="inline-flex h-[38px] items-center gap-1 hover:text-text" @click="view.setSortKey('name')">
-            <span>{{ t('files.name') }}</span>
-            <template v-if="view.sortKey === 'name'">
-              <ArrowUp v-if="view.sortDir === 'asc'" :size="16" />
-              <ArrowDown v-else :size="16" />
-            </template>
-          </button>
-        </th>
-        <th
-          v-for="col in columns"
-          :key="col.id"
-          class="text-left font-normal"
-          :aria-sort="col.sort && view.sortKey === col.sort ? (view.sortDir === 'asc' ? 'ascending' : 'descending') : undefined"
-        >
-          <button v-if="col.sort" type="button" class="inline-flex h-[38px] items-center gap-1 hover:text-text" @click="view.setSortKey(col.sort)">
-            <span>{{ t(`files.${col.id}`) }}</span>
-            <template v-if="view.sortKey === col.sort">
-              <ArrowUp v-if="view.sortDir === 'asc'" :size="16" />
-              <ArrowDown v-else :size="16" />
-            </template>
-          </button>
-          <span v-else>{{ t(`files.${col.id}`) }}</span>
-        </th>
-        <th><span class="sr-only">{{ t('files.more') }}</span></th>
-      </tr>
-    </thead>
-    <tbody>
-      <template v-for="{ node, heading } in rows" :key="node.id">
-        <tr v-if="heading" class="[&>td]:p-0">
-          <td :colspan="columns.length + 3" class="h-[46px] pt-3 align-bottom text-15 font-semibold leading-none text-text-2">{{ heading }}</td>
-        </tr>
-        <tr
-          :id="`node-${node.id}`"
-          :data-id="node.id"
-          role="row"
-          :aria-selected="files.isSelected(node.id)"
-          class="cursor-pointer select-none border-b border-border-soft text-15 leading-none [&>td]:p-0"
-          :class="[
-            settings.settings.compactList ? 'h-[34px]' : 'h-[42px]',
-            files.isSelected(node.id) ? 'bg-primary-soft' : 'hover:bg-hover-row',
-            files.cursorId === node.id && 'cursor-row',
-            drag.overId === node.id && '!bg-primary-tint outline outline-2 -outline-offset-2 outline-primary',
-            clipboard.isCut(node.id) && 'opacity-50',
-          ]"
-          draggable="true"
-          @click="files.selectFromEvent(node.id, $event)"
-          @dblclick="emit('open', node)"
-          @contextmenu.prevent="onContextMenu(node, $event)"
-          @dragstart="onDragStart(node, $event)"
-          @dragend="drag.end()"
-          @dragover="onDragOver(node, $event)"
-          @dragleave="onDragLeave(node)"
-          @drop="onDrop(node, $event)"
-        >
-          <td class="!pl-3">
+  <!-- The scroll container is horizontal only in intent; it is left unconstrained in height so the page keeps
+       owning vertical scrolling (a height here would give the rows a second, nested scrollbar). -->
+  <div class="overflow-x-auto">
+    <!-- The page owns the keyboard scope (tabindex, aria-activedescendant, keydown) and passes it through $attrs. -->
+    <table
+      v-bind="$attrs"
+      class="w-full table-fixed border-collapse focus:outline-none"
+      :style="{ minWidth: `${minWidth}px` }"
+      role="grid"
+      aria-multiselectable="true"
+    >
+      <colgroup>
+        <col :style="{ width: `${CHECKBOX_WIDTH}px` }" />
+        <col />
+        <col v-for="col in columns" :key="col.id" :style="{ width: `${col.width}px` }" />
+        <col :style="{ width: `${MENU_WIDTH}px` }" />
+      </colgroup>
+      <thead>
+        <tr class="h-[38px] border-b border-border text-15 leading-none text-text-2 [&>th]:p-0">
+          <th class="!pl-3 text-left font-normal">
             <Checkbox
-              :label="t('files.selectItem', { name: node.name })"
-              :model-value="files.isSelected(node.id)"
-              @update:model-value="files.toggle(node.id)"
-              @click.stop
+              :label="t('files.selectAll')"
+              :model-value="files.allState === 'all'"
+              @update:model-value="onHeaderCheckbox"
             />
-          </td>
-          <td>
-            <div class="flex items-center">
-              <HitIcon :node="node" />
-              <span class="ml-5 min-w-[96px] truncate pr-2 text-16 font-medium text-text">{{ node.name }}</span>
-              <Star v-if="node.starred" :size="14" fill="currentColor" class="mr-2 shrink-0 text-folder" role="img" :aria-label="t('panel.starred')" />
-              <span v-if="node.kind === 'folder'" class="shrink-0 text-text-3">
-                {{ node.itemCount === undefined ? t('type.folder') : t('files.items', node.itemCount) }}
-              </span>
-            </div>
-          </td>
-          <td v-for="col in columns" :key="col.id" class="truncate">
-            <template v-if="col.id === 'owner'">{{ owner(node) }}</template>
-            <template v-else-if="col.id === 'lastModified'">{{ formatDateTime(node.modifiedAt) }}</template>
-            <template v-else-if="col.id === 'fileSize'">{{ node.kind === 'folder' ? '—' : formatSize(node.size) }}</template>
-            <span v-else-if="col.id === 'sharedBy'" class="flex items-center">
-              <Avatar :initial="(node.sharedBy ?? '?').charAt(0)" :size="28" class="!text-13" />
-              <span class="ml-2.5 truncate">{{ node.sharedBy }}</span>
-            </span>
-            <template v-else-if="col.id === 'sharedOn'">{{ node.sharedAt ? formatDateTime(node.sharedAt) : '—' }}</template>
-            <template v-else-if="col.id === 'deleted'">{{ node.deletedAt ? formatDateTime(node.deletedAt) : '—' }}</template>
-            <template v-else-if="col.id === 'originalPath'">{{ node.originalPath ?? '—' }}</template>
-          </td>
-          <td class="!pr-[7px] text-right">
-            <IconButton :label="t('files.more')" :size="32" class="text-text-3" data-menu-button @click.stop="openMenu(node, $event)" @dblclick.stop>
-              <MoreVertical :size="20" />
-            </IconButton>
-          </td>
+          </th>
+          <th class="text-left font-normal" :aria-sort="view.sortKey === 'name' ? (view.sortDir === 'asc' ? 'ascending' : 'descending') : undefined">
+            <button type="button" class="inline-flex h-[38px] items-center gap-1 hover:text-text" @click="view.setSortKey('name')">
+              <span>{{ t('files.name') }}</span>
+              <template v-if="view.sortKey === 'name'">
+                <ArrowUp v-if="view.sortDir === 'asc'" :size="16" />
+                <ArrowDown v-else :size="16" />
+              </template>
+            </button>
+          </th>
+          <th
+            v-for="col in columns"
+            :key="col.id"
+            class="text-left font-normal"
+            :aria-sort="col.sort && view.sortKey === col.sort ? (view.sortDir === 'asc' ? 'ascending' : 'descending') : undefined"
+          >
+            <button v-if="col.sort" type="button" class="inline-flex h-[38px] items-center gap-1 hover:text-text" @click="view.setSortKey(col.sort)">
+              <span>{{ t(`files.${col.id}`) }}</span>
+              <template v-if="view.sortKey === col.sort">
+                <ArrowUp v-if="view.sortDir === 'asc'" :size="16" />
+                <ArrowDown v-else :size="16" />
+              </template>
+            </button>
+            <span v-else>{{ t(`files.${col.id}`) }}</span>
+          </th>
+          <th><span class="sr-only">{{ t('files.more') }}</span></th>
         </tr>
-      </template>
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        <template v-for="{ node, heading } in rows" :key="node.id">
+          <tr v-if="heading" class="[&>td]:p-0">
+            <td :colspan="columns.length + 3" class="h-[46px] pt-3 align-bottom text-15 font-semibold leading-none text-text-2">{{ heading }}</td>
+          </tr>
+          <tr
+            :id="`node-${node.id}`"
+            :data-id="node.id"
+            role="row"
+            :aria-selected="files.isSelected(node.id)"
+            class="cursor-pointer select-none border-b border-border-soft text-15 leading-none [&>td]:p-0"
+            :class="[
+              settings.settings.compactList ? 'h-[34px]' : 'h-[42px]',
+              files.isSelected(node.id) ? 'bg-primary-soft' : 'hover:bg-hover-row',
+              files.cursorId === node.id && 'cursor-row',
+              drag.overId === node.id && '!bg-primary-tint outline outline-2 -outline-offset-2 outline-primary',
+              clipboard.isCut(node.id) && 'opacity-50',
+            ]"
+            draggable="true"
+            @click="files.selectFromEvent(node.id, $event)"
+            @dblclick="emit('open', node)"
+            @contextmenu.prevent="onContextMenu(node, $event)"
+            @dragstart="onDragStart(node, $event)"
+            @dragend="drag.end()"
+            @dragover="onDragOver(node, $event)"
+            @dragleave="onDragLeave(node)"
+            @drop="onDrop(node, $event)"
+          >
+            <td class="!pl-3">
+              <Checkbox
+                :label="t('files.selectItem', { name: node.name })"
+                :model-value="files.isSelected(node.id)"
+                @update:model-value="files.toggle(node.id)"
+                @click.stop
+              />
+            </td>
+            <td>
+              <div class="flex items-center">
+                <HitIcon :node="node" />
+                <span class="ml-5 min-w-[96px] truncate pr-2 text-16 font-medium text-text">{{ node.name }}</span>
+                <Star v-if="node.starred" :size="14" fill="currentColor" class="mr-2 shrink-0 text-folder" role="img" :aria-label="t('panel.starred')" />
+                <span v-if="node.kind === 'folder'" class="shrink-0 text-text-3">
+                  {{ node.itemCount === undefined ? t('type.folder') : t('files.items', node.itemCount) }}
+                </span>
+              </div>
+            </td>
+            <td v-for="col in columns" :key="col.id" class="truncate">
+              <template v-if="col.id === 'owner'">{{ owner(node) }}</template>
+              <template v-else-if="col.id === 'lastModified'">{{ formatDateTime(node.modifiedAt) }}</template>
+              <template v-else-if="col.id === 'fileSize'">{{ node.kind === 'folder' ? '—' : formatSize(node.size) }}</template>
+              <span v-else-if="col.id === 'sharedBy'" class="flex items-center">
+                <Avatar :initial="(node.sharedBy ?? '?').charAt(0)" :size="28" class="!text-13" />
+                <span class="ml-2.5 truncate">{{ node.sharedBy }}</span>
+              </span>
+              <template v-else-if="col.id === 'sharedOn'">{{ node.sharedAt ? formatDateTime(node.sharedAt) : '—' }}</template>
+              <template v-else-if="col.id === 'deleted'">{{ node.deletedAt ? formatDateTime(node.deletedAt) : '—' }}</template>
+              <template v-else-if="col.id === 'originalPath'">{{ node.originalPath ?? '—' }}</template>
+            </td>
+            <td class="!pr-[7px] text-right">
+              <IconButton :label="t('files.more')" :size="32" class="text-text-3" data-menu-button @click.stop="openMenu(node, $event)" @dblclick.stop>
+                <MoreVertical :size="20" />
+              </IconButton>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
 </template>
 
 <style scoped>
