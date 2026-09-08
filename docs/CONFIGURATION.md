@@ -700,36 +700,26 @@ exists, the variable is inert and the value is edited through
 
 ### What it can do
 
-**It looks, and it proposes.** The assistant can list the drives, list a folder,
-search by name and content, read a text file, and list a file's versions, its
-public links and the trash. Reading a file's CONTENTS needs the person's
-permission for that exact file (below).
+The full picture — every tool, the read gate, the plan mechanism and what the
+assistant can never do at all — is its own page: **[AI assistant](ASSISTANT.md)**.
+What an operator deciding whether to switch this on needs to know:
 
-Changing anything works differently, and the difference is the point: **the
-model holds no tool that changes anything.** Its `plan_*` tools only write a
-plan — every item resolved to a node id and fingerprinted as it is at that
-moment — which the person reads and approves in the panel. The SERVER then
-executes what the stored plan says. The model is not consulted at execution
-time and cannot alter a single item of it, so a prompt injection that talks the
-model into "delete everything" produces, at worst, a plan the person is looking
-at and can refuse.
-
-Four kinds of plan exist, and no others: apply tags, restore a version (the
-current contents are snapshotted first), revoke a public link, empty the trash.
-There is **no** tool — and no plan kind — that writes, moves, renames or deletes
-a live file, creates a share link, or changes anyone's permissions.
-
-An item whose fingerprint no longer matches when the plan runs is **skipped and
-reported**: the person approved the file they were shown, not whatever now sits
-at that path. A plan runs at most once, and a plan may carry at most 50 items —
-1000 for tagging, which adds a label and destroys nothing.
-
-`read_file` refuses unless the person has approved that **exact path** in that
-conversation. The approval is a row in `assistant_read_grants`, given through a
-card in the panel, and it is scoped to the one file and the one conversation —
-there is no wildcard, no per-folder form and no "approve everything", and the
-schema has no column that could express one. Approvals disappear with the
-conversation.
+- **It looks, and it proposes.** It can list drives, list a folder, search by
+  name and content, and list a file's versions, its public links and the trash.
+- **Reading a file's CONTENTS needs the person's permission for that exact
+  file**, given through a card in the panel and scoped to that one conversation.
+  There is no wildcard and no "approve everything" — the schema has no column
+  that could express one.
+- **The model holds no tool that changes anything.** Its `plan_*` tools only
+  write a plan — every item resolved to a node id and fingerprinted as it is at
+  that moment — which the person reads and approves. The SERVER then executes
+  what the stored plan says, without consulting the model again, so a prompt
+  injection that talks the model into "delete everything" produces at worst a
+  plan the person is looking at and can refuse.
+- **Four kinds of plan exist and no others**: apply tags, restore a version,
+  revoke a public link, empty the trash. There is no tool and no plan kind that
+  writes, moves, renames or deletes a live file, creates a share link, or
+  changes anyone's permissions.
 
 Listing and searching are not gated: they return names, sizes and dates, which
 is what the person already sees in their own file list.

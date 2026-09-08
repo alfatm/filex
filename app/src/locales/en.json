@@ -411,6 +411,7 @@
     "online": "Online",
     "offline": "Offline",
     "close": "Close",
+    "openPath": "Open in filex",
     "intro": "Find files by content, filename, or tags. I can also summarize files, answer questions, and help you organize your work.",
     "mode": {
       "filename": "Filename",

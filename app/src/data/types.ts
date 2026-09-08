@@ -410,6 +410,8 @@ export type AssistantEvent =
   | { type: 'tool'; tool: string; target?: string }
   /** Something for the person to decide: permission to open one file, or a plan of work. */
   | { type: 'card'; card: AssistantCard }
+  /** The server named this conversation, so the chat list can say so without refetching it. */
+  | { type: 'title'; title: string }
   /** The model call failed part-way. Whatever was streamed before it stays on screen and in the log. */
   | { type: 'error'; message: string }
   | { type: 'done' };

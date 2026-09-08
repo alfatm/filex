@@ -235,7 +235,10 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
 - Chat list (behind `MessagesSquare`, replaces the body): search input h 40,
   then a capacity line 13 gray naming the cap and the eviction rule, then rows —
   title 15 over "N messages · date" 13 gray, with rename and delete icon buttons
-  32 appearing on hover AND on keyboard focus. Filtering is client-side: the
+  32 appearing on hover AND on keyboard focus. A conversation is **named by the
+  server** as its first answer ends (a `title` frame on the same stream), so a
+  row stops reading "Untitled chat" without the list being refetched; a name the
+  person typed is never replaced. Filtering is client-side: the
   history is capped at 100 per account, so the list is already in the browser.
 - The mode chips (filename / content / tags) are drawn as the reference has
   them and are NOT sent to the server. filex's assistant answers in prose and
@@ -276,6 +279,21 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
   270, right-aligned.
 - Assistant: 32 circle border 1px with `Sparkles` 16 primary at left; bubble bg
   `--c-bg-muted` radius 14 padding 12 16 text 15 line-height 1.45; timestamp 12.
+  The answer is **Markdown**: headings as 15/600 lines, bulleted and numbered
+  lists indented 20, `code` and fenced blocks in the monospace `font-code`
+  utility on `--c-bg`, bold and italic. Blocks are 8 apart; nothing else about
+  the bubble changes.
+  ⚠ It is parsed into a token tree and drawn as elements — never `v-html`. A
+  model's words are shaped by the files it just read, so markup it emits is
+  shown as the characters it wrote, and a link is a link only if it is http(s).
+  Underscores are not italics: file names are full of them.
+- A `storage://path` address in an answer is a **link** when it names the drive
+  the app is showing: a file opens the preview, a folder opens the folder. An
+  address on another drive stays monospace text, because there is nowhere to
+  send the reader until multi-storage navigation lands. An address with spaces
+  in it survives only if the model wrapped it in backticks — the system prompt
+  asks it to, and a bare one ends at the first space, the same way every
+  Markdown renderer treats it.
 - Result card (full width, border 1px radius 12 padding 14, gap 12 between):
   icon 40 (pdf tile red radius 8 / fig / md), name 16/500, path 14 gray,
   "Matched content: "…"" 14 gray (wraps), `MoreVertical` 20 top-right.

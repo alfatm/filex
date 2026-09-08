@@ -499,3 +499,4 @@ plain rename).
 - [SSO.md](SSO.md) — interactive login (the account roles tokens inherit)
 - [CONFIGURATION.md](CONFIGURATION.md) — global config/env reference
 - [API.md](API.md) — the embeddable `<filex-explorer>` component (browser UI, not the token surface)
+- [ASSISTANT.md](ASSISTANT.md) — the *other* AI surface: the chat panel in the end-user app. It talks to a model provider you configure, acts as the person asking rather than as a token, and gates reading and changing behind that person's approval

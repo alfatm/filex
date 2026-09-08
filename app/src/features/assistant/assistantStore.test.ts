@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ApprovalCard, AssistantEvent, AssistantMode, PlanCard, SearchHit } from '@/data/types';
+import type { ApprovalCard, AssistantEvent, AssistantMode, AssistantSession, PlanCard, SearchHit } from '@/data/types';
 import { useAssistantStore } from './assistantStore';
 
 const calls: { prompt: string; mode: AssistantMode; conversationId: string | null; signal: AbortSignal }[] = [];
@@ -11,12 +11,15 @@ let script: AssistantEvent[] = [];
 let failWith: Error | null = null;
 /** Resolves once per event so the test can observe the store between events. */
 let release: (() => void) | null = null;
+/** What `listAssistantSessions` answers, for the reload path a brand-new conversation takes. */
+let sessionRows: AssistantSession[] = [];
 const gate = () => new Promise<void>((resolve) => (release = resolve));
 
 vi.mock('@/data', () => ({
   repository: {
     // A turn is written into a stored conversation, so one is opened on the first question.
     createAssistantSession: async () => ({ id: 's1', title: '', titleManual: false, messageCount: 0, lastActiveAt: '', createdAt: '' }),
+    listAssistantSessions: async () => sessionRows.map((s) => ({ ...s })),
     assistantMessages: async () => ({ messages: [{ id: 'm1', role: 'assistant', text: 'earlier', at: '', cards: [{ kind: 'approval', path: 'main://pay.csv' }] }], granted: ['main://pay.csv'] }),
     approveAssistantRead: async (id: string, path: string) => {
       approvals.push({ id, path });
@@ -62,6 +65,7 @@ describe('assistant store', () => {
     decisions.length = 0;
     release = null;
     failWith = null;
+    sessionRows = [];
   });
 
   it('streams text into one assistant message, attaches hits, and starts a new message after done', async () => {
@@ -326,4 +330,33 @@ describe('assistant store', () => {
     expect(card.status).toBe('cancelled');
     expect(decisions).toEqual([{ id: 's1', planId: '9', approve: false }]);
   });
+
+  // The name comes down the same stream as the answer, so the chat list is right without refetching it.
+  it('renames the conversation in the list when the server names it', async () => {
+    const store = useAssistantStore();
+    store.sessions = [{ id: 's1', title: '', titleManual: false, messageCount: 1, lastActiveAt: '', createdAt: '' }];
+    script = [{ type: 'text', delta: 'Four.' }, { type: 'title', title: 'Counting the files' }, { type: 'done' }];
+    const turn = store.send('how many files?');
+    await step();
+    await step();
+    await step();
+    await turn;
+    expect(store.sessions[0].title).toBe('Counting the files');
+    // A name is not part of the answer: it must not land in the bubble.
+    expect(store.messages.at(-1)?.text).toBe('Four.');
+  });
+
+  // The first question of a conversation is asked before the list has heard of it.
+  it('reloads the list when the named conversation is not in it yet', async () => {
+    const store = useAssistantStore();
+    sessionRows = [{ id: 's1', title: 'Counting the files', titleManual: false, messageCount: 2, lastActiveAt: '', createdAt: '' }];
+    script = [{ type: 'text', delta: 'Four.' }, { type: 'title', title: 'Counting the files' }, { type: 'done' }];
+    const turn = store.send('how many files?');
+    await step();
+    await step();
+    await step();
+    await turn;
+    await vi.waitFor(() => expect(store.sessions.map((s) => s.title)).toEqual(['Counting the files']));
+  });
+
 });

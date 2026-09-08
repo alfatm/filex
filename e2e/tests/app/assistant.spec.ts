@@ -68,6 +68,21 @@ test.describe('AI assistant', () => {
     await expect(card).toContainText('/demo');
   });
 
+  // The server names a conversation as the first turn ends, so the chat list stops reading "Untitled chat" without
+  // the panel refetching anything. The demo does the same from the question — see mock/index.ts.
+  test('a conversation is named by its first question', async ({ page }) => {
+    const chat = panel(page);
+    const box = chat.getByRole('textbox', { name: 'Ask to find files…' });
+    await box.fill('find the design guidelines');
+    await box.press('Enter');
+    await expect(chat.getByRole('log').getByText(/^I found \d+ matching files?\.$/)).toBeVisible({ timeout: 10_000 });
+
+    await chat.getByRole('button', { name: 'Chats' }).click();
+    const rows = chat.getByRole('list', { name: 'Chats' }).getByRole('listitem');
+    await expect(rows.first()).toContainText('Find the design guidelines');
+    await expect(rows.first()).not.toContainText('Untitled chat');
+  });
+
   test('opens alongside the details panel instead of replacing it', async ({ page }) => {
     const details = page.getByRole('complementary', { name: 'Details' });
     await expect(details).toBeVisible();

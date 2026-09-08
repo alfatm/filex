@@ -12,6 +12,12 @@ const chatSessions: AssistantSession[] = [];
 const chatMessages = new Map<string, AssistantMessage[]>();
 let chatSeq = 0;
 
+/** The demo's stand-in for the server's title generator: the first words of the question, and no more. */
+function chatTitle(prompt: string): string {
+  const words = prompt.trim().split(/\s+/).filter(Boolean).slice(0, 5).join(' ');
+  return words ? words.charAt(0).toUpperCase() + words.slice(1, 60) : '';
+}
+
 // `nodes` is the single in-memory state: search reads it too, so mutations edit that array in place.
 const initial: Node[] = structuredClone(nodes);
 // The account is mutable too — the settings modal edits it — so its starting shape is kept for the reset.
@@ -273,8 +279,25 @@ export const mockRepository: Repository = {
   async search(query) {
     return search(query);
   },
-  assistantAsk(prompt, mode, conversationId, signal) {
-    return assistantAsk(prompt, mode, conversationId, signal);
+  /**
+   * The demo's turn, plus the one thing the server does around it: naming an unnamed conversation, just before the
+   * stream ends. The name is made from the QUESTION — the demo has no model to ask, and the question is what the
+   * real prompt is allowed to work from anyway (docs/ASSISTANT.md).
+   */
+  async *assistantAsk(prompt, mode, conversationId, signal) {
+    let named = false;
+    for await (const event of assistantAsk(prompt, mode, conversationId, signal)) {
+      if (event.type === 'done' && !named) {
+        const session = chatSessions.find((s) => s.id === conversationId);
+        const title = chatTitle(prompt);
+        if (session && !session.title && !session.titleManual && title) {
+          session.title = title;
+          named = true;
+          yield { type: 'title', title };
+        }
+      }
+      yield event;
+    }
   },
 
   // Assistant history, kept in memory like everything else here: the demo has no server to persist it to. The

@@ -284,3 +284,28 @@ describe('mock repository mutations', () => {
     expect((await repo.getNode('ui-design-fig')).assetUrl).toBe('/app/demo-assets/UI%20Design.fig');
   });
 });
+
+describe('mock assistant conversations', () => {
+  const drain = async (prompt: string, id: string) => {
+    const seen = [];
+    for await (const event of repo.assistantAsk(prompt, 'filename', id, new AbortController().signal)) seen.push(event);
+    return seen;
+  };
+
+  it('names an unnamed conversation from the question, once', async () => {
+    const session = await repo.createAssistantSession();
+    const first = await drain('find the design guidelines please', session.id);
+    expect(first).toContainEqual({ type: 'title', title: 'Find the design guidelines please' });
+    expect((await repo.listAssistantSessions()).find((s) => s.id === session.id)?.title).toBe('Find the design guidelines please');
+
+    const second = await drain('and the photos?', session.id);
+    expect(second.some((e) => e.type === 'title')).toBe(false);
+  });
+
+  it('leaves a conversation the person named alone', async () => {
+    const session = await repo.createAssistantSession('Q3 contracts');
+    const events = await drain('find the design guidelines', session.id);
+    expect(events.some((e) => e.type === 'title')).toBe(false);
+    expect((await repo.listAssistantSessions()).find((s) => s.id === session.id)?.title).toBe('Q3 contracts');
+  });
+});

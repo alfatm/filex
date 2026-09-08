@@ -120,6 +120,7 @@ export default defineConfig({
           { text: 'Uploads & resume', link: '/UPLOADS' },
           { text: 'Quotas', link: '/QUOTAS' },
           { text: 'Search', link: '/SEARCH' },
+          { text: 'AI assistant', link: '/ASSISTANT' },
           { text: 'Sharing & file requests', link: '/SHARING' },
           { text: 'Thumbnails', link: '/thumbnails' },
           { text: 'Protection & Antivirus', link: '/PROTECTION' },

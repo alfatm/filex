@@ -25,6 +25,13 @@
 }
 
 @layer utilities {
+  /* Code in the assistant's answers. Whatever the machine already has — nothing is downloaded for it.
+     ⚠ Not `theme.fontFamily.mono`: that config key is replaced rather than extended, so adding one there
+     would also switch on the inert `font-mono` in Thumbnail.vue and change a screen nobody asked about. */
+  .font-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
   /* `truncate` on a line-height-1 box clips descenders (the tail of "g"). `clip` with a
      clip margin paints them without changing the box; the ellipsis still hides the overflow. */
   .truncate-safe {

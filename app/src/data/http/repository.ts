@@ -81,10 +81,12 @@ const ASSISTANT_STATUS = '/api/assistant/status';
 
 /** One frame of the turn stream; filex carries the kind inside the payload rather than on an `event:` line. */
 interface WireAssistantEvent {
-  type: 'meta' | 'text' | 'tool' | 'card' | 'error' | 'done';
+  type: 'meta' | 'text' | 'tool' | 'card' | 'title' | 'error' | 'done';
   conversation_id?: string;
   delta?: string;
   message?: string;
+  /** `title`: the name the server gave this conversation. */
+  title?: string;
   /** `tool`: which tool, and the path or query it was given. */
   tool?: string;
   target?: string;
@@ -1007,6 +1009,7 @@ export class HttpRepository implements Repository {
         const card = fromCard(event as WireCard);
         if (card) yield { type: 'card', card };
       }
+      else if (event.type === 'title' && event.title) yield { type: 'title', title: event.title };
       else if (event.type === 'error') yield { type: 'error', message: event.message ?? '' };
       else if (event.type === 'done') yield { type: 'done' };
     }

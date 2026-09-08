@@ -411,6 +411,7 @@
     "online": "Çevrimiçi",
     "offline": "Çevrimdışı",
     "close": "Kapat",
+    "openPath": "filex'te aç",
     "intro": "Dosyaları içeriğe, dosya adına veya etiketlere göre bulun. Ayrıca dosyaları özetleyebilir, soruları yanıtlayabilir ve işinizi düzenlemenize yardımcı olabilirim.",
     "mode": {
       "filename": "Dosya adı",

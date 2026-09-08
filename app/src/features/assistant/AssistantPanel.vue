@@ -7,6 +7,8 @@ import type { ApprovalCard, AssistantMode, PlanCard, PlanItem, PlanResult } from
 import { useFilesStore } from '@/stores/files';
 import { Avatar, IconButton, SidePanel } from '@/ui';
 import { ASSISTANT_MODES, useAssistantStore } from './assistantStore';
+import { plainAnswer } from './answer';
+import AnswerText from './AnswerText.vue';
 import ResultCard from './ResultCard.vue';
 import SessionList from './SessionList.vue';
 
@@ -43,7 +45,7 @@ const rows = computed(() =>
 /** Screen readers hear the finished answer once, instead of every streamed word. */
 const announcement = computed(() => {
   const last = assistant.messages.at(-1);
-  return !assistant.streaming && last?.role === 'assistant' ? last.text : '';
+  return !assistant.streaming && last?.role === 'assistant' ? plainAnswer(last.text) : '';
 });
 
 async function openSession(id: string) {
@@ -217,7 +219,7 @@ onBeforeUnmount(() => {
             <Avatar :initial="files.user?.initial ?? ''" :src="files.user?.avatarUrl" class="ml-3" />
           </div>
           <div v-else-if="followUp" :aria-live="streaming ? 'off' : undefined">
-            <p class="text-15 leading-[1.45]">{{ message.text }}</p>
+            <AnswerText :text="message.text" />
             <p v-if="message.error" class="mt-1 text-14 text-danger">{{ t('assistant.error') }}</p>
             <p v-else-if="message.aborted" class="mt-1 text-13 text-text-3">{{ t('assistant.stopped') }}</p>
             <p class="mt-1 text-12 leading-none text-text-3">{{ formatTime(message.at) }}</p>
@@ -228,7 +230,7 @@ onBeforeUnmount(() => {
                 <Sparkles :size="16" class="text-primary" />
               </span>
               <div class="ml-3 min-w-0 rounded-xl bg-bg-muted px-4 py-3" :aria-live="streaming ? 'off' : undefined">
-                <p class="whitespace-pre-wrap text-15 leading-[1.45]">{{ message.text }}</p>
+                <AnswerText :text="message.text" />
                 <p v-if="message.error" class="mt-1 text-14 text-danger">{{ t('assistant.error') }}</p>
                 <p v-else-if="message.aborted" class="mt-1 text-13 text-text-3">{{ t('assistant.stopped') }}</p>
                 <p class="mt-1 text-12 leading-none text-text-3">{{ formatTime(message.at) }}</p>

@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/brf-tech/filex/backend/internal/assistant"
 	"github.com/brf-tech/filex/backend/internal/auth"
@@ -77,7 +78,10 @@ type turnReq struct {
 // Turn asks the model and streams the answer back as server-sent events:
 //
 //	{"type":"meta","conversation_id":"7"}   once, first
+//	{"type":"tool","tool":"…","target":"…"} while a tool runs
 //	{"type":"text","delta":"…"}             repeatedly
+//	{"type":"card","kind":"approval"|"plan",…}  something for the person to decide
+//	{"type":"title","title":"…"}            once, when a conversation is named
 //	{"type":"error","message":"…"}          at most once, instead of the rest
 //	{"type":"done"}                         once, last
 //
@@ -210,6 +214,11 @@ func (h *Assistant) Turn(w http.ResponseWriter, r *http.Request) {
 	} else if askErr != nil {
 		_ = send(map[string]any{"type": "error", "message": "no assistant is configured"})
 	}
+	if askErr == nil && !stopped {
+		if title := h.nameSession(r, cfg, session, prompt); title != "" {
+			_ = send(map[string]any{"type": "title", "title": title})
+		}
+	}
 	_ = send(map[string]any{"type": "done"})
 }
 
@@ -246,6 +255,41 @@ func (h *Assistant) persistAnswer(r *http.Request, sessionID int64, text string,
 		slog.Error("assistant: storing the answer failed", slog.Any("error", err), slog.Int64("session", sessionID))
 	}
 }
+
+// nameSession gives an unnamed conversation a name, once it has something to
+// be named after. It returns the title it stored, or "" — including whenever
+// anything at all went wrong, because a conversation without a name is a small
+// thing and a failed turn would not be.
+//
+// ⚠ A title somebody typed is never touched. TitleManual is what says so, and
+// it is the reason the generator cannot quietly rename a conversation the
+// person has already named.
+func (h *Assistant) nameSession(r *http.Request, cfg assistant.Config, session *model.AssistantSession, question string) string {
+	if session.Title != "" || session.TitleManual {
+		return ""
+	}
+	// Its own context: the naming call outlives nothing, but the request's
+	// context is the one thing that may already be on its way out.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), titleTimeout)
+	defer cancel()
+	title, err := h.AI.Title(ctx, cfg, question)
+	if err != nil || title == "" {
+		if err != nil {
+			slog.Debug("assistant: naming the conversation failed", slog.Any("error", err), slog.Int64("session", session.ID))
+		}
+		return ""
+	}
+	title = clampTitle(title)
+	if err := h.Store.SetAssistantSessionTitle(ctx, session.ID, title, false); err != nil {
+		slog.Error("assistant: storing the conversation name failed", slog.Any("error", err), slog.Int64("session", session.ID))
+		return ""
+	}
+	return title
+}
+
+// titleTimeout bounds the naming call. It happens after the person has their
+// answer, so it may fail quietly, but it must not hold the connection open.
+const titleTimeout = 30 * time.Second
 
 // toolTarget is the one word of a tool call worth showing a person while it
 // runs: the path being listed, or the words being searched for. It reads the

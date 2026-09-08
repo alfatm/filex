@@ -45,20 +45,45 @@ import (
 
 // scriptedProvider answers each call with the next canned stream and records
 // what it was sent, so a test can assert on what the model was shown.
+//
+// ⚠ Two kinds of call arrive here. A turn is one; naming the conversation
+// afterwards is another, under its own prompt (assistant/title.go), and it is
+// counted separately so a test about the tool loop is not measuring it.
 type scriptedProvider struct {
 	mu     sync.Mutex
 	frames []string
 	seen   []string
 	calls  int
-	srv    *httptest.Server
+	titles int
+	// titleFrame is what the naming call gets back. The default is a name, so
+	// a test that does not care about naming still exercises the whole path.
+	titleFrame string
+	titleSeen  []string
+	srv        *httptest.Server
 }
+
+// titleSystemPrompt is the opening of the naming prompt, which is how a
+// recorded request says which kind of call it was.
+const titleSystemPrompt = "You name conversations"
+
 
 func newScriptedProvider(t *testing.T, frames ...string) *scriptedProvider {
 	t.Helper()
-	p := &scriptedProvider{frames: frames}
+	p := &scriptedProvider{frames: frames, titleFrame: textFrame("Looking around a folder")}
 	p.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		p.mu.Lock()
+		if strings.Contains(string(body), titleSystemPrompt) {
+			p.titles++
+			p.titleSeen = append(p.titleSeen, string(body))
+			p.mu.Unlock()
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, p.titleFrame)
+			fmt.Fprint(w, "data: [DONE]\n\n")
+			w.(http.Flusher).Flush()
+			return
+		}
 		p.seen = append(p.seen, string(body))
 		frame := "data: {\"choices\":[{\"delta\":{\"content\":\"(no script left)\"}}]}\n\n"
 		if p.calls < len(p.frames) {
@@ -92,10 +117,27 @@ func (p *scriptedProvider) sent() string {
 	return out.String()
 }
 
+// rounds is how many times the model was asked to ANSWER — the naming call is
+// not one of them.
 func (p *scriptedProvider) rounds() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.calls
+}
+
+// namings is how many times filex asked for a conversation name.
+func (p *scriptedProvider) namings() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.titles
+}
+
+// nameRequests is everything the naming call was sent, whole — system prompt
+// included, because what that call may see is the point of it.
+func (p *scriptedProvider) nameRequests() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return strings.Join(p.titleSeen, "\n")
 }
 
 // toolFrame is one streamed tool call in the openai-compatible shape.

@@ -586,6 +586,33 @@ describe('HttpRepository', () => {
     ]);
   });
 
+  it('passes the name the server gave the conversation', async () => {
+    const frames = [
+      'data: {"type":"meta","conversation_id":"7"}\n\n',
+      'data: {"type":"text","delta":"Four."}\n\n',
+      'data: {"type":"title","title":"Counting the files"}\n\n',
+      'data: {"type":"done"}\n\n',
+    ];
+    vi.stubGlobal('fetch', async () => {
+      const encoder = new TextEncoder();
+      return {
+        ok: true,
+        status: 200,
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const frame of frames) controller.enqueue(encoder.encode(frame));
+            controller.close();
+          },
+        }),
+      } as Response;
+    });
+    const events = [];
+    for await (const event of new HttpRepository().assistantAsk('how many files?', 'filename', '7', new AbortController().signal)) {
+      events.push(event);
+    }
+    expect(events).toContainEqual({ type: 'title', title: 'Counting the files' });
+  });
+
   it('raises the server’s refusal instead of opening an empty stream', async () => {
     vi.stubGlobal('fetch', async () => ({ ok: false, status: 429, text: async () => '{"error":"assistant: a turn is already running"}' }) as Response);
     const turn = new HttpRepository().assistantAsk('again', 'filename', '7', new AbortController().signal);

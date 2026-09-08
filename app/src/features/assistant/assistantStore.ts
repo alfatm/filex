@@ -57,6 +57,11 @@ export const useAssistantStore = defineStore('assistant', () => {
           current = null;
           continue;
         }
+        // The server named the conversation. It is not part of the answer either — it belongs to the chat list.
+        if (event.type === 'title') {
+          applyTitle(sessionId.value, event.title);
+          continue;
+        }
         // A tool is not part of the answer; it is what is happening before the answer.
         if (event.type === 'tool') {
           activity.value = { tool: event.tool, target: event.target };
@@ -95,6 +100,17 @@ export const useAssistantStore = defineStore('assistant', () => {
     activity.value = null;
     const last = messages.value.at(-1);
     if (last?.role === 'assistant' && last.text) last.aborted = true;
+  }
+
+  /**
+   * Renames a conversation in the list. The first question of a brand-new conversation is asked before the list
+   * knows about it — it is created inline — so a name for a row that is not there yet reloads the list instead.
+   */
+  function applyTitle(id: string | null, title: string) {
+    if (!id) return;
+    const at = sessions.value.findIndex((s) => s.id === id);
+    if (at >= 0) sessions.value[at] = { ...sessions.value[at], title };
+    else void loadSessions();
   }
 
   async function loadSessions() {
