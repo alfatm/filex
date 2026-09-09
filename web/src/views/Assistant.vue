@@ -207,6 +207,16 @@ onMounted(() => {
       <Spinner />
     </div>
 
+    <!-- A tenant admin gets 403 from the provider endpoint: the model provider is one for the whole instance and
+         belongs to the platform operator. Saying so beats a form whose every button answers 403. -->
+    <div
+      v-else-if="forbidden"
+      class="card card-body text-sm text-zinc-600 dark:text-zinc-400"
+      data-testid="assistant-forbidden"
+    >
+      {{ t('assistant.supertenantOnly') }}
+    </div>
+
     <div
       v-else
       class="card card-body space-y-3"

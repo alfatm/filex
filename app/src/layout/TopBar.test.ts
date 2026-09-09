@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router';
 import { describe, expect, it } from 'vitest';
 import { i18n } from '@/i18n';
 import { useSettingsStore } from '@/features/settings/settingsStore';
+import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 import TopBar from './TopBar.vue';
 
@@ -47,6 +48,56 @@ describe('TopBar account menu', () => {
     const labels = await accountEntries('member');
     expect(labels).not.toContain('Admin settings');
     expect(labels).toContain('User settings');
+  });
+});
+
+describe('TopBar type-to-search', () => {
+  // The listing takes a bare `r` as Refresh and prevents the default. This listens on the window, so it saw the
+  // same key afterwards and threw focus into the search box: the folder reloaded AND the caret left the table,
+  // after which the next arrow key and the next Delete went into the input.
+  it('leaves a key a page handler already took, and still takes an untouched one', async () => {
+    const wrapper = await mountBar();
+    const box = wrapper.get('input').element;
+
+    // What the listing does with its Refresh key: consume it, on the way to the window.
+    const listing = (event: Event) => event.preventDefault();
+    document.body.addEventListener('keydown', listing);
+    const handled = new KeyboardEvent('keydown', { key: 'r', bubbles: true, cancelable: true });
+    document.body.dispatchEvent(handled);
+    document.body.removeEventListener('keydown', listing);
+    expect(handled.defaultPrevented).toBe(true);
+    expect(document.activeElement).not.toBe(box);
+
+    const typed = new KeyboardEvent('keydown', { key: 'r', bubbles: true, cancelable: true });
+    document.body.dispatchEvent(typed);
+    expect(document.activeElement).toBe(box);
+    wrapper.unmount();
+  });
+});
+
+describe('TopBar assistant trigger', () => {
+  // The setting closes the panel again the moment it opens, so a button gated on the server alone offered a door
+  // that shuts itself.
+  it('is offered only where the server has an assistant and this browser has it switched on', async () => {
+    const wrapper = await mountBar();
+    const capabilities = useCapabilitiesStore();
+    const settings = useSettingsStore();
+    const trigger = () => wrapper.findAll('button').find((b) => b.attributes('aria-label') === 'AI assistant');
+
+    capabilities.can = { ...capabilities.can, assistant: true };
+    settings.apply({ ...settings.settings, assistantEnabled: true });
+    await nextTick();
+    expect(trigger()).toBeDefined();
+
+    settings.apply({ ...settings.settings, assistantEnabled: false });
+    await nextTick();
+    expect(trigger()).toBeUndefined();
+
+    settings.apply({ ...settings.settings, assistantEnabled: true });
+    capabilities.can = { ...capabilities.can, assistant: false };
+    await nextTick();
+    expect(trigger()).toBeUndefined();
+    wrapper.unmount();
   });
 });
 

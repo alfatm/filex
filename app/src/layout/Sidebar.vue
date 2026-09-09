@@ -52,6 +52,19 @@ const nav = [
   { name: 'trash', icon: Trash2, label: 'nav.trash' },
 ] as const;
 
+/**
+ * "My files" is the home drive, so it is active for THAT drive and not for "some files route".
+ *
+ * Its link resolves to `/files` with no drive in it, which vue-router's own active test reads as an ancestor of
+ * every `/files/...` — so the row painted itself while the listing was on a completely different mount. The drive
+ * rows below already compare the drive, and this is the same comparison, against the drive that link actually
+ * opens: the store's `homeStorageId`, not the `main` constant, which an installation need not have mounted at all.
+ */
+function isNavActive(name: (typeof nav)[number]['name']): boolean {
+  if (name !== 'files') return route.name === name;
+  return route.name === 'files' && files.storage?.id === files.homeStorageId;
+}
+
 // Both screens mount shared components that ask the deployment about itself — the real host, the caller's login,
 // the storage names. Against the mock there is nothing to ask, so the entries stay inert there.
 const connections = [
@@ -179,7 +192,11 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
     <div class="min-h-0 overflow-y-auto" :class="view.sidebarCollapsed && 'w-full'">
       <ul class="mt-[22px] flex flex-col gap-px" :class="view.sidebarCollapsed ? 'items-center' : 'pl-[14px] pr-5'">
         <li v-for="item in nav" :key="item.name">
-          <RouterLink :to="{ name: item.name }" :class="linkClass" :active-class="activeClass" :title="view.sidebarCollapsed ? t(item.label) : undefined">
+          <RouterLink
+            :to="{ name: item.name }"
+            :class="[linkClass, isNavActive(item.name) && activeClass]"
+            :title="view.sidebarCollapsed ? t(item.label) : undefined"
+          >
             <component :is="item.icon" :size="20" :stroke-width="1.75" class="shrink-0" />
             <span :class="view.sidebarCollapsed && 'sr-only'">{{ t(item.label) }}</span>
           </RouterLink>

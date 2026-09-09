@@ -277,6 +277,25 @@ describe('mock repository mutations', () => {
     await expect(repo.recordOpen('nope')).rejects.toThrow('node not found');
   });
 
+  // filex snapshots a file's bytes BEFORE overwriting them, so no row on the timeline is the live file, and a
+  // restore adds a row for what the file was a moment ago rather than one labelled as the present contents.
+  it('a revision is what the file used to be, and restoring one keeps what it was replacing', async () => {
+    const before = await repo.listVersions('shared/q3-report-pdf');
+    const node = await repo.getNode('shared/q3-report-pdf');
+    expect(before.length).toBeGreaterThan(0);
+    // Every row is older and smaller than the live file: none of them describes it.
+    expect(before.every((v) => v.size < node.size)).toBe(true);
+    expect(before.every((v) => Date.parse(v.at) < Date.parse(node.modifiedAt!))).toBe(true);
+
+    await repo.restoreVersion('shared/q3-report-pdf', before[1].id);
+    const after = await repo.listVersions('shared/q3-report-pdf');
+    // One row more, and the new one holds the size the file had before the rollback.
+    expect(after.length).toBe(before.length + 1);
+    expect(after[0].size).toBe(node.size);
+    expect(after.slice(1)).toEqual(before);
+    expect((await repo.getNode('shared/q3-report-pdf')).size).toBe(before[1].size);
+  });
+
   it('every file carries the asset URL of its real file', async () => {
     const code = await repo.listFolder('code');
     expect(code.every((n) => n.assetUrl?.startsWith('/app/demo-assets/Code/'))).toBe(true);

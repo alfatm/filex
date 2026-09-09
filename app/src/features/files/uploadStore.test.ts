@@ -2,17 +2,57 @@ import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { repository } from '@/data';
 import { MOCK_UPLOAD_MS, resetMock } from '@/data/mock';
+import type { Node } from '@/data/types';
+import { i18n } from '@/i18n';
+import { useSettingsStore, type ConflictBehavior } from '@/features/settings/settingsStore';
 import { useFilesStore } from '@/stores/files';
-import { useUploadStore } from './uploadStore';
+import { useToastStore } from '@/stores/toast';
+import { useModalsStore } from './modalsStore';
+import { useOperationsStore } from './operationsStore';
+import { MAX_PARALLEL_UPLOADS, useUploadStore } from './uploadStore';
 
 async function setup() {
   resetMock();
   setActivePinia(createPinia());
+  i18n.global.locale.value = 'en';
   const files = useFilesStore();
   await files.bootstrap();
   await files.openPath(null, '');
-  return { files, uploads: useUploadStore() };
+  return { files, uploads: useUploadStore(), settings: useSettingsStore(), toast: useToastStore() };
 }
+
+/** A name that is already in the demo root, which is what every conflict test here is about. */
+const TAKEN = 'README.md';
+
+function setRule(settings: ReturnType<typeof useSettingsStore>, rule: ConflictBehavior) {
+  settings.apply({ ...settings.settings, conflictBehavior: rule });
+}
+
+/** The shape a drop hands over: `items` is the only place a FOLDER can be told from a file. */
+function dropOf(entries: { file?: File; folder?: string }[]): DataTransfer {
+  return {
+    files: entries.filter((e) => e.file).map((e) => e.file),
+    items: entries.map((e) => ({
+      kind: 'file',
+      getAsFile: () => e.file ?? null,
+      webkitGetAsEntry: () => (e.folder ? { isDirectory: true, name: e.folder } : { isDirectory: false, name: e.file?.name }),
+    })),
+  } as unknown as DataTransfer;
+}
+
+/** A file node the mock never produces for an upload: previews need an asset URL and a type. */
+const IMAGE: Node = {
+  id: 'demo/shot.png',
+  name: 'shot.png',
+  kind: 'file',
+  parentId: 'demo',
+  size: 10,
+  ownerId: 'demo',
+  shared: false,
+  starred: false,
+  fileType: 'image',
+  assetUrl: '/app/demo-assets/shot.png',
+};
 
 const file = (name: string) => new File(['x'], name);
 
@@ -110,9 +150,11 @@ describe('upload store', () => {
 
     const listed = vi.spyOn(repository, 'listFolder');
     await uploads.start([inFolder('Trip/b.txt')]);
-    // Counted while the tree build is the only thing that has happened: two, the collision — which is the one time
-    // a listing earns its cost — and the refresh that shows the tree.
-    expect(listed).toHaveBeenCalledTimes(2);
+    // Counted while the tree build is the only thing that has happened: three — the collision, which is the one
+    // time a listing earns its cost; the refresh that shows the tree; and the names already in the folder the file
+    // is going into, which is what the name-conflict rule is decided against. A folder this drop CREATED is known
+    // to be empty and is not listed for that (see the level-at-a-time test above, which still pays only one).
+    expect(listed).toHaveBeenCalledTimes(3);
     listed.mockRestore(); // everything below transfers or navigates, and both list
 
     await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS);
@@ -224,6 +266,20 @@ describe('upload store', () => {
     expect(localStorage.getItem('filex.app.uploads')).toBeNull();
   });
 
+  // "Could not ask" is not "the session is gone": the record used to be erased on any error at startup, while the
+  // server still held the bytes and the quota reserved against them, with nothing left to release them.
+  it('keeps the staged record when the session could not be asked about', async () => {
+    const { uploads } = await setup();
+    const record = [{ id: 'sess-8', parentId: 'demo', name: 'a.txt', size: 10 }];
+    localStorage.setItem('filex.app.uploads', JSON.stringify(record));
+    vi.spyOn(repository, 'uploadSession').mockRejectedValue(new Error('offline'));
+
+    await uploads.restore();
+    // No row: the offset is unknown, so there is nothing to draw a resume button from — but the record stays.
+    expect(uploads.items).toEqual([]);
+    expect(JSON.parse(localStorage.getItem('filex.app.uploads') ?? '[]')).toEqual(record);
+  });
+
   // A failure is not a cancellation: the server still holds what it accepted, and the next load offers to carry on.
   it('keeps the staged record after a failure', async () => {
     const { uploads } = await setup();
@@ -239,4 +295,164 @@ describe('upload store', () => {
     ]);
   });
 
+  // Three callers `void uploads.start(…)`, so a rejection reached nobody: a tree that could not be built produced
+  // no row in the upload tray (there is none yet) and no message either.
+  it('puts a tree build that failed in the operations tray instead of nowhere', async () => {
+    const { uploads } = await setup();
+    const operations = useOperationsStore();
+    vi.spyOn(repository, 'createFolder').mockRejectedValue(new Error('storage offline'));
+
+    await uploads.start([inFolder('Trip/a.txt')]);
+    expect(uploads.items).toEqual([]);
+    expect(operations.items.map((o) => [o.state, o.error, o.visible])).toEqual([['failed', 'storage offline', true]]);
+  });
+
+  // ⚠ Every transfer in flight is a staged session on the server, with quota reserved against it and a record in
+  // localStorage. A drop of five hundred files used to open five hundred of them at the same instant.
+  it('keeps at most a poolful of transfers in flight', async () => {
+    const { uploads } = await setup();
+    let live = 0;
+    let peak = 0;
+    vi.spyOn(repository, 'uploadFile').mockImplementation(async (_parentId, file) => {
+      live++;
+      peak = Math.max(peak, live);
+      await new Promise((r) => setTimeout(r, 10));
+      live--;
+      return { ...IMAGE, id: `demo/${file.name}`, name: file.name };
+    });
+
+    await uploads.start(Array.from({ length: 12 }, (_, i) => file(`f${i}.txt`)));
+    // Every row exists from the start — the tray counts the whole batch — but only a poolful is being sent.
+    expect(uploads.items).toHaveLength(12);
+    expect(uploads.items.filter((i) => i.state === 'running')).toHaveLength(MAX_PARALLEL_UPLOADS);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(peak).toBe(MAX_PARALLEL_UPLOADS);
+    expect(uploads.doneCount).toBe(12);
+  });
+
+  // One re-read for the batch. Through `mutate` it was one per file: N listings of the folder, and twice as many
+  // requests again from the details panel watching the focused node behind them.
+  it('re-reads the listing once for the whole batch, not once per file', async () => {
+    const { uploads } = await setup();
+    const listed = vi.spyOn(repository, 'listFolder');
+    await uploads.start([file('a.txt'), file('b.txt'), file('c.txt'), file('d.txt')]);
+    await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS * 5);
+    expect(uploads.doneCount).toBe(4);
+    expect(listed).toHaveBeenCalledTimes(1);
+  });
+
+  // A folder dragged out of the OS file manager arrives with no bytes and no relative path, and used to go to the
+  // server as an ordinary zero-length file named after the folder.
+  it('leaves a dropped folder out of the upload and says how to send one', async () => {
+    const { files, uploads, toast } = await setup();
+    await uploads.start(dropOf([{ file: file('a.txt') }, { folder: 'Trip' }]));
+    await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS * 2);
+
+    expect(uploads.items.map((i) => i.name)).toEqual(['a.txt']);
+    expect(files.ordered.map((n) => n.name)).not.toContain('Trip');
+    expect(toast.toasts.map((t) => t.text).join(' ')).toContain('Upload folder');
+  });
+
+  it('uploads into the default folder when nothing else names one', async () => {
+    const { files, uploads, settings } = await setup();
+    settings.apply({ ...settings.settings, defaultUploadFolder: 'design' });
+    files.leave(); // Home and Search leave no folder behind; this is where the setting answers
+
+    await uploads.start([file('a.txt')]);
+    expect(uploads.items[0].parentId).toBe('design');
+    await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS);
+    await files.open('design');
+    expect(files.ordered.map((n) => n.name)).toContain('a.txt');
+  });
+
+  // ⚠ A node id here IS a path, so the saved folder stops existing the moment somebody renames it.
+  it('falls back to the drive root when the default upload folder is gone, and says so', async () => {
+    const { files, uploads, settings, toast } = await setup();
+    settings.apply({ ...settings.settings, defaultUploadFolder: 'demo/renamed-away' });
+    const root = files.storage!.rootId;
+    files.leave();
+
+    await uploads.start([file('a.txt')]);
+    expect(uploads.items[0].parentId).toBe(root);
+    expect(toast.toasts.map((t) => t.text).join(' ')).toContain('default upload folder is gone');
+  });
+
+  it('opens the preview of a file it has just uploaded, and only for one file at a time', async () => {
+    const { uploads, settings } = await setup();
+    const modals = useModalsStore();
+    vi.spyOn(repository, 'uploadFile').mockResolvedValue(IMAGE);
+
+    await uploads.start([file('shot.png')]);
+    await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS);
+    expect(modals.active).toMatchObject({ kind: 'preview', nodes: [{ id: IMAGE.id }] });
+
+    // A preview thrown over a folder drop would be in the way of the thing it interrupts.
+    modals.close();
+    await uploads.start([file('a.png'), file('b.png')]);
+    await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS);
+    expect(modals.active).toBeNull();
+
+    // And off means off.
+    settings.apply({ ...settings.settings, autoOpenPreview: false });
+    await uploads.start([file('c.png')]);
+    await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS);
+    expect(modals.active).toBeNull();
+  });
+
+  // What the server does with a name that is taken is REPLACE — a staged commit overwrites and keeps the old bytes
+  // as a version. The other rules are decided here, before any bytes are sent.
+  it('skips a file whose name is taken when that is the rule', async () => {
+    const { uploads, settings } = await setup();
+    setRule(settings, 'skip');
+    const sent = vi.spyOn(repository, 'uploadFile');
+
+    await uploads.start([file(TAKEN), file('fresh.txt')]);
+    await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS * 2);
+    expect(uploads.items.map((i) => [i.name, i.state])).toEqual([[TAKEN, 'skipped'], ['fresh.txt', 'done']]);
+    expect(sent.mock.calls.map((c) => c[1].name)).toEqual(['fresh.txt']);
+  });
+
+  it('lands a second copy beside the first when that is the rule', async () => {
+    const { files, uploads, settings } = await setup();
+    setRule(settings, 'keepBoth');
+    const sent = vi.spyOn(repository, 'uploadFile');
+
+    await uploads.start([file(TAKEN)]);
+    await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS);
+    // The shape a paste already uses, so the two ways of ending up with a second copy read the same.
+    expect(sent.mock.calls.map((c) => c[1].name)).toEqual(['README-copy.md']);
+    expect(uploads.items[0].name).toBe('README-copy.md');
+    expect(files.ordered.filter((n) => n.name === TAKEN)).toHaveLength(1);
+  });
+
+  it('sends the file under its own name, and asks for no listing at all, when the rule is replace', async () => {
+    const { uploads, settings } = await setup();
+    setRule(settings, 'replace');
+    const listed = vi.spyOn(repository, 'listFolder');
+    const sent = vi.spyOn(repository, 'uploadFile');
+
+    await uploads.start([file(TAKEN)]);
+    // Replacing is the server's own behaviour for a name that is taken, so nothing has to be asked in advance.
+    expect(listed).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS);
+    expect(sent.mock.calls.map((c) => c[1].name)).toEqual([TAKEN]);
+  });
+
+  it('asks in the tray, and the answer decides — while the rest of the batch carries on', async () => {
+    const { uploads, settings } = await setup();
+    setRule(settings, 'ask');
+    const sent = vi.spyOn(repository, 'uploadFile');
+
+    await uploads.start([file(TAKEN), file('fresh.txt')]);
+    await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS);
+    // The question holds no slot in the pool: the file with a free name is already there.
+    expect(uploads.items.map((i) => i.state)).toEqual(['conflict', 'done']);
+    expect(sent.mock.calls.map((c) => c[1].name)).toEqual(['fresh.txt']);
+
+    uploads.decide(uploads.items[0].id, 'keepBoth');
+    await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS);
+    expect(uploads.items[0].state).toBe('done');
+    expect(sent.mock.calls.map((c) => c[1].name)).toEqual(['fresh.txt', 'README-copy.md']);
+  });
 });

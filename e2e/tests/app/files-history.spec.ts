@@ -12,17 +12,16 @@ test.describe('Version history', () => {
 
     const dialog = page.getByRole('dialog');
     const rows = dialog.getByRole('list', { name: 'Version history' }).getByRole('listitem');
+    // Every row is content the file USED to hold — the live bytes have no row — so every row can be restored.
     await expect(rows).toHaveCount(3);
-    await expect(rows.first()).toContainText('Current');
-    // Only the older revisions can be restored.
-    await expect(dialog.getByRole('button', { name: 'Restore' })).toHaveCount(2);
+    await expect(dialog.getByRole('button', { name: 'Restore' })).toHaveCount(3);
 
     const older = rows.nth(2);
     const label = (await older.textContent())!;
     await older.getByRole('button', { name: 'Restore' }).click();
-    // Restoring adds a new current revision instead of dropping the ones in between.
+    // Restoring snapshots the live bytes first, so the list grows by one and nothing in between is dropped.
     await expect(rows).toHaveCount(4);
-    await expect(rows.first()).toContainText('Current');
+    await expect(dialog.getByRole('button', { name: 'Restore' })).toHaveCount(4);
     await expect(page.getByText('Restored the revision from')).toBeVisible();
     expect(label).toBeTruthy();
   });

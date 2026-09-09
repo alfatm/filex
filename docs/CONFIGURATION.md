@@ -719,10 +719,21 @@ What an operator deciding whether to switch this on needs to know:
   what the stored plan says, without consulting the model again, so a prompt
   injection that talks the model into "delete everything" produces at worst a
   plan the person is looking at and can refuse.
-- **Four kinds of plan exist and no others**: apply tags, restore a version,
-  revoke a public link, empty the trash. There is no tool and no plan kind that
-  writes, moves, renames or deletes a live file, creates a share link, or
-  changes anyone's permissions.
+- **Six kinds of plan exist and no others**: apply tags, move files into a
+  folder, restore a version, create a public link, revoke a public link, empty
+  the trash. The list with what approving each one does, and whether it can be
+  undone, is kept in exactly one place —
+  [what a plan may contain](ASSISTANT.md#what-a-plan-may-contain) — so that the
+  two pages cannot drift apart. Two of the six are worth an operator's attention
+  before switching this on: `move` rearranges live files (it never overwrites —
+  a name already taken in the destination is skipped) and `create_share` mints a
+  link anyone holding it can open **without an account**. Both are proposed only
+  on a direct request, and both still go through the same plan card the person
+  has to approve.
+- **What is absent rather than gated** — no tool and no plan kind writes,
+  renames or deletes a live file, uploads anything, changes anyone's
+  permissions, or touches another account's anything:
+  [what it cannot do at all](ASSISTANT.md#what-it-cannot-do-at-all).
 
 Listing and searching are not gated: they return names, sizes and dates, which
 is what the person already sees in their own file list.

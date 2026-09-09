@@ -306,6 +306,111 @@ describe('HttpRepository', () => {
     }
   });
 
+  // A poll that never arrived says nothing about the JOB. Reading one as a failed move is what had people repeat
+  // a move that had in fact succeeded, and end up with the subtree in the destination twice.
+  it('asks again when a poll does not arrive, and fails a move only on the server’s own verdict', async () => {
+    vi.useFakeTimers();
+    try {
+      let asked = 0;
+      routes = [
+        [
+          '/api/files/ops/7',
+          () => {
+            if (++asked === 1) throw new TypeError('Failed to fetch');
+            return { id: 7, kind: 'move', status: 'ok' };
+          },
+        ],
+        ['/api/files/move', { op: { id: 7, kind: 'move', status: 'pending' } }],
+      ];
+      const moved = new HttpRepository().move(['main://Docs/a.txt'], 'main://Reports');
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(moved).resolves.toBeUndefined();
+      expect(asked).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops polling once the caller has given up, and reports the job as still the server’s', async () => {
+    vi.useFakeTimers();
+    try {
+      routes = [
+        ['/api/files/ops/8', { id: 8, kind: 'move', status: 'running' }],
+        ['/api/files/move', { op: { id: 8, kind: 'move', status: 'running' } }],
+      ];
+      const controller = new AbortController();
+      const pending = new HttpRepository().move(['main://a.txt'], 'main://b', controller.signal);
+      const settled = expect(pending).rejects.toThrow('operationPending');
+      await vi.advanceTimersByTimeAsync(1_000);
+      const polls = calls.filter((c) => c.url.includes('/ops/8')).length;
+      expect(polls).toBeGreaterThan(0);
+
+      controller.abort();
+      await vi.advanceTimersByTimeAsync(60_000);
+      await settled;
+      // The page is gone; the requests went with it instead of running on for the rest of the minute.
+      expect(calls.filter((c) => c.url.includes('/ops/8'))).toHaveLength(polls);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The staged bytes and their quota reservation live until the collector takes them, so "there is nothing to
+  // resume" is the server's answer to give. Treating an offline start as that answer wiped every resumable record.
+  it('reads a session as gone only when the server says so, and passes any other failure on', async () => {
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 404, text: async () => '{"error":"no such session"}' }) as unknown as Response);
+    await expect(new HttpRepository().uploadSession('u8')).resolves.toBeNull();
+
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 410, text: async () => '' }) as unknown as Response);
+    await expect(new HttpRepository().uploadSession('u9')).resolves.toBeNull();
+
+    vi.stubGlobal('fetch', async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    await expect(new HttpRepository().uploadSession('u10')).rejects.toThrow('Failed to fetch');
+
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 500, text: async () => '' }) as unknown as Response);
+    await expect(new HttpRepository().uploadSession('u11')).rejects.toThrow('HTTP 500');
+  });
+
+  // The list carries what each drive HOLDS, and it used to be read once for the whole session: the quota bar in
+  // the sidebar and on the drive cards never moved again, whatever was uploaded, deleted or purged.
+  it('reads the drive list again after something changed what a drive holds', async () => {
+    let reads = 0;
+    routes = [
+      ['/api/files/storages', () => ({ storages: [{ name: 'main', read_only: false, used_bytes: reads++ === 0 ? 200 : 40 }] })],
+      ['/api/files/quota/me', { used_bytes: 250, quota_bytes: 1000 }],
+      ['/manager/trash/empty', { purged: 3, failed: 0, skipped: 0, more: false }],
+    ];
+    const repo = new HttpRepository();
+    expect((await repo.listStorages())[0].quota.usedBytes).toBe(200);
+    // Still cached while nothing has changed: the second read costs no request.
+    expect((await repo.listStorages())[0].quota.usedBytes).toBe(200);
+    expect(reads).toBe(1);
+
+    await repo.emptyTrash();
+    expect((await repo.listStorages())[0].quota.usedBytes).toBe(40);
+  });
+
+  it('forgets the numbers of everything under a folder it moved, not just the folder', async () => {
+    routes = [
+      [
+        'q=index',
+        index(row({ id: 5, path: 'main://Docs', basename: 'Docs' }), row({ id: 6, path: 'main://Docs/notes.md', basename: 'notes.md', type: 'file' })),
+      ],
+      ['/star/list', { nodes: [] }],
+      ['/api/files/move', { op: { id: 9, kind: 'move', status: 'ok' } }],
+      ['/manager/star', { ok: true }],
+    ];
+    const repo = new HttpRepository();
+    await repo.listFolder('main://Docs');
+    await repo.move(['main://Docs'], 'main://Archive');
+
+    // The child answers to another address now. Its old one used to keep number 6, so starring "main://Docs/notes.md"
+    // silently starred whatever had moved in there since.
+    await expect(repo.setStarred(['main://Docs/notes.md'], true)).rejects.toThrow('no node id known');
+  });
+
   it('asks the trash for one row per deletion, not for everything a deleted folder contained', async () => {
     routes = [
       [
@@ -320,6 +425,16 @@ describe('HttpRepository', () => {
     const trashed = await new HttpRepository().listTrash();
     expect(calls[0].url).toContain('top_level_only=1');
     expect(trashed.map((n) => n.id)).toEqual(['main://Design']);
+  });
+
+  // The download used to be built as "the preview address plus ?download=1", which put a SECOND question mark
+  // inside the query — the server then read `?download=1` as part of the node's path, found no such node, and the
+  // browser cancelled the save. Serving a download is the manager's own verb, and only the data layer knows that.
+  it('serves a download through the manager verb for it, as one well-formed URL', () => {
+    const url = new HttpRepository().downloadUrl('live://Docs/a b.txt')!;
+    expect(url).toBe('/api/files/manager?q=download&path=live%3A%2F%2FDocs%2Fa%20b.txt');
+    expect(url.split('?')).toHaveLength(2);
+    expect(new URLSearchParams(url.split('?')[1]).get('path')).toBe('live://Docs/a b.txt');
   });
 
   it('addresses an archive download by every path in the selection', async () => {
@@ -553,10 +668,38 @@ describe('HttpRepository', () => {
     // The numeric node id the versions endpoint needs comes from having listed the file once.
     await repo.listFolder('main://Docs');
     const versions = await repo.listVersions('main://Docs/notes.md');
-    expect(versions.map((v) => [v.authorName, v.current])).toEqual([
-      ['Ada', true],
-      [undefined, false],
-    ]);
+    expect(versions.map((v) => v.authorName)).toEqual(['Ada', undefined]);
+  });
+
+  // filex snapshots a file's bytes BEFORE overwriting them, so the newest row here is what the file was before its
+  // last save and the live file has no row at all. Marking row zero "current" labelled the previous contents as
+  // the present ones AND hid Restore on the one revision a rollback actually wants.
+  it('marks no revision as the live file, because none of them is', async () => {
+    routes = [
+      [
+        '/api/files/versions',
+        { versions: [{ id: 9, node_id: 2, version_n: 2, size: 20, created_at: '2026-07-02T10:00:00Z' }, { id: 8, node_id: 2, version_n: 1, size: 10, created_at: '2026-07-01T10:00:00Z' }] },
+      ],
+      ['star/list', { nodes: [] }],
+      ['q=index', index(row({ id: 2, path: 'main://Docs/notes.md', basename: 'notes.md', type: 'file' }))],
+    ];
+    const repo = new HttpRepository();
+    await repo.listFolder('main://Docs');
+    const versions = await repo.listVersions('main://Docs/notes.md');
+    expect(versions.every((v) => !('current' in v))).toBe(true);
+  });
+
+  // A rollback has to be undoable, so the live bytes are snapshotted before the older ones land on them.
+  it('asks the server to keep the live bytes before it overwrites them', async () => {
+    routes = [
+      ['/api/files/versions/restore', { ok: true }],
+      ['star/list', { nodes: [] }],
+      ['q=index', index(row({ id: 2, path: 'main://Docs/notes.md', basename: 'notes.md', type: 'file' }))],
+    ];
+    const repo = new HttpRepository();
+    await repo.listFolder('main://Docs');
+    await repo.restoreVersion('main://Docs/notes.md', '8');
+    expect(calls.at(-1)).toMatchObject({ method: 'POST', body: { node_id: 2, version_id: 8, snapshot_current: true } });
   });
 
   it('lists who has access to anyone who can open the node, and says whether they may change it', async () => {
@@ -933,6 +1076,142 @@ describe('HttpRepository', () => {
     routes = [['/manager/recent', { nodes: [] }], ['/star/list', { nodes: [] }]];
     await new HttpRepository().listRecent();
     expect(calls[0].url).toBe('/api/files/manager/recent?limit=200');
+  });
+
+  // The panel prints "N of M conversations". M is the server's number and rides along with the list it applies to;
+  // the client used to keep a constant of its own, which is only right until an install changes the limit.
+  it('takes the conversation ceiling from the listing that reports it', async () => {
+    routes = [['/api/assistant/sessions', { sessions: [], max: 25 }]];
+    const repo = new HttpRepository();
+    // What filex ships with, until a listing says otherwise.
+    expect(repo.assistantSessionMax()).toBe(100);
+    await repo.listAssistantSessions();
+    expect(repo.assistantSessionMax()).toBe(25);
+  });
+
+  // ── what each mode of the search form actually asks for ────────────────────
+  //
+  // The form drew a selected button for four scopes and two of them travelled as nothing at all, so choosing them
+  // answered exactly what "All files" answers. The shape of the request is the only place that shows.
+
+  const query = (patch: Partial<Parameters<HttpRepository['search']>[0]> = {}): Parameters<HttpRepository['search']>[0] => ({
+    text: 'rapor',
+    scope: 'all',
+    searchIn: 'all',
+    folderPath: '',
+    modified: 'any',
+    fileType: 'any',
+    tags: [],
+    ownerId: null,
+    size: { preset: 'any', min: null, max: null, unit: 'MB' },
+    path: '',
+    wholePhrase: false,
+    ...patch,
+  });
+
+  it('names every scope the server knows, and sends none for the one that is its default', async () => {
+    routes = [['/api/files/search', { results: [] }]];
+    const repo = new HttpRepository();
+    const sent = async (scope: Parameters<HttpRepository['search']>[0]['scope']) => {
+      await repo.search(query({ scope }));
+      return (calls.at(-1)?.body as Record<string, unknown>).scope;
+    };
+    // "Paths" is the server's alias of the name scope — a name plus the whole address, never the contents.
+    expect(await sent('paths')).toBe('path');
+    expect(await sent('content')).toBe('content');
+    // Tags used to travel as nothing, so the Tags button searched names, paths AND contents.
+    expect(await sent('tags')).toBe('tags');
+    expect(await sent('all')).toBeUndefined();
+  });
+
+  it('asks for the files the account itself published, and only when that is what was chosen', async () => {
+    routes = [['/api/files/search', { results: [] }]];
+    const repo = new HttpRepository();
+    await repo.search(query({ searchIn: 'shared' }));
+    expect((calls.at(-1)?.body as Record<string, unknown>).shared_only).toBe(true);
+    await repo.search(query({ searchIn: 'all' }));
+    expect(calls.at(-1)?.body).not.toHaveProperty('shared_only');
+  });
+
+  it('keeps a tag chip as a tag term while the scope says which fields the text may match', async () => {
+    routes = [['/api/files/search', { results: [] }]];
+    await new HttpRepository().search(query({ scope: 'tags', text: 'tasa', tags: ['q3'] }));
+    const body = calls.at(-1)?.body as Record<string, unknown>;
+    expect(body).toMatchObject({ scope: 'tags', query: 'tasa tag:q3' });
+  });
+
+  // ── the fields the flat listings carry and the client used to drop ─────────
+
+  it('dates a Recent row by when it was opened, not by when it was written', async () => {
+    routes = [
+      ['/manager/recent', { nodes: [{ id: 2, storage_id: 1, storage: 'main', name: 'notes.md', path: '/notes.md', type: 'file', size: 5, db_mtime: '2026-01-01T10:00:00Z', opened_at: '2026-07-09T08:30:00Z' }] }],
+      ['/star/list', { nodes: [] }],
+    ];
+    const [node] = await new HttpRepository().listRecent();
+    // Without it the page grouped by the mtime and "Today" meant "written today".
+    expect(node.openedAt).toBe('2026-07-09T08:30:00Z');
+    expect(node.modifiedAt).toBe('2026-01-01T10:00:00Z');
+  });
+
+  it('names who shared a row and when, and never falls back to an address', async () => {
+    const grant = { id: 5, path: 'main://Docs/plan.md', basename: 'plan.md', type: 'file', extension: 'md', size: 9, storage: 'main', shared_at: Date.parse('2026-07-08T09:00:00Z') };
+    routes = [['/shared-with-me', { files: [{ ...grant, shared_by: 4, shared_by_name: 'Grace' }, { ...grant, id: 6, path: 'main://Docs/spec.md', basename: 'spec.md', shared_by: 7 }] }]];
+    const [named, nameless] = await new HttpRepository().listShared();
+    expect(named).toMatchObject({ sharedBy: 'Grace', sharedAt: '2026-07-08T09:00:00.000Z' });
+    // The server withholds the granter's e-mail on purpose; a nameless account gets a neutral word, not an address.
+    expect(nameless.sharedBy).toBe('Someone');
+    expect(nameless.sharedAt).toBe('2026-07-08T09:00:00.000Z');
+  });
+
+  it('keeps a deleted folder a folder, and carries the days it has left', async () => {
+    routes = [
+      [
+        '/manager/trash',
+        {
+          entries: [
+            { id: 9, storage_id: 1, storage_name: 'main', path: '/Design', name: 'Design', type: 'dir', size: 4096, deleted_at: '2026-07-10T12:00:00Z', ttl_days: 23 },
+            { id: 10, storage_id: 1, storage_name: 'main', path: '/Design/logo.svg', name: 'logo.svg', type: 'file', size: 900, deleted_at: '2026-07-10T12:00:00Z', ttl_days: 23 },
+          ],
+        },
+      ],
+    ];
+    const [folder, file] = await new HttpRepository().listTrash();
+    // A deleted folder used to arrive as a file: an icon picked by extension and a byte count where a dash belongs.
+    expect(folder).toMatchObject({ kind: 'folder', size: 0, ttlDays: 23 });
+    expect(file).toMatchObject({ kind: 'file', size: 900, ttlDays: 23 });
+  });
+
+  // ── which 409 is a taken name ──────────────────────────────────────────────
+  //
+  // filex answers 409 for a name collision, for a move across an encryption boundary and for a staged upload whose
+  // session is not in the state the call assumes. All three used to reach the user as "duplicate name".
+
+  it('renames through the parent folder and reports a taken name as the shared duplicate error', async () => {
+    routes = [['q=rename', { ok: true }], ['q=index', index(row({ id: 4, path: 'main://Docs/plan.md', basename: 'plan.md', type: 'file' }))], ['/star/list', { nodes: [] }]];
+    const renamed = await new HttpRepository().rename('main://Docs/notes.md', 'plan.md');
+    expect(calls[0]).toMatchObject({ method: 'POST', body: { path: 'main://Docs', item: 'main://Docs/notes.md', name: 'plan.md' } });
+    expect(renamed.id).toBe('main://Docs/plan.md');
+
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 409, text: async () => '{"error":"exists"}' }) as Response);
+    await expect(new HttpRepository().rename('main://Docs/notes.md', 'plan.md')).rejects.toThrow('duplicateName');
+  });
+
+  it('leaves every other 409 as the server stated it, because it is not about a name', async () => {
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 409, text: async () => '{"error":"cannot move across an encryption boundary"}' }) as Response);
+    const repo = new HttpRepository();
+    await expect(repo.move(['main://Docs/a.txt'], 'main://Vault')).rejects.toThrow('cannot move across an encryption boundary');
+    await expect(repo.copy(['main://Docs/a.txt'], 'main://Vault')).rejects.toThrow('cannot move across an encryption boundary');
+    await expect(repo.abortUpload('staged-1')).rejects.toThrow('cannot move across an encryption boundary');
+  });
+
+  it('records an open and a star by the numeric id the listing taught it', async () => {
+    routes = [['q=index', index(row({ id: 42, path: 'main://Docs/notes.md', basename: 'notes.md', type: 'file' }))], ['/star/list', { nodes: [] }], ['/manager/recent', { ok: true }], ['/manager/star', { ok: true }]];
+    const repo = new HttpRepository();
+    await repo.listFolder('main://Docs');
+    await repo.recordOpen('main://Docs/notes.md');
+    expect(calls.at(-1)).toMatchObject({ method: 'POST', body: { node_id: 42 } });
+    await repo.setStarred(['main://Docs/notes.md'], true);
+    expect(calls.at(-1)).toMatchObject({ method: 'POST', body: { node_id: 42, starred: true } });
   });
 
   // Shared-with-me is the exception: a grant can name a path the indexer never

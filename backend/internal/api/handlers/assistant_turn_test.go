@@ -15,12 +15,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/brf-tech/filex/backend/internal/api/handlers"
 	"github.com/brf-tech/filex/backend/internal/config"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/testutil"
@@ -333,4 +335,191 @@ func TestAssistantTurn_IsScopedToItsOwner(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, st, "another account cannot ask inside this conversation")
 	st, _ = doReq(t, ada, http.MethodGet, srv.URL+"/api/admin/assistant/provider", nil)
 	assert.Equal(t, http.StatusForbidden, st, "nor see how the provider is configured")
+}
+
+// ⚠ A 2xx that is not a stream is a failed turn, not a silent one. A gateway
+// that ignores `stream: true` answers with one JSON object and a proxy in
+// front of one answers `200 {"error":…}`; both used to end the turn with no
+// text, nothing stored and nothing in the log — an empty bubble the person
+// could only read as the model having nothing to say.
+func TestAssistantTurn_AProviderThatDoesNotStreamFailsTheTurn(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"chatcmpl-1","choices":[{"message":{"role":"assistant","content":"Your files are fine."}}]}`)
+	}))
+	t.Cleanup(provider.Close)
+	srv, admin, store := assistantServer(t)
+	email, pw := testutil.SeedAdmin(t, store)
+	testutil.LoginAs(t, srv, admin, email, pw)
+	configureAssistant(t, srv, admin, map[string]any{
+		"enabled": true, "provider": "openai", "base_url": provider.URL,
+		"model": "test-model", "api_key": "sk-test", "turns_per_minute": 20,
+	})
+
+	session := newSession(t, srv, admin)
+	events := turnEvents(t, context.Background(), admin, srv.URL+"/api/assistant/sessions/"+session+"/turn", "How are my files?", nil)
+
+	require.NotEmpty(t, events)
+	var failure map[string]any
+	for _, event := range events {
+		if event["type"] == "error" {
+			failure = event
+		}
+		assert.NotEqual(t, "text", event["type"], "nothing about that response was an answer")
+	}
+	require.NotNil(t, failure, "the turn failed and said so: %v", events)
+	assert.Contains(t, failure["message"], "200")
+	assert.Contains(t, failure["message"], "chatcmpl-1", "what answered is quoted, so it can be found in the log")
+
+	// And no empty assistant row was left behind to be replayed to the model.
+	st, raw := doReq(t, admin, http.MethodGet, srv.URL+"/api/assistant/sessions/"+session, nil)
+	require.Equal(t, http.StatusOK, st)
+	var log struct {
+		Messages []struct {
+			Role string `json:"role"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &log))
+	require.Len(t, log.Messages, 1)
+	assert.Equal(t, "user", log.Messages[0].Role)
+}
+
+// A turn waiting on a permission writes nothing for as long as the person
+// takes to press the button — up to approvalWait, five minutes. Both ends call
+// that silence death well before then: a reverse proxy's proxy_read_timeout
+// and the panel's own silence watchdog are 60 seconds, and the model would be
+// told the person never answered when they had only thought about it.
+//
+// So the stream says it is alive with an SSE comment: no frame type for the
+// client to learn, and nothing that could reach the stored answer.
+func TestAssistantTurn_KeepsTheStreamAliveWhileItWaits(t *testing.T) {
+	defer handlers.SetKeepaliveInterval(50 * time.Millisecond)()
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "read_file", map[string]any{"path": "main://notes/pay.csv", "reason": "to summarise the salaries"}),
+		textFrame("Ada earns 99999."),
+	)
+	srv, client, _ := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+
+	resp, err := client.Post(srv.URL+"/api/assistant/sessions/"+session+"/turn",
+		"application/json", strings.NewReader(`{"prompt":"summarise the pay file"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	keepalives := 0
+	var answer strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, ":") {
+			keepalives++
+			continue
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var event map[string]any
+		require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event))
+		switch {
+		case event["type"] == "card" && event["decision"] == nil:
+			// The person reads the card and thinks about it, past several
+			// intervals, before deciding.
+			time.Sleep(250 * time.Millisecond)
+			st, raw := doReq(t, client, http.MethodPost,
+				srv.URL+"/api/assistant/sessions/"+session+"/approvals", map[string]any{"path": "main://notes/pay.csv"})
+			require.Equal(t, http.StatusOK, st, "approve: %s", raw)
+		case event["type"] == "text":
+			answer.WriteString(event["delta"].(string))
+		}
+	}
+	assert.Positive(t, keepalives, "a turn standing still on a decision still says it is alive")
+	assert.Equal(t, "Ada earns 99999.", answer.String(), "and the turn went on to answer")
+
+	// The pings are comments, so nothing about them can reach what is stored.
+	st, raw := doReq(t, client, http.MethodGet, srv.URL+"/api/assistant/sessions/"+session, nil)
+	require.Equal(t, http.StatusOK, st)
+	var log struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &log))
+	require.Len(t, log.Messages, 2)
+	assert.Equal(t, "Ada earns 99999.", log.Messages[1].Content)
+}
+
+// ⚠ Two different refusals share one status. "Your other tab is answering" and
+// "you have asked too often this minute" are 429 alike, and the only thing
+// telling them apart used to be an English sentence — which a panel can only
+// match by pattern, and which breaks the day it is reworded. The code is the
+// stable half.
+func TestAssistantTurn_TellsBusyAndRateLimitedApart(t *testing.T) {
+	block := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(block) }) }
+	defer unblock()
+	provider := fakeProvider(t, block)
+	srv, admin, store := assistantServer(t)
+	email, pw := testutil.SeedAdmin(t, store)
+	testutil.LoginAs(t, srv, admin, email, pw)
+	configureAssistant(t, srv, admin, map[string]any{
+		"enabled": true, "provider": "openai", "base_url": provider.URL,
+		"model": "test-model", "api_key": "sk-test", "turns_per_minute": 1,
+	})
+	session := newSession(t, srv, admin)
+	turnURL := srv.URL + "/api/assistant/sessions/" + session + "/turn"
+
+	// One turn is left mid-answer, holding this account's single slot.
+	streaming, ended := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(ended)
+		started := false
+		signal := func() {
+			if !started {
+				started = true
+				close(streaming)
+			}
+		}
+		defer signal()
+		resp, err := admin.Post(turnURL, "application/json", strings.NewReader(`{"prompt":"first"}`))
+		if !assert.NoError(t, err) {
+			return
+		}
+		defer resp.Body.Close()
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			if strings.Contains(scanner.Text(), `"type":"text"`) {
+				signal()
+			}
+		}
+	}()
+	<-streaming
+
+	refusal := func(prompt string) (int, string, string) {
+		t.Helper()
+		st, raw := doReq(t, admin, http.MethodPost, turnURL, map[string]any{"prompt": prompt})
+		var body struct {
+			Error string `json:"error"`
+			Code  string `json:"code"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &body), "%s", raw)
+		return st, body.Code, body.Error
+	}
+
+	st, code, message := refusal("while the first one runs")
+	require.Equal(t, http.StatusTooManyRequests, st)
+	assert.Equal(t, "busy", code, "a turn is already streaming for this account")
+	assert.NotEmpty(t, message, "the sentence stays, as the human-readable half")
+
+	// The first turn ends, the slot is free — and the per-minute ceiling the
+	// first turn already used is what refuses the next one.
+	unblock()
+	<-ended
+	st, code, message = refusal("after it finished")
+	require.Equal(t, http.StatusTooManyRequests, st)
+	assert.Equal(t, "rate_limited", code, "same status, different reason, different code")
+	assert.NotEmpty(t, message)
 }

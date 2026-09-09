@@ -76,7 +76,9 @@ export function listingMenuEntries(
       ? [
           { id: 'newFolder', label: t('new.folder'), icon: FolderPlus, ...(can.mkdir ? {} : { disabled: true, hint: off }) },
           { id: 'fileUpload', label: t('new.fileUpload'), icon: Upload, ...(can.upload ? {} : { disabled: true, hint: off }) },
-          { id: 'paste', label: t('menu.paste'), icon: ClipboardPaste, disabled: !state.canPaste || !can.move },
+          // `canPaste` already knows which verb the pending clipboard needs; gating on `move` here refused a paste
+          // after a COPY on a server that offers copy but not move.
+          { id: 'paste', label: t('menu.paste'), icon: ClipboardPaste, disabled: !state.canPaste },
         ]
       : []),
     { id: 'selectAll', label: t('menu.selectAll'), icon: CheckSquare, dividerBefore: state.canCreate, disabled: !state.canSelectAll },

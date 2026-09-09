@@ -30,9 +30,18 @@ export function anchorBelow(anchor: HTMLElement, width: number): { x: number; y:
  * Not tied to a trigger button, so it serves the ⋮ buttons, right-click and the sidebar's New button alike.
  * Focus goes back to the element that had it when the menu opened (the trigger) once the menu unmounts.
  */
-const props = withDefaults(defineProps<{ items: FloatingMenuEntry[]; x: number; y: number; width?: number; label: string }>(), {
-  width: 232,
-});
+const props = withDefaults(
+  defineProps<{
+    items: FloatingMenuEntry[];
+    x: number;
+    y: number;
+    width?: number;
+    label: string;
+    /** The element the menu was placed against, when there is one; a right-click at a point has none. */
+    anchor?: HTMLElement | null;
+  }>(),
+  { width: 232, anchor: null },
+);
 const emit = defineEmits<{ select: [id: string]; close: [] }>();
 
 const root = ref<HTMLElement>();
@@ -96,19 +105,44 @@ function onSelect(item: FloatingMenuEntry) {
 
 const close = () => emit('close');
 
+/** Where the anchor sits right now, or null when the menu has none to follow. */
+function anchorAt(): { left: number; top: number } | null {
+  const box = props.anchor?.getBoundingClientRect();
+  return box ? { left: box.left, top: box.top } : null;
+}
+
+let placedAgainst: { left: number; top: number } | null = null;
+
+/**
+ * A scroll closes the menu only once it has actually taken the anchor somewhere else.
+ *
+ * It used to close on ANY scroll caught on the way down, which included the scroll the opening itself causes:
+ * pressing a row's ⋮ focuses that button, and below roughly 1500px the browser scrolls the listing's horizontally
+ * scrollable wrapper to reveal it. That event lands a few milliseconds after the menu mounted — so on a narrow
+ * window the menu opened and vanished. The anchor is measured after that scroll, so comparing against it tells the
+ * two apart. A menu opened at a bare point (right-click) has no anchor and still closes on any scroll.
+ */
+function onScroll() {
+  if (!props.anchor) return close();
+  const now = anchorAt();
+  if (!now || !placedAgainst || now.left !== placedAgainst.left || now.top !== placedAgainst.top) close();
+}
+
 onMounted(async () => {
   await place();
   buttons().find((b) => b.getAttribute('aria-disabled') !== 'true')?.focus();
+  // After the focus, so that whatever the browser scrolls to reveal something is already part of the reading.
+  placedAgainst = anchorAt();
   document.addEventListener('keydown', onKeydown, true);
   document.addEventListener('mousedown', onPointerDown, true);
   window.addEventListener('resize', close);
-  window.addEventListener('scroll', close, true);
+  window.addEventListener('scroll', onScroll, true);
 });
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', onKeydown, true);
   document.removeEventListener('mousedown', onPointerDown, true);
   window.removeEventListener('resize', close);
-  window.removeEventListener('scroll', close, true);
+  window.removeEventListener('scroll', onScroll, true);
   // Only when focus is still ours (or lost to <body>); a caller that already moved it keeps its choice.
   const active = document.activeElement;
   if ((!active || active === document.body || root.value?.contains(active)) && returnTo?.isConnected) returnTo.focus();

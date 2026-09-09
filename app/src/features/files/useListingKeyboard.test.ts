@@ -5,7 +5,9 @@ import { createMemoryHistory, createRouter } from 'vue-router';
 import { describe, expect, it } from 'vitest';
 import { resetMock } from '@/data/mock';
 import { i18n } from '@/i18n';
+import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
+import { useToastStore } from '@/stores/toast';
 import { useClipboardStore } from './clipboardStore';
 import { useModalsStore } from './modalsStore';
 import { useUndoStore } from './undoStore';
@@ -28,8 +30,11 @@ async function setup() {
   mount(Host, { global: { plugins: [router, i18n] } });
   const files = useFilesStore();
   await files.bootstrap();
+  // Cut and copy are gated on the server offering move and copy, exactly as their menu entries are.
+  const capabilities = useCapabilitiesStore();
+  await capabilities.load();
   await files.openPath(null, '');
-  return { keyboard, files, modals: useModalsStore(), clipboard: useClipboardStore(), undo: useUndoStore(), router };
+  return { keyboard, files, capabilities, modals: useModalsStore(), clipboard: useClipboardStore(), undo: useUndoStore(), router };
 }
 
 function key(key: string, target: Element = document.createElement('div'), extra: Partial<KeyboardEvent> = {}): KeyboardEvent {
@@ -162,5 +167,22 @@ describe('useListingKeyboard', () => {
     const refresh = key('r', document.createElement('div'), { code: 'KeyR' } as Partial<KeyboardEvent>);
     keyboard.onKeydown(refresh);
     expect(refresh.defaultPrevented).toBe(true);
+  });
+});
+
+describe('an undo that does not happen', () => {
+  // `replay` drops both directions before running the step, so a step that FAILED used to leave the history empty
+  // and the action unreachable — and the key swallowed the rejection, so nothing said so either.
+  it('keeps the step armed and says it did not work', async () => {
+    const { keyboard, undo } = await setup();
+    const toast = useToastStore();
+    undo.record({ undo: () => Promise.reject(new Error('the node is gone')), redo: () => Promise.resolve() });
+
+    keyboard.onKeydown(key('z', document.createElement('div'), { code: 'KeyZ', ctrlKey: true } as Partial<KeyboardEvent>));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(undo.canUndo).toBe(true);
+    expect(undo.canRedo).toBe(false);
+    expect(toast.toasts.map((t) => t.text)).toContain('Could not undo the last action');
   });
 });

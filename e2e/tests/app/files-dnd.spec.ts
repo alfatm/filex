@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { countIn } from '../../helpers/mockTree';
 
 /** A DataTransfer holding one file, as the browser builds for a drop from the OS. */
 function osFiles(page: Page, name: string) {
@@ -31,7 +32,7 @@ test.describe('Drag and drop', () => {
 
     await rows.filter({ hasText: 'app.ts' }).dragTo(rows.filter({ hasText: 'Documents' }));
     await expect(page.getByText('2 items moved to Documents')).toBeVisible();
-    await expect(rows).toHaveCount(15);
+    await expect(rows).toHaveCount(countIn() - 2);
   });
 
   test('a breadcrumb above the open folder accepts a drop', async ({ page }) => {

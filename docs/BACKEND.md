@@ -343,12 +343,25 @@ Destroy everything in the trash this caller may purge.
 ```json
 { "ok": true, "purged": 12, "failed": 0, "skipped": 0, "more": false }
 ```
-Top-level entries only — purging a deleted folder already takes its contents —
-capped at 500 per request so no single call holds open for a trash of any size.
-`more` says the cap was reached; ask again. An entry the caller may not purge is
-`skipped`, not refused: on a shared drive, somebody else's deletion must not make
-"empty my trash" fail altogether. A caller that keeps getting `purged: 0` has
-purged everything it may.
+Top-level entries only — purging a deleted folder already takes its contents.
+An entry the caller may not purge is `skipped`, not refused: on a shared drive,
+somebody else's deletion must not make "empty my trash" fail altogether.
+
+⚠ The trash listing is ordered by deletion time across **every** account and the
+permission check runs on the rows it hands back, so the first 500 rows are not
+the caller's first 500 rows. The handler therefore reads a page of 500, purges
+what it may, and **steps over pages that purged nothing** until one produces a
+result or the listing runs out. A page that purged something is where the
+request stops — one page of real byte work is the cap, so no single call holds
+open for a trash of any size — and `more` says that page was full, so there may
+be another round to ask for.
+
+That walk is what makes `purged: 0` mean what it says: the whole listing was
+read and there is nothing left this caller may purge. Judging the first page
+alone, it instead meant 500 other people's deletions sat in front of the
+caller's own — every request answering `purged: 0, skipped: 500` — and since the
+app stops asking as soon as a round purges nothing, "Empty trash" quietly did
+nothing at all.
 
 ### `GET /api/files/activity` ![user](https://img.shields.io/badge/-user-blue)
 What has happened to ONE file. `?path=<adapter>://<rel>&limit=50` (50 is both

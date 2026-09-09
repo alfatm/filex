@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { countIn } from '../../helpers/mockTree';
 
 /** Mutations through the New menu, the item ⋮ menu, the Undo toast and the details panel (spec §7). */
 
@@ -39,7 +40,7 @@ test.describe('File actions', () => {
     await expect(dialog).toBeHidden();
     const folders = page.getByRole('group', { name: 'Folders' });
     await expect(folders.getByRole('option', { name: /^Reports/ })).toBeVisible();
-    await expect(folders.getByRole('option')).toHaveCount(9);
+    await expect(folders.getByRole('option')).toHaveCount(countIn('', 'folder') + 1);
   });
 
   test('Rename via ⋮ and the repository rejects a name collision', async ({ page }) => {
@@ -161,7 +162,7 @@ test.describe('File actions', () => {
 
   test('Move to via ⋮: Archive → Documents', async ({ page }) => {
     await page.goto('files?view=list');
-    await expect(row(page, 'Documents')).toContainText('24 items');
+    await expect(row(page, 'Documents')).toContainText(`${countIn('Documents')} items`);
     await pickMenu(page, 'Archive', 'Move to');
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('heading', { name: 'Move “Archive” to' })).toBeVisible();
@@ -177,7 +178,7 @@ test.describe('File actions', () => {
     await expect(dialog).toBeHidden();
     await expect(page.getByText('“Archive” moved to Documents')).toBeVisible();
     await expect(row(page, 'Archive')).toHaveCount(0);
-    await expect(row(page, 'Documents')).toContainText('25 items');
+    await expect(row(page, 'Documents')).toContainText(`${countIn('Documents') + 1} items`);
   });
 
   test('Copy to via ⋮ leaves the original where it is', async ({ page }) => {
@@ -195,7 +196,7 @@ test.describe('File actions', () => {
     await expect(dialog).toBeHidden();
     await expect(page.getByText('“Archive” copied to Documents')).toBeVisible();
     await expect(row(page, 'Archive')).toHaveCount(1);
-    await expect(row(page, 'Documents')).toContainText('25 items');
+    await expect(row(page, 'Documents')).toContainText(`${countIn('Documents') + 1} items`);
   });
 
   test('Share via ⋮ turns on link sharing and shows the URL row', async ({ page }) => {
@@ -234,6 +235,12 @@ test.describe('File actions', () => {
   });
 
   test('an upload can be cancelled while it runs, and the file never lands', async ({ page }) => {
+    // The page clock, not a sleep. The proof is "app time passed and the row is still gone", and the sleep that
+    // used to stand here waited 2 s for a mock transfer that takes ~1.5 s: half a second of margin under four
+    // workers, and a green test that proved nothing at all if the mock ever got slower. With the clock installed
+    // the mock's progress interval only advances when this test says so, so cancelling really does stop it, and
+    // running the clock far past the whole transfer costs nothing.
+    await page.clock.install();
     await page.goto('files?view=list');
     await page.getByRole('navigation').getByRole('button', { name: 'New' }).click();
     const chooser = page.waitForEvent('filechooser');
@@ -246,8 +253,9 @@ test.describe('File actions', () => {
     // The row says what happened rather than disappearing: a transfer that stops has to be visible to whoever stopped it.
     await expect(tray.getByText('Cancelled')).toBeVisible();
     await expect(row(page, 'giant.bin')).toHaveCount(0);
-    // And it stays gone — a cancelled transfer must not land a moment later.
-    await page.waitForTimeout(2000);
+    // And it stays gone — a cancelled transfer must not land a moment later. A timer the cancel failed to clear
+    // fires during this, many times over.
+    await page.clock.runFor(60_000);
     await expect(row(page, 'giant.bin')).toHaveCount(0);
   });
 
@@ -286,14 +294,14 @@ test.describe('File actions', () => {
 
 test.describe('Listing menu', () => {
   test('right-click on empty surface offers the listing actions', async ({ page }) => {
-    // Design holds 8 rows in list view, so the lower half of the page is bare surface.
+    // Design holds a handful of rows in list view, so the lower half of the page is bare surface.
     await page.goto('files/demo/Design?view=list');
     const bare = { button: 'right' as const, position: { x: 400, y: 700 } };
     await page.locator('main').click(bare);
     const menu = page.getByRole('menu', { name: 'Listing actions' });
     await expect(menu.getByRole('menuitem', { name: 'Deselect all', exact: true })).toHaveAttribute('aria-disabled', 'true');
     await menu.getByRole('menuitem', { name: 'Select all', exact: true }).click();
-    await expect(page.getByRole('row', { selected: true })).toHaveCount(8);
+    await expect(page.getByRole('row', { selected: true })).toHaveCount(countIn('Design'));
 
     await page.locator('main').click(bare);
     await page.getByRole('menu', { name: 'Listing actions' }).getByRole('menuitem', { name: 'Deselect all', exact: true }).click();

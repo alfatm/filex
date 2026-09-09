@@ -255,6 +255,21 @@ func (h *Meta) SetRecent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// recentNode is one Recent row: the node, plus WHEN the caller opened it.
+//
+// The open date is the sort key of this listing and it is not a property of the
+// file — it lives on the user_node_meta row. A row that carries only the node
+// therefore reaches the client with no date but the file's mtime, which the
+// client then sorts and groups by: the server's order is undone and "Today"
+// comes to mean "written today" rather than "opened today". Embedding keeps
+// every node field where it was, so the row is what it always was plus one
+// field. RFC3339 like the node's own dates beside it, not the epoch
+// milliseconds the projected listings use.
+type recentNode struct {
+	*model.Node
+	OpenedAt *time.Time `json:"opened_at,omitempty"`
+}
+
 // ListRecent returns nodes the current user opened recently (newest-first).
 func (h *Meta) ListRecent(w http.ResponseWriter, r *http.Request) {
 	u := auth.UserFrom(r.Context())
@@ -271,8 +286,32 @@ func (h *Meta) ListRecent(w http.ResponseWriter, r *http.Request) {
 	attachThumbs(r.Context(), h.Store, nodes)
 	attachShared(r.Context(), h.Store, nodes)
 	attachOwnerNames(r.Context(), h.Store, nodes)
+	attachStorageNames(r.Context(), h.Store, nodes)
+
+	ids := make([]int64, 0, len(nodes))
+	for _, n := range nodes {
+		if n != nil {
+			ids = append(ids, n.ID)
+		}
+	}
+	opened, err := h.Store.UserNodeMetaTimes(r.Context(), u.ID, userMetaKeyOpened, ids)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	rows := make([]recentNode, 0, len(nodes))
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		row := recentNode{Node: n}
+		if at, found := opened[n.ID]; found {
+			row.OpenedAt = &at
+		}
+		rows = append(rows, row)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"nodes": nonNilNodes(attachStorageNames(r.Context(), h.Store, nodes)),
+		"nodes": rows,
 		"limit": limit,
 	})
 }

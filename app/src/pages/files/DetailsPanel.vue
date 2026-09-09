@@ -5,6 +5,7 @@ import { Copy, Link, Star, X } from 'lucide-vue-next';
 import { repository } from '@/data';
 import type { ActivityEvent, Node, Person, User } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
+import { useOperationsStore } from '@/features/files/operationsStore';
 import { useFileActions } from '@/features/files/useFileActions';
 import { sharedDriveOf } from '@/features/files/owner';
 import { useFilesStore } from '@/stores/files';
@@ -21,6 +22,7 @@ const { formatDateTime, formatSize } = useFormat();
 const files = useFilesStore();
 const view = useViewStore();
 const actions = useFileActions();
+const operations = useOperationsStore();
 
 type PanelTab = 'details' | 'activity';
 const tab = ref<PanelTab>('details');
@@ -74,14 +76,44 @@ watch(
 // The link is not part of a listing row: a viewer may see that a node is shared, but the URL itself is editor+
 // business, so it is fetched per node. `files.revision` is in the key so creating or removing one refreshes it.
 const shareUrl = ref<string | null>(null);
+/**
+ * The read itself failed, so neither "it has a link" nor "it has none" is known.
+ *
+ * Saying "Not shared" here would be a guess, and the Create-link button beside it would mint a SECOND link for a
+ * node that already had one; the section says it could not tell instead, and offers nothing.
+ */
+const shareUnknown = ref(false);
 watch(
   [() => props.node.id, () => files.revision] as const,
   async ([id]) => {
-    const url = await repository.shareLink(id);
-    if (props.node.id === id) shareUrl.value = url;
+    let url: string | null;
+    try {
+      url = await repository.shareLink(id);
+    } catch {
+      if (props.node.id === id) {
+        shareUrl.value = null;
+        shareUnknown.value = true;
+      }
+      return;
+    }
+    if (props.node.id !== id) return;
+    shareUrl.value = url;
+    shareUnknown.value = false;
   },
   { immediate: true },
 );
+
+// Minting and revoking a link are mutations like any other, so they go through the operations tray: called straight
+// on the store the rejection reached nobody and the panel simply went on showing the old state.
+function createLink() {
+  void operations.run(t('op.sharing'), async () => {
+    await files.createShareLink(props.node.id);
+  });
+}
+
+function removeLink() {
+  void operations.run(t('op.unsharing'), () => files.removeShareLink(props.node.id));
+}
 
 /**
  * "You renamed it from “notes.md”" — the actor, the verb, and at most one variable part.
@@ -163,14 +195,15 @@ function sentence(event: ActivityEvent): string {
         <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-bg-muted text-text-2">
           <Link :size="16" />
         </span>
-        <template v-if="shareUrl">
+        <p v-if="shareUnknown" class="ml-3 flex-1 text-15 leading-none text-text-3" role="alert">{{ t('panel.shareUnknown') }}</p>
+        <template v-else-if="shareUrl">
           <p class="ml-3 min-w-0 flex-1 truncate-safe text-15 leading-none">{{ shareUrl }}</p>
           <IconButton :label="t('panel.copy')" :size="36" @click="actions.copyLink(shareUrl)"><Copy :size="18" /></IconButton>
-          <Button variant="ghost" class="h-9 px-3" @click="files.removeShareLink(node.id)">{{ t('panel.remove') }}</Button>
+          <Button variant="ghost" class="h-9 px-3" @click="removeLink()">{{ t('panel.remove') }}</Button>
         </template>
         <template v-else>
           <p class="ml-3 flex-1 text-15 leading-none text-text-3">{{ t('panel.notShared') }}</p>
-          <Button variant="outline" @click="files.createShareLink(node.id)">{{ t('panel.createLink') }}</Button>
+          <Button variant="outline" @click="createLink()">{{ t('panel.createLink') }}</Button>
         </template>
       </div>
     </template>

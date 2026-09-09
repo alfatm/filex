@@ -210,3 +210,132 @@ func TestAssistantPlanIsDecidedExactlyOnce(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, plans)
 }
+
+// ⚠⚠ The claim, not the closing update, is what makes a plan run once. Both
+// racing approvals used to pass the status read and DO the work; only then did
+// one of them lose the update, having already minted a second share link.
+func TestAssistantPlanIsClaimedBeforeItRuns(t *testing.T) {
+	_, store := testutil.NewTestDB(t)
+	ctx := context.Background()
+	user, err := store.CreateUser(ctx, "ines@filex.test", "x", "user", "en", "UTC")
+	require.NoError(t, err)
+	session, err := store.CreateAssistantSession(ctx, &model.AssistantSession{UserID: user.ID})
+	require.NoError(t, err)
+	plan, err := store.CreateAssistantPlan(ctx, &model.AssistantPlan{
+		SessionID: session.ID, Kind: model.PlanKindCreateShare,
+		Summary: "Share the report", ItemsJSON: `[{"path":"main://a.pdf","node_id":7}]`,
+	})
+	require.NoError(t, err)
+
+	claimed, err := store.ClaimAssistantPlan(ctx, plan.ID)
+	require.NoError(t, err)
+	assert.True(t, claimed)
+
+	// The second approval is refused BEFORE it can do any of the work.
+	claimed, err = store.ClaimAssistantPlan(ctx, plan.ID)
+	require.NoError(t, err)
+	assert.False(t, claimed, "one plan, one executor")
+
+	// A claimed plan is still pending — the claim is decided_at, not a status
+	// the interface would have to learn — so closing it works as before.
+	held, err := store.GetAssistantPlan(ctx, plan.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.PlanPending, held.Status)
+	require.NotNil(t, held.DecidedAt, "and the claim is what is written there")
+
+	ran, err := store.FinishAssistantPlan(ctx, plan.ID, model.PlanDone, `{"items":[]}`)
+	require.NoError(t, err)
+	assert.True(t, ran)
+
+	done, err := store.GetAssistantPlan(ctx, plan.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.PlanDone, done.Status)
+
+	claimed, err = store.ClaimAssistantPlan(ctx, plan.ID)
+	require.NoError(t, err)
+	assert.False(t, claimed, "a finished plan is not claimable either")
+}
+
+// AppendAssistantMessage is ONE call in the interface, and the comment there
+// says why: "a stored message can never leave the session looking untouched".
+// It was two autocommits — the insert, then the count and the activity stamp —
+// and the stamp is the key eviction reads from the far end, so a failure
+// between them left a conversation that had grown while looking idle.
+//
+// The trigger is how the second statement is made to fail on demand. What is
+// asserted is the half that used to survive on its own.
+func TestAppendAssistantMessageIsAllOrNothing(t *testing.T) {
+	conn, store := testutil.NewTestDB(t)
+	ctx := context.Background()
+	user, err := store.CreateUser(ctx, "tuna@filex.test", "x", "user", "en", "UTC")
+	require.NoError(t, err)
+	session, err := store.CreateAssistantSession(ctx, &model.AssistantSession{UserID: user.ID})
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx,
+		`CREATE TRIGGER refuse_activity BEFORE UPDATE ON assistant_sessions
+		 BEGIN SELECT RAISE(ABORT, 'the activity stamp could not be written'); END`)
+	require.NoError(t, err)
+
+	_, err = store.AppendAssistantMessage(ctx, &model.AssistantMessage{
+		SessionID: session.ID, Role: model.AssistantRoleUser, Content: "a question that never landed",
+	})
+	require.Error(t, err, "the append has to report the failure rather than half-succeed")
+
+	_, err = conn.ExecContext(ctx, `DROP TRIGGER refuse_activity`)
+	require.NoError(t, err)
+
+	msgs, lerr := store.ListAssistantMessages(ctx, session.ID)
+	require.NoError(t, lerr)
+	assert.Empty(t, msgs, "the message must not outlive the update that was supposed to accompany it")
+
+	again, gerr := store.GetAssistantSession(ctx, session.ID)
+	require.NoError(t, gerr)
+	assert.Equal(t, 0, again.MessageCount)
+}
+
+// Deleting a conversation removes ITS THREE CHILDREN EXPLICITLY, not only by
+// cascade. The messages already were; the read grants and the plans were left
+// to the foreign keys, while the comment beside the explicit delete justified
+// itself by a driver that has cascades switched off — which is the one case
+// where the difference is visible, and where consent to open named files was
+// being left behind.
+//
+// SQLite's foreign_keys pragma is per connection and the pool holds exactly
+// one, so switching it off here really does stage that deployment.
+func TestDeleteAssistantSessionRemovesItsChildrenWithoutRelyingOnCascades(t *testing.T) {
+	conn, store := testutil.NewTestDB(t)
+	ctx := context.Background()
+	user, err := store.CreateUser(ctx, "sena@filex.test", "x", "user", "en", "UTC")
+	require.NoError(t, err)
+	session, err := store.CreateAssistantSession(ctx, &model.AssistantSession{UserID: user.ID})
+	require.NoError(t, err)
+	require.NoError(t, store.GrantAssistantRead(ctx, session.ID, "main://Docs/pay.csv"))
+	_, err = store.CreateAssistantPlan(ctx, &model.AssistantPlan{
+		SessionID: session.ID, Kind: model.PlanKindTags, Summary: "Tag it", ItemsJSON: `[]`,
+	})
+	require.NoError(t, err)
+	_, err = store.AppendAssistantMessage(ctx, &model.AssistantMessage{
+		SessionID: session.ID, Role: model.AssistantRoleUser, Content: "please tag it",
+	})
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = conn.ExecContext(context.Background(), `PRAGMA foreign_keys=ON`) })
+
+	require.NoError(t, store.DeleteAssistantSession(ctx, session.ID))
+
+	grants, err := store.ListAssistantReadGrants(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Empty(t, grants, "consent to read a file does not outlive the conversation it was given in")
+	plans, err := store.ListAssistantPlans(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Empty(t, plans)
+	msgs, err := store.ListAssistantMessages(ctx, session.ID)
+	require.NoError(t, err)
+	assert.Empty(t, msgs)
+	gone, err := store.GetAssistantSession(ctx, session.ID)
+	require.Error(t, err)
+	assert.Nil(t, gone)
+}

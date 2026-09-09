@@ -4,6 +4,15 @@ import type { AssistantMode } from '@/data/types';
 
 /** "system" leaves `data-theme` off so tokens.css follows `prefers-color-scheme`. */
 export type Theme = 'light' | 'system' | 'dark';
+/**
+ * What an upload does when the target folder already holds that name.
+ *
+ * `replace` is the only one the SERVER has an opinion about: a staged upload committed over an existing file
+ * overwrites it and keeps the old bytes as a version (upload_staged.go, `writehook.BeforeOverwrite`). The other
+ * three are decided here, before any bytes are sent — `keepBoth` renames to a free name the way a paste does
+ * (`<base>-copy<ext>`, `-copy-2`, … — ops.uniqueCopyDest), `skip` never begins the transfer, and `ask` puts the
+ * question in the upload tray, beside the row it is about.
+ */
 export type ConflictBehavior = 'ask' | 'replace' | 'keepBoth' | 'skip';
 
 const STORAGE_KEY = 'filex.app.settings';
@@ -37,11 +46,19 @@ export interface Settings {
   theme: Theme;
   compactList: boolean;
   timeZone: string;
-  /** Node id of the folder uploads land in; "" is the storage root. */
+  /**
+   * Node id of the folder uploads land in when nothing else names one; "" is the drive root.
+   *
+   * ⚠ A node id in filex IS its path, so this goes stale the moment the folder is renamed or moved. The upload
+   * store therefore treats it as a hint: it checks the folder is still there and falls back to the drive root,
+   * saying so, rather than failing the upload.
+   */
   defaultUploadFolder: string;
   autoOpenPreview: boolean;
   conflictBehavior: ConflictBehavior;
+  /** This browser's own switch for the assistant panel; the server's is the administrator's (see BACKEND-GAP.md). */
   assistantEnabled: boolean;
+  /** The search mode a new conversation starts in; the panel's chips change it for that conversation only. */
   assistantMode: AssistantMode;
 }
 
@@ -78,7 +95,11 @@ function text(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
 }
 
-/** Persisted state is untrusted: every field is checked against its allowed values, as in the view store. */
+/**
+ * Persisted state is untrusted: every field is checked against its allowed values, as in the view store. A record
+ * written by an older build is read field by field, so one this build no longer has — or one it gained — costs the
+ * rest of the record nothing.
+ */
 function load(): Settings {
   const base = defaultSettings();
   let raw: unknown = {};

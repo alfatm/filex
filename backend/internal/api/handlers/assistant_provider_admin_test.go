@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/brf-tech/filex/backend/internal/api/handlers"
@@ -95,4 +97,47 @@ func TestAssistantProvider_TenantAdminForbidden(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.Put(rec, req)
 	require.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+// ⚠ The Test button is the only place a hung provider is visible, and it used
+// to report one as a model that replied with nothing: the deadline it hangs on
+// the call cancelled the context, and a cancelled context meant "the person
+// pressed stop", which is not a failure. `{"ok":false,"reply":""}` with no
+// error sends an operator looking at the model name when the connection is the
+// problem.
+func TestAssistantProviderTest_ReportsAProviderThatNeverAnswers(t *testing.T) {
+	release := make(chan struct{})
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	t.Cleanup(func() { close(release); provider.Close() })
+
+	ctx := context.Background()
+	_, store := testutil.NewTestDB(t)
+	box, err := secretbox.New("test-secret-key")
+	require.NoError(t, err)
+	require.NoError(t, store.UpsertSetting(ctx, assistant.EnabledSetting.Key, "true"))
+	require.NoError(t, store.UpsertSetting(ctx, assistant.ModelSetting.Key, "test-model"))
+	require.NoError(t, store.UpsertSetting(ctx, assistant.BaseURLSetting.Key, provider.URL))
+	require.NoError(t, assistant.StoreKey(ctx, store, box, "sk-test"))
+
+	defer handlers.SetProviderTestTimeout(200 * time.Millisecond)()
+	h := handlers.NewAssistantProviderAdmin(store, box, assistant.New(store, box))
+	rec := httptest.NewRecorder()
+	h.Test(rec, httptest.NewRequest(http.MethodPost, "/api/admin/assistant/provider/test", nil).WithContext(ctx))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var out struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+		Reply string `json:"reply"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	assert.False(t, out.OK)
+	assert.Empty(t, out.Reply)
+	assert.Contains(t, out.Error, "did not answer within the time allowed",
+		"the operator is told the provider timed out, not that the model was quiet")
 }

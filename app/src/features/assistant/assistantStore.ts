@@ -2,12 +2,11 @@ import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import { repository } from '@/data';
 import { HttpError } from '@/data/http/client';
+import { errorMessage } from '@/lib/errors';
+import { useSettingsStore } from '@/features/settings/settingsStore';
 import type { ApprovalCard, AssistantCard, AssistantContext, AssistantFailure, AssistantMessage, AssistantMode, AssistantSession, PlanCard, PlanOutcome } from '@/data/types';
 
 export const ASSISTANT_MODES: AssistantMode[] = ['filename', 'content', 'tags'];
-
-/** Mirrors `model.MaxAssistantSessions`: shown in the list so the eviction rule is stated, not discovered. */
-export const MAX_ASSISTANT_SESSIONS = 100;
 
 /** The last conversation on screen, so a reload or a new tab comes back to it rather than to an empty chat. */
 const STORAGE_KEY = 'filex.app.assistant.session';
@@ -19,6 +18,13 @@ const STORAGE_KEY = 'filex.app.assistant.session';
  */
 const SILENCE_MS = 60_000;
 
+/**
+ * The same watch while an approval card is open. The turn is standing at the card on the server, which waits five
+ * minutes for the person before giving up (`approvalWait`), so silence there is expected — but not endless: a
+ * connection that dies unnoticed while the card is up would otherwise leave the panel generating for ever.
+ */
+const APPROVAL_SILENCE_MS = 6 * 60_000;
+
 function storedSessionId(): string | null {
   try {
     return localStorage.getItem(STORAGE_KEY);
@@ -28,12 +34,19 @@ function storedSessionId(): string | null {
 }
 
 export const useAssistantStore = defineStore('assistant', () => {
+  const settings = useSettingsStore();
   const messages = ref<AssistantMessage[]>([]);
   /** The account's conversations, most recently active first. Loaded when the panel opens. */
   const sessions = ref<AssistantSession[]>([]);
+  /**
+   * How many conversations this account may keep, as the server states it. Read from the repository rather than
+   * held as a constant here: an install that changed the limit would otherwise be described by filex's default.
+   */
+  const sessionMax = ref(repository.assistantSessionMax());
   /** The conversation on screen; null until one is started or opened. */
   const sessionId = ref<string | null>(null);
-  const mode = ref<AssistantMode>('filename');
+  /** A conversation starts in the mode the settings modal calls the default; the chips change it from there. */
+  const mode = ref<AssistantMode>(settings.settings.assistantMode);
   const streaming = ref(false);
   /** The files this conversation may open. One path per approval — there is no wildcard here or on the server. */
   const granted = ref<string[]>([]);
@@ -41,11 +54,24 @@ export const useAssistantStore = defineStore('assistant', () => {
   const activity = ref<{ tool: string; target?: string } | null>(null);
   /** The file the running turn is standing still for — an approval card with its buttons still on — or null. */
   const awaiting = ref<string | null>(null);
+  /**
+   * The cards whose decision is on its way to the server.
+   *
+   * Set BEFORE the request, which is the whole point: `card.status` and `card.decision` only change once the
+   * answer is back, so two clicks in the same tick both saw a pending card and both posted — the second one
+   * getting a 409 nobody was listening for.
+   */
+  const deciding = ref<string[]>([]);
+  /** What the server said about the last refused decision, and which card it was about. */
+  const decisionError = ref<{ card: string; message: string } | null>(null);
   let controller: AbortController | null = null;
   let seq = 0;
   // The silence watchdog of the running turn; `rearm` is null between turns.
   let watchdog: ReturnType<typeof setTimeout> | undefined;
-  let rearm: (() => void) | null = null;
+  let rearm: ((ms?: number) => void) | null = null;
+  // The conversation being opened right now: only its own answer may reach the screen, and only while it is still
+  // the one that was asked for.
+  let opening: string | null = null;
 
   watch(sessionId, (id) => {
     try {
@@ -86,12 +112,12 @@ export const useAssistantStore = defineStore('assistant', () => {
     };
     // Re-armed by every event. Firing drops the connection the way a stop does, but says why — and not through
     // abort(), which would mark the answer as stopped by the person.
-    rearm = () => {
+    rearm = (ms = SILENCE_MS) => {
       clearTimeout(watchdog);
       watchdog = setTimeout(() => {
         fail('timeout');
         own.abort();
-      }, SILENCE_MS);
+      }, ms);
     };
     try {
       rearm();
@@ -99,7 +125,9 @@ export const useAssistantStore = defineStore('assistant', () => {
       if (!sessionId.value) sessionId.value = (await repository.createAssistantSession()).id;
       for await (const event of repository.assistantAsk(prompt, mode.value, sessionId.value, own.signal, context)) {
         if (own.signal.aborted) break;
-        rearm?.();
+        // An event while a card is open (a keepalive, say) must not shorten the watch back to a minute: the turn is
+        // still standing at the card, and the person has five of them to answer in.
+        rearm?.(awaiting.value ? APPROVAL_SILENCE_MS : SILENCE_MS);
         // `meta` names the conversation the server wrote the turn into; it is the session already on screen.
         if (event.type === 'meta') continue;
         if (event.type === 'done') {
@@ -130,8 +158,9 @@ export const useAssistantStore = defineStore('assistant', () => {
       // A fetch rejects with AbortError after abort(); that is the expected way out, not a failure.
       if (!own.signal.aborted) {
         // 503 is the server saying there is no assistant any more — switched off, or its provider gone — which is
-        // not something trying again changes.
-        fail(error instanceof HttpError && error.status === 503 ? 'unavailable' : 'failed');
+        // not something trying again changes. 429 is two different situations that the body's `code` tells apart.
+        const status = error instanceof HttpError ? error.status : 0;
+        fail(status === 503 ? 'unavailable' : status === 429 ? refusalOf(error) : 'failed');
         console.error('assistant stream failed', error);
       }
     } finally {
@@ -147,20 +176,39 @@ export const useAssistantStore = defineStore('assistant', () => {
   }
 
   /**
+   * Which of the two refusals a 429 is, in the words the person needs: their own other tab is mid-answer
+   * ("answering"), or this account has asked too often this minute ("rateLimited"). The server names it in the
+   * body's `code`; a refusal it could not classify carries none, and gets the sentence that covers both.
+   */
+  function refusalOf(error: unknown): AssistantFailure {
+    const body = error instanceof HttpError ? error.body : null;
+    const code = typeof body === 'object' && body !== null && 'code' in body ? (body as { code: unknown }).code : '';
+    if (code === 'busy') return 'answering';
+    if (code === 'rate_limited') return 'rateLimited';
+    return 'busy';
+  }
+
+  /**
    * A card goes on the message that raised it — except an approval coming back decided, which is the card that
    * asked, again, and closes it. While an approval is open the turn is standing still on the server, waiting for the
-   * person; a minute of that is not a hung connection, so the watchdog is held until they answer.
+   * person; a minute of that is not a hung connection, so the watchdog moves to its long setting until they answer.
    */
   function attachCard(message: AssistantMessage, card: AssistantCard) {
     if (card.kind === 'approval') {
-      const asked = message.cards?.find((c): c is ApprovalCard => c.kind === 'approval' && c.path === card.path);
-      if (asked && card.decision) {
-        settleRead(asked, card.decision);
+      const sameFile = (message.cards ?? []).filter(
+        (c): c is ApprovalCard => c.kind === 'approval' && c.path === card.path,
+      );
+      if (card.decision && sameFile.length) {
+        // The LAST card still waiting, not the first one for this file: a file refused and then asked about again
+        // in the same turn leaves a decided card behind, and closing that one would leave the live buttons on the
+        // question actually being asked. Nothing but the path identifies a card on the wire.
+        const waiting = sameFile.filter((c) => !c.decision).at(-1);
+        settleRead(waiting ?? sameFile[sameFile.length - 1], card.decision);
         return;
       }
       if (!card.decision) {
         awaiting.value = card.path;
-        clearTimeout(watchdog);
+        rearm?.(APPROVAL_SILENCE_MS);
       }
     }
     message.cards = [...(message.cards ?? []), card];
@@ -203,14 +251,18 @@ export const useAssistantStore = defineStore('assistant', () => {
 
   async function loadSessions() {
     sessions.value = await repository.listAssistantSessions();
+    sessionMax.value = repository.assistantSessionMax();
   }
 
   /** Starts a conversation and shows it empty. Reaching the cap evicts, so the list is reloaded from the answer. */
   async function newSession() {
     abort();
+    // A conversation still being opened is no longer wanted: its messages must not land in the empty chat.
+    opening = null;
     const session = await repository.createAssistantSession();
     messages.value = [];
     granted.value = [];
+    mode.value = settings.settings.assistantMode;
     sessionId.value = session.id;
     await loadSessions();
     return session;
@@ -219,8 +271,15 @@ export const useAssistantStore = defineStore('assistant', () => {
   /** Opens a stored conversation: its messages come from the server, which is the only place they live. */
   async function openSession(id: string) {
     abort();
-    sessionId.value = id;
+    opening = id;
     const conversation = await repository.assistantMessages(id);
+    // Nothing is applied until the messages are here. `sessionId` used to be set first, so a conversation that
+    // could not be read — deleted in another tab, evicted by the cap — left the id pointing at nothing with the
+    // PREVIOUS conversation's messages under it, and the next question went into that void. Two quick clicks
+    // answering out of order wrote the wrong conversation's messages the same way.
+    if (opening !== id) return;
+    opening = null;
+    sessionId.value = id;
     messages.value = conversation.messages;
     granted.value = conversation.granted;
     seq = messages.value.length;
@@ -237,6 +296,13 @@ export const useAssistantStore = defineStore('assistant', () => {
     try {
       await openSession(id);
     } catch {
+      // Forgotten here rather than through the watcher: `sessionId` never took this id — the open is applied only
+      // once it succeeds — so there is no change for the watcher to mirror into storage.
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+      } catch {
+        // storage unavailable; nothing was remembered in the first place
+      }
       sessionId.value = null;
       messages.value = [];
       granted.value = [];
@@ -251,6 +317,11 @@ export const useAssistantStore = defineStore('assistant', () => {
 
   /** Hard delete, as on the server: a chat log the person removed leaves no copy behind. */
   async function removeSession(id: string) {
+    // The running turn belongs to the conversation being removed, so it goes with it: left alone it went on writing
+    // into a message list that is about to be thrown away, held "generating" (up to five minutes while an approval
+    // card waits) with the box disabled, and had the server appending an answer to a conversation that is gone.
+    if (sessionId.value === id) abort();
+    if (opening === id) opening = null;
     await repository.deleteAssistantSession(id);
     sessions.value = sessions.value.filter((s) => s.id !== id);
     if (sessionId.value === id) {
@@ -266,9 +337,63 @@ export const useAssistantStore = defineStore('assistant', () => {
    * interrupt is served, not the way a message is sent.
    */
   async function decideRead(card: ApprovalCard, allow: boolean) {
-    if (!sessionId.value || card.decision) return;
-    await repository.decideAssistantRead(sessionId.value, card.path, allow);
+    const key = cardKey(card);
+    if (!sessionId.value || card.decision || deciding.value.includes(key)) return;
+    deciding.value = [...deciding.value, key];
+    decisionError.value = null;
+    try {
+      await repository.decideAssistantRead(sessionId.value, card.path, allow);
+    } catch (error) {
+      decisionError.value = { card: key, message: errorMessage(error) };
+      await resyncCard(card);
+      return;
+    } finally {
+      deciding.value = deciding.value.filter((each) => each !== key);
+    }
     settleRead(card, allow ? 'allowed' : 'denied');
+  }
+
+  /** Identifies a card across the store and the panel; a plan id and a file path never share a namespace. */
+  function cardKey(card: ApprovalCard | PlanCard) {
+    return card.kind === 'plan' ? `plan:${card.id}` : `read:${card.path}`;
+  }
+
+  /** Whether an answer to this card is already on its way, so the buttons can stop offering to send another. */
+  function isDeciding(card: ApprovalCard | PlanCard) {
+    return deciding.value.includes(cardKey(card));
+  }
+
+  /** What went wrong answering this card, or null. Per card, because only the card that failed should say so. */
+  function decisionErrorOf(card: ApprovalCard | PlanCard) {
+    return decisionError.value?.card === cardKey(card) ? decisionError.value.message : null;
+  }
+
+  /**
+   * The server refused the decision, so the card is no longer describing anything real: a 409 means it was already
+   * answered (the other half of a double click, or another tab), a 404 that the conversation is gone. What the
+   * server holds is read back and written onto the card, rather than leaving live buttons on a settled card.
+   */
+  async function resyncCard(card: ApprovalCard | PlanCard) {
+    if (!sessionId.value) return;
+    let stored: AssistantCard[];
+    try {
+      const conversation = await repository.assistantMessages(sessionId.value);
+      stored = conversation.messages.flatMap((message) => message.cards ?? []);
+    } catch {
+      // The conversation itself cannot be read any more, which is an answer too: the card is closed.
+      if (card.kind === 'plan') card.status = 'cancelled';
+      else settleRead(card, 'expired');
+      return;
+    }
+    if (card.kind === 'plan') {
+      const found = stored.find((each): each is PlanCard => each.kind === 'plan' && each.id === card.id);
+      if (!found) return;
+      card.status = found.status;
+      if (found.results) card.results = found.results;
+      return;
+    }
+    const found = stored.find((each): each is ApprovalCard => each.kind === 'approval' && each.path === card.path);
+    if (found?.decision) settleRead(card, found.decision);
   }
 
   /** Whether a card has already been answered, so a reopened chat does not ask twice. */
@@ -284,11 +409,22 @@ export const useAssistantStore = defineStore('assistant', () => {
    * whether it was done, skipped or failed.
    */
   async function decidePlan(card: PlanCard, approve: boolean): Promise<PlanOutcome | null> {
-    if (!sessionId.value || card.status !== 'pending') return null;
-    const outcome = await repository.decideAssistantPlan(sessionId.value, card.id, approve);
-    card.status = outcome.status;
-    if (outcome.results.length) card.results = outcome.results;
-    return outcome;
+    const key = cardKey(card);
+    if (!sessionId.value || card.status !== 'pending' || deciding.value.includes(key)) return null;
+    deciding.value = [...deciding.value, key];
+    decisionError.value = null;
+    try {
+      const outcome = await repository.decideAssistantPlan(sessionId.value, card.id, approve);
+      card.status = outcome.status;
+      if (outcome.results.length) card.results = outcome.results;
+      return outcome;
+    } catch (error) {
+      decisionError.value = { card: key, message: errorMessage(error) };
+      await resyncCard(card);
+      return null;
+    } finally {
+      deciding.value = deciding.value.filter((each) => each !== key);
+    }
   }
 
   /** Narrowing helper, so a template does not have to know the union's shape. */
@@ -306,6 +442,7 @@ export const useAssistantStore = defineStore('assistant', () => {
   return {
     messages,
     sessions,
+    sessionMax,
     sessionId,
     mode,
     streaming,
@@ -316,6 +453,8 @@ export const useAssistantStore = defineStore('assistant', () => {
     decideRead,
     isGranted,
     decidePlan,
+    isDeciding,
+    decisionErrorOf,
     isPlan,
     abort,
     seed,

@@ -136,6 +136,12 @@ func TestErrorCode_TellsQuotaAndUnavailableApart(t *testing.T) {
 		{"openai's 429 for no credit", &ProviderError{Status: http.StatusTooManyRequests, Detail: `{"error":{"code":"insufficient_quota"}}`}, ErrorCodeQuota},
 		{"anthropic's 400 for no credit", &ProviderError{Status: http.StatusBadRequest, Detail: `{"error":{"message":"Your credit balance is too low"}}`}, ErrorCodeQuota},
 		{"a real rate limit", &ProviderError{Status: http.StatusTooManyRequests, Detail: `{"error":{"code":"rate_limit_exceeded"}}`}, ""},
+		// ⚠ How the Google- and Azure-compatible gateways spell an ordinary
+		// per-minute rate limit. Reading the word "quota" as "the account is
+		// out of money" sent the person to their administrator when the whole
+		// fix was to wait a minute.
+		{"a rate limit spelled with the word quota", &ProviderError{Status: http.StatusTooManyRequests, Detail: `{"error":{"message":"Quota exceeded for requests per minute","status":"RESOURCE_EXHAUSTED"}}`}, ""},
+		{"a refusal that names the billing account", &ProviderError{Status: http.StatusForbidden, Detail: `{"error":{"message":"Billing has not been enabled for this project"}}`}, ErrorCodeQuota},
 		{"revoked key", &ProviderError{Status: http.StatusUnauthorized}, ErrorCodeUnavailable},
 		{"model gone", &ProviderError{Status: http.StatusNotFound}, ErrorCodeUnavailable},
 		{"switched off", ErrNotConfigured, ErrorCodeUnavailable},
@@ -174,6 +180,60 @@ func TestStream_CancellationKeepsWhatArrived(t *testing.T) {
 	})
 	require.NoError(t, err, "a stop is not a failure")
 	assert.Equal(t, "half ", out.String())
+}
+
+// ⚠ A 2xx is not an answer. Gateways that ignore `stream: true` reply with one
+// JSON object and proxies in front of them reply `200 {"error":…}`; both used
+// to scan to zero events and end the call as a success with no text, which the
+// person read as the model having nothing to say.
+func TestStream_A2xxThatIsNotAStreamIsAFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"chatcmpl-1","choices":[{"message":{"role":"assistant","content":"Hello"}}]}`)
+	}))
+	t.Cleanup(srv.Close)
+	text, err := collect(t, Config{Provider: ProviderOpenAI, APIKey: "k"}, srv)
+	require.Error(t, err, "an answer with no text in it is a failure, not an empty success")
+	assert.Empty(t, text)
+	assert.Contains(t, err.Error(), "200")
+	assert.Contains(t, err.Error(), "chatcmpl-1", "the beginning of the body is quoted, so an operator can see what answered")
+}
+
+// ⚠ The stop button and a deadline that ran out are indistinguishable on the
+// context and mean opposite things. Only the first is the person's own doing;
+// the second is a provider that never answered, and the admin page's Test
+// button is the only place anybody would find out.
+func TestStream_ADeadlineIsAFailureAndAStopIsNot(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-release
+	}))
+	t.Cleanup(func() { close(release); srv.Close() })
+
+	provider, err := NewProvider(Config{Provider: ProviderOpenAI, BaseURL: srv.URL, APIKey: "k"}, srv.Client())
+	require.NoError(t, err)
+	ask := func(ctx context.Context) error {
+		_, err := provider.Stream(ctx, Request{Model: "m", Messages: []Message{{Role: "user", Content: "hi"}}},
+			func(string) error { return nil })
+		return err
+	}
+
+	deadline, cancelDeadline := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancelDeadline()
+	err = ask(deadline)
+	require.Error(t, err, "a provider that never answered is not a model with nothing to say")
+	assert.Contains(t, err.Error(), "did not answer within the time allowed")
+
+	stopped, stop := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		stop()
+	}()
+	defer stop()
+	assert.NoError(t, ask(stopped), "a stop is still the person's own decision, not a failure")
 }
 
 func TestConfig_EndpointDefaultsPerProvider(t *testing.T) {

@@ -39,8 +39,17 @@ func NewThumbJob(store NodeGetter, generate func(ctx context.Context, n *model.N
 // One pending op per node: a burst of drift on the same file costs one
 // render, and a re-run of the walk cannot queue a second copy of a pending
 // one. Discovered priority, so the queue serves a person's upload first.
+//
+// ⚠ filex's own buckets are refused here, as AntivirusScanner.Eligible refuses
+// them. The walk skips the trash but catalogues the version snapshots as
+// ordinary files, so every snapshot of every image was queued for a render
+// nothing can ever display — thousands of ops and thousands of cache files on
+// a storage with any history at all, growing with every save.
 func (j *ThumbJob) Enqueue(ctx context.Context, drv Driver, n *model.Node) {
 	if j == nil || drv == nil || n == nil || n.Type != model.NodeTypeFile || n.DeletedAt != nil {
+		return
+	}
+	if model.IsReservedPath(n.Path) {
 		return
 	}
 	if _, err := drv.Enqueue(ctx, Op{

@@ -3,11 +3,7 @@ import {
   fromFileNode,
   fromModelNode,
   fromTrashEntry,
-  joinPath,
-  nameOf,
-  parentPath,
   SMALL_IMAGE_BYTES,
-  splitPath,
   toQuota,
   toStorage,
   type WireFileNode,
@@ -25,26 +21,6 @@ const listed = (patch: Partial<WireFileNode> = {}): WireFileNode => ({
   storage: 'main',
   last_modified: Date.parse('2026-07-01T10:00:00Z'),
   ...patch,
-});
-
-describe('addressing', () => {
-  it('splits and rejoins an adapter-qualified path, tolerating stray slashes', () => {
-    expect(splitPath('main://Docs/report.pdf')).toEqual({ adapter: 'main', rel: 'Docs/report.pdf' });
-    expect(splitPath('main://')).toEqual({ adapter: 'main', rel: '' });
-    expect(joinPath('main', '/Docs/')).toBe('main://Docs');
-    expect(joinPath('main', '')).toBe('main://');
-  });
-
-  it('walks up to the storage root and stops there', () => {
-    expect(parentPath('main://Docs/2026/report.pdf')).toBe('main://Docs/2026');
-    expect(parentPath('main://Docs')).toBe('main://');
-    expect(parentPath('main://')).toBeNull();
-  });
-
-  it('reads the basename off an address', () => {
-    expect(nameOf('main://Docs/report.pdf')).toBe('report.pdf');
-    expect(nameOf('main://')).toBe('');
-  });
 });
 
 describe('listing rows → app model', () => {
@@ -175,6 +151,14 @@ describe('metadata rows → app model', () => {
     );
   });
 
+  it('dates a Recent row by the open the endpoint reports, leaving the mtime where it was', () => {
+    expect(fromModelNode(model({ opened_at: '2026-07-09T08:30:00Z' }), 'main')).toMatchObject({
+      openedAt: '2026-07-09T08:30:00Z',
+      modifiedAt: '2026-07-01T10:00:00Z',
+    });
+    expect(fromModelNode(model(), 'main').openedAt).toBeUndefined();
+  });
+
   it('carries the share flag, so a starred or recently-opened row badges like a listed one', () => {
     expect(fromModelNode(model({ shared: true }), 'main').shared).toBe(true);
     expect(fromModelNode(model(), 'main').shared).toBe(false);
@@ -198,6 +182,25 @@ describe('trash rows → app model', () => {
       deletedAt: '2026-07-10T12:00:00Z',
       modifiedAt: '2026-07-10T12:00:00Z',
     });
+    // A server too old to name the kind leaves every row a file, which is what they all were before it did.
+    expect(node.kind).toBe('file');
+    expect(node.ttlDays).toBeUndefined();
+  });
+
+  it('keeps a deleted folder a folder, without a size, and counts down its stay', () => {
+    const folder = fromTrashEntry({
+      id: 9,
+      storage_id: 1,
+      storage_name: 'main',
+      path: '/Design',
+      name: 'Design',
+      type: 'dir',
+      size: 4096,
+      deleted_at: '2026-07-10T12:00:00Z',
+      ttl_days: 23,
+    });
+    // As a file it drew an icon picked by extension and a byte count where a folder shows a dash.
+    expect(folder).toMatchObject({ kind: 'folder', size: 0, ttlDays: 23, fileType: undefined });
   });
 });
 

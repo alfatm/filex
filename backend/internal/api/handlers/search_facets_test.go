@@ -226,3 +226,27 @@ func TestSearch_SaysWhenTheAnswerWasCutOff(t *testing.T) {
 	require.False(t, capped(map[string]any{"query": "rapor", "limit": 5}))
 	require.False(t, capped(map[string]any{"query": "rapor", "limit": 50}))
 }
+
+// The prefix is compared against nodes.path, which is rooted and never carries
+// a trailing slash. It used to be taken from the request exactly as typed, so
+// the two other spellings of the same folder answered nothing — and an empty
+// answer is indistinguishable from "there is nothing here".
+func TestSearchFacets_PathPrefixIsNormalisedBeforeItIsCompared(t *testing.T) {
+	f := newFacetFixture(t)
+	now := time.Now().UTC()
+	for _, p := range []string{"Docs/rapor.md", "Arsiv/rapor.md"} {
+		clean := "/" + p
+		_, err := f.store.CreateNode(context.Background(), &model.Node{
+			StorageID: f.st.ID, Name: "rapor.md", Path: clean,
+			PathHash: pathkey.Hash(f.st.ID, clean), Type: model.NodeTypeFile, BackendMtime: &now,
+		})
+		require.NoError(t, err)
+	}
+
+	for _, spelling := range []string{"/Docs", "Docs", "/Docs/", "Docs/", "/Docs/."} {
+		require.Len(t, f.search(t, map[string]any{"query": "rapor", "path_prefix": spelling}), 1,
+			"%q names the same folder as /Docs", spelling)
+	}
+	// A prefix that means the whole drive still means the whole drive.
+	require.Len(t, f.search(t, map[string]any{"query": "rapor", "path_prefix": "/"}), 2)
+}

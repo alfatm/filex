@@ -42,11 +42,18 @@ export const useUndoStore = defineStore('undo', () => {
 
   /** Arms the opposite direction only once the step has actually run, and only if it did not throw. */
   async function replay(step: HistoryStep, direction: 'undo' | 'redo', arm: Ref<HistoryStep | null>) {
+    // Both directions are dropped before the step runs, so a step that FAILED would leave the history empty and
+    // the action unreachable for good. What was armed is therefore kept and put back when it does not happen.
+    const armed = { back: back.value, forward: forward.value };
     back.value = null;
     forward.value = null;
     replaying = true;
     try {
       await step[direction]();
+    } catch (error) {
+      back.value = armed.back;
+      forward.value = armed.forward;
+      throw error;
     } finally {
       replaying = false;
     }

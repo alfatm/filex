@@ -38,12 +38,16 @@ import (
 	"github.com/brf-tech/filex/backend/internal/httpx"
 )
 
-// browseSkipNames are filex-internal entries never shown on (or served
-// from) a public share — mirrors streamFolderZip's skip list.
-var browseSkipNames = map[string]bool{
-	".filex-trash": true,
-	".thumbs":      true,
-	".keepdir":     true,
+// shareHidden reports whether one path COMPONENT is never shown on (or served
+// from) a public share: filex's own buckets, through the shared
+// model.IsReservedPath, plus `.keepdir` — a driver's empty-folder marker,
+// which is not one of filex's buckets and so is named separately.
+//
+// The private list this replaces knew two of the four names, which left
+// `.versions/` — a copy of every file any surface has ever replaced — both
+// listed and downloadable through any public link to the folder above it.
+func shareHidden(name string) bool {
+	return model.IsReservedPath(name) || name == ".keepdir"
 }
 
 // cleanShareRel normalizes a client-supplied rel path under the shared
@@ -59,7 +63,7 @@ func cleanShareRel(rel string) (string, bool) {
 		return "", false
 	}
 	for _, seg := range strings.Split(cleaned, "/") {
-		if seg == ".." || browseSkipNames[seg] {
+		if seg == ".." || shareHidden(seg) {
 			return "", false
 		}
 	}
@@ -109,7 +113,7 @@ func (h *Share) renderFolderBrowse(ctx context.Context, w http.ResponseWriter, r
 
 	entries := make([]share.FolderEntry, 0, len(objs))
 	for _, o := range objs {
-		if browseSkipNames[o.Name] {
+		if shareHidden(o.Name) {
 			continue
 		}
 		childRel := o.Name

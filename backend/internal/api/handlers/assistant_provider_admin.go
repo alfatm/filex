@@ -40,7 +40,12 @@ const assistantIsInstanceWide = "the assistant's model provider applies to the w
 const testPrompt = "Reply with the single word OK."
 
 // testTimeout bounds the Test button. An operator is watching the page.
-const testTimeout = 30 * time.Second
+//
+// ⚠ A var only so a test can shorten it; nothing writes it at run time. What it
+// bounds is the diagnosis itself — a provider that never answers has to be
+// reported as one, not as a model that replied with nothing — so the deadline
+// running out must be reachable in a test that finishes in milliseconds.
+var testTimeout = 30 * time.Second
 
 // testAnswerLimit is how much of the reply is quoted back to the operator.
 const testAnswerLimit = 200

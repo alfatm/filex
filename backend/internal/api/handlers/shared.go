@@ -16,6 +16,7 @@ import (
 	"context"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/brf-tech/filex/backend/internal/acl"
 	"github.com/brf-tech/filex/backend/internal/auth"
@@ -89,6 +90,9 @@ func (h *Shared) SharedWithMe(w http.ResponseWriter, r *http.Request) {
 	}
 	var rows []row
 	sharedStorages := []string{}
+	// One user lookup per distinct granter rather than per grant: a folder tree
+	// somebody shared in one go is many rows from the same person.
+	granters := map[int64]string{}
 
 	for _, st := range storages {
 		// (4) tenant gate — before any read that could reveal the storage.
@@ -117,7 +121,7 @@ func (h *Shared) SharedWithMe(w http.ResponseWriter, r *http.Request) {
 			if confined && !root.Within(st.Name, rel) {
 				continue
 			}
-			entry := h.project(r.Context(), st, g, rel)
+			entry := h.project(r.Context(), st, g, rel, granters)
 			rows = append(rows, row{entry: entry, at: g.CreatedAt.UnixMilli()})
 		}
 	}
@@ -155,7 +159,7 @@ func (h *Shared) SharedWithMe(w http.ResponseWriter, r *http.Request) {
 // those would make "shared with me" quietly incomplete for exactly the folder
 // somebody just shared. So an un-indexed grant becomes a synthetic row built
 // from the grant itself: enough to render and to navigate into.
-func (h *Shared) project(ctx context.Context, st *model.Storage, g *model.FileGrant, rel string) map[string]any {
+func (h *Shared) project(ctx context.Context, st *model.Storage, g *model.FileGrant, rel string, granters map[int64]string) map[string]any {
 	var entry map[string]any
 	hash := pathkey.Hash(st.ID, normalizeDBPath(rel))
 	if node, err := h.Store.GetNodeByPath(ctx, st.ID, hash); err == nil && node != nil {
@@ -186,7 +190,36 @@ func (h *Shared) project(ctx context.Context, st *model.Storage, g *model.FileGr
 	entry["perm"] = acl.ParseLevel(g.Level).String()
 	entry["shared"] = true
 	entry["shared_at"] = g.CreatedAt.UnixMilli()
+	// Who shared it, next to when. The date alone left the column with an
+	// initial-less avatar and a dash, and the grant has always known the answer.
+	if g.CreatedBy != nil {
+		entry["shared_by"] = *g.CreatedBy
+		if name := h.granterName(ctx, granters, *g.CreatedBy); name != "" {
+			entry["shared_by_name"] = name
+		}
+	}
 	return entry
+}
+
+// granterName resolves the account that issued a grant to the name the column
+// prints, memoised for the request.
+//
+// The display name ONLY, never the e-mail behind it. The other name lookups in
+// this API fall back to the address when an account has set none, and this is
+// the one listing whose whole purpose is to show one account's details to
+// another: that fallback would hand every recipient of a share the granter's
+// e-mail. An account with no display name is reported by id alone, and the
+// client names it in the reader's own language.
+func (h *Shared) granterName(ctx context.Context, cache map[int64]string, id int64) string {
+	if name, looked := cache[id]; looked {
+		return name
+	}
+	name := ""
+	if u, err := h.Store.GetUser(ctx, id); err == nil && u != nil {
+		name = strings.TrimSpace(u.DisplayName)
+	}
+	cache[id] = name
+	return name
 }
 
 // attachStorageNames fills each node's Storage with the name of the storage

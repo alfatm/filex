@@ -1,8 +1,38 @@
 import { defineConfig, devices } from '@playwright/test';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
+const APP_DIR = path.resolve(E2E_DIR, '../app');
+
+/**
+ * ⚠ This suite needs a directory that is NOT in this repository.
+ *
+ * The mock dataset (`app/src/data/mock/tree.json`) describes a real tree of demo files that lives in a SIBLING
+ * repository, `drive-demo-assets`; `app/vite.config.ts` serves it under `/app/demo-assets/` and only warns when it
+ * is absent. That warning scrolls past in the Vite output and the suite then fails much later and elsewhere: ~7
+ * functional tests (preview, download, thumbnails) and all 15 visual baselines go red with "expected 2 links, got
+ * 0", "screenshot comparison failed" and other messages that say nothing about a missing checkout.
+ *
+ * So it is checked HERE, before a browser is started, and the resolution rule is copied from vite.config.ts
+ * verbatim (`DEMO_ASSETS_DIR`, else `../../drive-demo-assets/demo` relative to `app/`) — the two must agree or the
+ * check would pass for a directory the dev server never reads. app/docs/DEMO-ASSETS.md has the full story.
+ */
+const DEMO_ASSETS_DIR = path.resolve(APP_DIR, process.env.DEMO_ASSETS_DIR ?? '../../drive-demo-assets/demo');
+if (!existsSync(DEMO_ASSETS_DIR)) {
+  throw new Error(
+    `the app e2e suite needs the demo assets, and there is nothing at:\n  ${DEMO_ASSETS_DIR}\n\n` +
+      `They are not part of this repository. Either:\n` +
+      `  • clone the sibling repo next to this checkout, so the default path resolves:\n` +
+      `      git clone <drive-demo-assets> ${path.resolve(APP_DIR, '../..')}/drive-demo-assets\n` +
+      `  • or point at a copy you already have:\n` +
+      `      DEMO_ASSETS_DIR=/path/to/demo pnpm --filter filex-e2e test:app\n\n` +
+      `Without them the mock repository still lists its 142 nodes, but every file's bytes 404: previews, ` +
+      `downloads and thumbnails have nothing to show and all 15 visual baselines mismatch. See ` +
+      `app/docs/DEMO-ASSETS.md.`,
+  );
+}
 
 /**
  * Playwright config for the END-USER SPA (`app/`, served at /app/).

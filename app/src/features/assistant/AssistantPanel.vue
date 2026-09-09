@@ -8,11 +8,13 @@ import type { ApprovalCard, AssistantMode, PlanCard } from '@/data/types';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
 import { useSearchStore } from '@/features/search/searchStore';
+import { useSettingsStore } from '@/features/settings/settingsStore';
 import { useToastStore } from '@/stores/toast';
 import { Avatar, Button, IconButton, SidePanel } from '@/ui';
 import Modal from '@/ui/Modal.vue';
 import { ASSISTANT_MODES, useAssistantStore } from './assistantStore';
 import { plainAnswer } from './answer';
+import { ASSISTANT_TOOLS } from './tools';
 import { pageContext } from './context';
 import { planText } from './plan';
 import AnswerText from './AnswerText.vue';
@@ -30,7 +32,17 @@ const files = useFilesStore();
 const view = useViewStore();
 const search = useSearchStore();
 const assistant = useAssistantStore();
+const settings = useSettingsStore();
 const toast = useToastStore();
+
+/**
+ * This browser's own switch (User settings → AI assistant). It is not the same question as the server's: an
+ * installation with no provider reports no assistant at all and the panel is never offered, while THIS decides
+ * whether the person wants it while it is on offer. Off means the panel closes, and stays closed.
+ */
+watch(() => settings.settings.assistantEnabled, (on) => {
+  if (!on) emit('close');
+}, { immediate: true });
 
 const MODE_ICONS = { filename: File, content: Search, tags: Tag } satisfies Record<AssistantMode, Component>;
 /** Auto-scroll follows the stream only while the reader is this close to the end. */
@@ -65,9 +77,6 @@ async function openSession(id: string) {
   showSessions.value = false;
 }
 
-/** The tools the panel has words for; anything else shows its bare name rather than a missing-translation key. */
-const KNOWN_TOOLS = ['list_storages', 'list_folder', 'search_files', 'read_file', 'read_image_text', 'view_image', 'write_report'] as const;
-
 /**
  * What the assistant is doing right now, in words, while it does it — and "Thinking…" from the question until the
  * first word or tool, which used to be a blank: the model's first token can be many seconds away, and a panel that
@@ -76,7 +85,8 @@ const KNOWN_TOOLS = ['list_storages', 'list_folder', 'search_files', 'read_file'
 const activityLabel = computed(() => {
   const running = assistant.activity;
   if (running) {
-    const name = (KNOWN_TOOLS as readonly string[]).includes(running.tool) ? t(`assistant.tools.${running.tool}`) : running.tool;
+    // A tool from a newer server shows its bare name rather than a missing-translation key.
+    const name = (ASSISTANT_TOOLS as readonly string[]).includes(running.tool) ? t(`assistant.tools.${running.tool}`) : running.tool;
     return running.target ? `${name} ${running.target}` : name;
   }
   // Standing at a permission card is not thinking: the card, with its buttons, is what is happening.
@@ -258,7 +268,7 @@ onBeforeUnmount(() => {
                 <div v-if="card.status === 'pending'" class="mt-3 flex flex-wrap gap-[10px]">
                   <button
                     type="button"
-                    :disabled="!canSend"
+                    :disabled="!canSend || assistant.isDeciding(card)"
                     class="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-14 font-medium leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
                     @click="decidePlan(card, true)"
                   >
@@ -267,7 +277,7 @@ onBeforeUnmount(() => {
                   </button>
                   <button
                     type="button"
-                    :disabled="!canSend"
+                    :disabled="!canSend || assistant.isDeciding(card)"
                     class="inline-flex h-10 items-center rounded-full border border-border bg-bg px-5 text-14 font-medium leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
                     @click="decidePlan(card, false)"
                   >
@@ -275,6 +285,7 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
                 <p v-else-if="card.status === 'cancelled'" class="mt-3 text-13 leading-none text-text-3">{{ t('assistant.plan.cancelled') }}</p>
+                <p v-if="assistant.decisionErrorOf(card)" class="mt-2 text-13 leading-snug text-danger" role="alert">{{ assistant.decisionErrorOf(card) }}</p>
               </div>
 
               <div v-else class="rounded-xl border border-border p-4">
@@ -292,7 +303,7 @@ onBeforeUnmount(() => {
               <div v-else class="mt-3 flex flex-wrap gap-[10px]">
                 <button
                   type="button"
-                  :disabled="!online"
+                  :disabled="!online || assistant.isDeciding(card)"
                   class="inline-flex h-9 items-center rounded-full bg-primary px-4 text-14 leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
                   @click="assistant.decideRead(card, true)"
                 >
@@ -300,13 +311,14 @@ onBeforeUnmount(() => {
                 </button>
                 <button
                   type="button"
-                  :disabled="!online"
+                  :disabled="!online || assistant.isDeciding(card)"
                   class="inline-flex h-9 items-center rounded-full border border-border px-4 text-14 leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
                   @click="assistant.decideRead(card, false)"
                 >
                   {{ t('assistant.card.deny') }}
                 </button>
               </div>
+              <p v-if="assistant.decisionErrorOf(card)" class="mt-2 text-13 leading-snug text-danger" role="alert">{{ assistant.decisionErrorOf(card) }}</p>
               </div>
             </template>
           </div>
@@ -374,8 +386,8 @@ onBeforeUnmount(() => {
     <PlanDetails :card="expanded" list-class="max-h-[60vh]" />
     <p v-if="expanded.status === 'cancelled'" class="mt-3 text-13 leading-none text-text-3">{{ t('assistant.plan.cancelled') }}</p>
     <template v-if="expanded.status === 'pending'" #footer>
-      <Button variant="outline" :disabled="!canSend" @click="decidePlan(expanded, false)">{{ t('assistant.plan.refuse') }}</Button>
-      <Button :disabled="!canSend" class="disabled:opacity-60" @click="decidePlan(expanded, true)">{{ t('assistant.plan.approve') }}</Button>
+      <Button variant="outline" :disabled="!canSend || assistant.isDeciding(expanded)" @click="decidePlan(expanded, false)">{{ t('assistant.plan.refuse') }}</Button>
+      <Button :disabled="!canSend || assistant.isDeciding(expanded)" class="disabled:opacity-60" @click="decidePlan(expanded, true)">{{ t('assistant.plan.approve') }}</Button>
     </template>
   </Modal>
 </template>

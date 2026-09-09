@@ -12,8 +12,10 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/color"
 	"image/png"
@@ -794,4 +796,88 @@ func TestAssistantTurn_SearchPageContextNamesTheSearch(t *testing.T) {
 
 	sent := provider.sent()
 	assert.Contains(t, sent, `Search: query \"invoice\"; settings: type: documents; modified: week; more than 120 results; the first results shown: main://notes/hello.txt, main://notes/pay.csv`)
+}
+
+// ⚠⚠ A picture is refused on its DECLARED size, before it is decoded.
+//
+// image.Decode builds the whole uncompressed frame first and scales it
+// afterwards, and compression makes the file size say nothing about that
+// frame: a PNG well under the 8 MiB a read is capped at can declare a canvas
+// of tens of thousands of pixels a side and cost gigabytes to open. Any
+// account could put one in its own drive and ask the assistant to look at it.
+func TestAssistantTools_ViewImageRefusesAPictureTooLargeToDecode(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "view_image", map[string]any{"path": "main://notes/bomb.png", "reason": "to say what it shows"}),
+		textFrame("It is too large to look at."),
+	)
+	srv, client, store := assistantFiles(t, provider)
+	bomb := declaredSizePNG(t, 8000, 6000)
+	assert.Less(t, len(bomb), 1024, "the whole point is that the file is tiny and the frame is not")
+	addFile(t, store, "/notes/bomb.png", bomb)
+	session := newSession(t, srv, client)
+	st, raw := doReq(t, client, http.MethodPost, srv.URL+"/api/assistant/sessions/"+session+"/approvals", map[string]any{"path": "main://notes/bomb.png"})
+	require.Equal(t, http.StatusOK, st, "approve: %s", raw)
+
+	events := turnStream(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", "what is in bomb.png?")
+	// A tool result the model reads and relays, not a failed request.
+	assert.Empty(t, eventsOfType(events, "error"))
+	assert.Equal(t, "It is too large to look at.", answerText(events))
+	sent := provider.sent()
+	assert.Contains(t, sent, "8000×6000", "the refusal names the size it read out of the header")
+	assert.Contains(t, sent, "past the 40 megapixels this can open")
+	assert.NotContains(t, sent, `"type":"image_url"`, "and nothing was decoded, so nothing was attached")
+}
+
+// declaredSizePNG builds a PNG whose HEADER claims w×h while its data is one
+// pixel. Only the IHDR is patched, which is the whole trick being defended
+// against: the size a decoder allocates for is the size the file CLAIMS.
+func declaredSizePNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 1, 1))))
+	raw := buf.Bytes()
+	// 8 bytes of signature, then the IHDR chunk: 4 length, 4 type, then width
+	// and height, and a CRC over type+data at the end of its 13 data bytes.
+	require.Greater(t, len(raw), 33)
+	binary.BigEndian.PutUint32(raw[16:20], uint32(w))
+	binary.BigEndian.PutUint32(raw[20:24], uint32(h))
+	binary.BigEndian.PutUint32(raw[29:33], crc32.ChecksumIEEE(raw[12:29]))
+	return raw
+}
+
+// A file whose NAME contains one of filex's bucket names as a substring.
+//
+// aiOps.List — the chokepoint every assistant listing goes through — dropped
+// entries with `strings.Contains(path, ".thumbs")`, so `my.thumbsup.png` never
+// reached the model and nothing said it had been dropped: the person asks about
+// a file that is right there and is told it does not exist. The listing tools
+// already test whole components (model.IsReservedPath); this is the layer under
+// them, which did not.
+func TestAssistantTools_ListsAFileNamedLikeOneOfFilexsOwnBuckets(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "list_folder", map[string]any{"path": "main://notes"}),
+		textFrame("There are three files in notes."),
+	)
+	srv, client, store := assistantFiles(t, provider)
+	ctx := context.Background()
+
+	storages, err := store.ListEnabledStorages(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, storages)
+	var cfg struct {
+		Root string `json:"root"`
+	}
+	require.NoError(t, json.Unmarshal(storages[0].ConfigJSON, &cfg))
+	require.NoError(t, os.WriteFile(filepath.Join(cfg.Root, "notes", "my.thumbsup.png"), []byte("not a bucket"), 0o644))
+	// And the real bucket beside it, so this is not "the filter was removed".
+	require.NoError(t, os.MkdirAll(filepath.Join(cfg.Root, "notes", ".thumbs"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cfg.Root, "notes", ".thumbs", "cache.jpg"), []byte("x"), 0o644))
+
+	session := newSession(t, srv, client)
+	turnStream(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", "what is in notes?")
+
+	sent := provider.sent()
+	assert.Contains(t, sent, "my.thumbsup.png", "a person's file is not one of filex's buckets")
+	assert.NotContains(t, sent, ".thumbs\\\"", "the bucket itself stays hidden")
+	assert.NotContains(t, sent, "cache.jpg")
 }

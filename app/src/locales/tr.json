@@ -76,7 +76,7 @@
     }
   },
   "trash": {
-    "banner": "Çöp kutusundaki öğeler 30 gün sonra kalıcı olarak silinir",
+    "banner": "Çöp kutusundaki öğeler {days} gün sonra kalıcı olarak silinir",
     "empty": "Çöp kutusunu boşalt"
   },
   "modal": {
@@ -97,8 +97,8 @@
     "delete": {
       "trash": {
         "title": "Çöp kutusuna taşınsın mı?",
-        "bodyOne": "“{name}” çöp kutusuna taşınacak. 30 gün içinde geri yükleyebilirsiniz.",
-        "bodyMany": "{count} öğe çöp kutusuna taşınacak. 30 gün içinde geri yükleyebilirsiniz.",
+        "bodyOne": "“{name}” çöp kutusuna taşınacak. Kalıcı olarak silinene kadar çöp kutusundan geri yükleyebilirsiniz.",
+        "bodyMany": "{count} öğe çöp kutusuna taşınacak. Kalıcı olarak silinene kadar çöp kutusundan geri yükleyebilirsiniz.",
         "confirm": "Çöp kutusuna taşı"
       },
       "forever": {
@@ -144,8 +144,7 @@
     },
     "versions": {
       "title": "Sürüm geçmişi",
-      "hint": "“{name}” dosyasının kayıtlı tüm sürümleri.",
-      "current": "Geçerli",
+      "hint": "“{name}” dosyasının her değişiklikten önce kaydedilen eski içerikleri.",
       "by": "{name} • {size}",
       "restore": "Geri yükle",
       "restored": "{date} tarihli sürüm geri yüklendi",
@@ -166,6 +165,8 @@
   "toast": {
     "close": "Kapat",
     "undo": "Geri al",
+    "undoFailed": "Son işlem geri alınamadı",
+    "redoFailed": "Son işlem yinelenemedi",
     "movedToTrashOne": "“{name}” çöp kutusuna taşındı",
     "movedToTrashMany": "{count} öğe çöp kutusuna taşındı",
     "restoredOne": "“{name}” geri yüklendi",
@@ -197,7 +198,15 @@
     "wrongFile": "Bu farklı bir dosya. Devam etmek için aynısını seçin.",
     "cancelItem": "{name} yüklemesini iptal et",
     "cancelled": "İptal edildi",
-    "close": "Kapat"
+    "close": "Kapat",
+    "waiting": "Sırada",
+    "conflictAsk": "“{name}” bu klasörde zaten var.",
+    "replace": "Değiştir",
+    "keepBoth": "İkisini de sakla",
+    "skip": "Atla",
+    "skipped": "Atlandı — bu ad bu klasörde zaten var.",
+    "folderDropped": "“{name}” bir klasör; sürükleyip bırakma klasör taşımaz. Yeni → Klasör yükle kullanın. | {count} klasör atlandı; sürükleyip bırakma klasör taşımaz. Yeni → Klasör yükle kullanın.",
+    "defaultFolderGone": "Varsayılan yükleme klasörünüz bulunamadı; bunun yerine “{folder}” klasörüne yükleniyor."
   },
   "topbar": {
     "searchPlaceholder": "{storage} içinde ara…",
@@ -228,6 +237,7 @@
     "selectItem": "{name} öğesini seç",
     "emptyHint": "Bu klasöre eklediğiniz dosyalar burada görünür",
     "sharedBy": "Paylaşan",
+    "sharedByUnknown": "Bir kişi",
     "sharedOn": "Paylaşım tarihi",
     "deleted": "Silinme tarihi",
     "originalPath": "Özgün konum",
@@ -286,6 +296,7 @@
     "peopleWithAccess": "Erişimi olan kişiler",
     "sharedLink": "Paylaşım bağlantısı",
     "notShared": "Paylaşılmadı",
+    "shareUnknown": "Bağlantı durumu okunamadı",
     "createLink": "Bağlantı oluştur",
     "copy": "Bağlantıyı kopyala",
     "remove": "Kaldır",
@@ -360,11 +371,11 @@
       "tags": "Etiketler"
     },
     "searchIn": "Şurada ara",
-    "searchInHelp": "Açık klasörde, tüm depolarda veya yalnızca sizinle paylaşılan dosyalarda arayın.",
+    "searchInHelp": "Açık klasörde, tüm depolarda veya yalnızca bağlantı yayımladığınız dosyalarda arayın.",
     "in": {
       "current": "Geçerli klasör: {folder}",
       "all": "Tüm depolar",
-      "shared": "Paylaşılan dosyalar"
+      "shared": "Paylaştığınız dosyalar"
     },
     "modified": "Değiştirilme",
     "modifiedOptions": {
@@ -415,6 +426,7 @@
     "search": "Ara",
     "resultsTitle": "Arama sonuçları",
     "noResults": "Sonuç yok",
+    "failed": "Arama başarısız oldu",
     "colName": "Ad",
     "colPath": "Yol",
     "colMatch": "Eşleşme",
@@ -445,7 +457,10 @@
       "failed": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
       "quota": "Asistan sağlayıcısının hesabında kredi kalmadı. Yöneticiden bakiye yüklemesini isteyin.",
       "unavailable": "Asistan artık kullanılamıyor: kapatıldı ya da sağlayıcısı yanıt vermeyi bıraktı.",
-      "timeout": "Bir dakika boyunca yanıt gelmedi, istek bırakıldı. Tekrar deneyin."
+      "timeout": "Bir dakika boyunca yanıt gelmedi, istek bırakıldı. Tekrar deneyin.",
+      "busy": "Asistan meşgul: başka bir sorunuz hâlâ yanıtlanıyor ya da bu dakika içinde çok fazla soru sordunuz. Biraz bekleyip tekrar sorun.",
+      "answering": "Önceki sorunuz hâlâ yanıtlanıyor — o yanıtı bekleyin, sonra tekrar sorun.",
+      "rateLimited": "Son bir dakikada çok fazla soru sordunuz. Biraz bekleyip tekrar sorun."
     },
     "thinking": "Düşünüyorum…",
     "stopped": "Durduruldu",
@@ -478,6 +493,15 @@
       "list_storages": "Sürücülere bakılıyor",
       "list_folder": "Klasöre bakılıyor:",
       "search_files": "Aranıyor:",
+      "list_versions": "Sürümlerine bakılıyor:",
+      "list_shares": "Bağlantılarına bakılıyor:",
+      "list_trash": "Çöp kutusuna bakılıyor",
+      "plan_tags": "Etiketleme planı hazırlanıyor",
+      "plan_restore_version": "Sürüm geri yükleme planı hazırlanıyor:",
+      "plan_create_share": "Bağlantı oluşturma planı hazırlanıyor:",
+      "plan_revoke_share": "Bağlantıyı kapatma planı hazırlanıyor:",
+      "plan_move": "Taşıma planı hazırlanıyor, hedef:",
+      "plan_empty_trash": "Çöp kutusunu boşaltma planı hazırlanıyor",
       "read_file": "Okunuyor:",
       "read_image_text": "Metni okunuyor:",
       "view_image": "Bakılıyor:",
@@ -636,15 +660,21 @@
       "hint": "AI asistanın sizin için nasıl davranacağı.",
       "enabled": "AI asistanı etkinleştir",
       "defaultMode": "Varsayılan arama modu",
+      "defaultModeHint": "Yeni bir sohbetin başladığı mod; paneldeki seçenekler onu o sohbet için değiştirir.",
       "providerNote": "Model ve API anahtarı yöneticiniz tarafından yapılandırılır."
     },
     "saveFailed": "Profiliniz kaydedilemedi."
   },
   "error": {
     "retry": "Yeniden dene",
+    "unexpected": "Bir şeyler ters gitti",
     "notFound": {
       "title": "Klasör bulunamadı",
       "hint": "Yeniden adlandırılmış, taşınmış veya silinmiş olabilir"
+    },
+    "noSuchPage": {
+      "title": "Sayfa bulunamadı",
+      "hint": "Bağlantı eski olabilir ya da adres yanlış yazılmış olabilir"
     },
     "load": {
       "title": "Liste yüklenemedi",
@@ -667,6 +697,9 @@
     "taggingOne": "“{name}” etiketleri kaydediliyor",
     "taggingMany": "Etiketler kaydediliyor",
     "emptying": "Çöp kutusu boşaltılıyor",
+    "sharing": "Bağlantı oluşturuluyor",
+    "unsharing": "Bağlantı kaldırılıyor",
+    "uploading": "Yükleme hazırlanıyor",
     "title": "Sürüyor",
     "failed": "{n} işlem başarısız | {n} işlem başarısız",
     "pending": "Sunucuda hâlâ sürüyor — sonucu görmek için listeyi yenileyin",

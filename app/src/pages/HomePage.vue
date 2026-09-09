@@ -2,7 +2,7 @@
 import { onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink } from 'vue-router';
-import { Clock, HardDrive, Info, Star } from 'lucide-vue-next';
+import { AlertTriangle, Clock, HardDrive, Info, Star } from 'lucide-vue-next';
 import { repository } from '@/data';
 import type { Node } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
@@ -11,7 +11,7 @@ import { useListingKeyboard } from '@/features/files/useListingKeyboard';
 import { filesRoute } from '@/lib/path';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
-import { IconButton, ProgressBar } from '@/ui';
+import { Button, IconButton, ProgressBar } from '@/ui';
 import DetailsPanel from './files/DetailsPanel.vue';
 import EmptyState from './files/EmptyState.vue';
 import FileCard from './files/FileCard.vue';
@@ -29,9 +29,25 @@ const { onMainClick } = useListingKeyboard();
 
 const recent = ref<Node[]>([]);
 const starred = ref<Node[]>([]);
+/**
+ * The lists never arrived. It is a state of its own for the same reason `files.bootstrap` has one: "No recent
+ * files" is a sentence about an account, and drawing it because nobody answered says something untrue.
+ */
+const failed = ref(false);
 
 async function load() {
-  [recent.value, starred.value] = await Promise.all([repository.listRecent(), repository.listStarred()]);
+  let lists: [Node[], Node[]];
+  try {
+    lists = await Promise.all([repository.listRecent(), repository.listStarred()]);
+  } catch {
+    failed.value = true;
+    recent.value = [];
+    starred.value = [];
+    files.items = [];
+    return;
+  }
+  failed.value = false;
+  [recent.value, starred.value] = lists;
   recent.value = recent.value.slice(0, RECENT_COUNT);
   // The store resolves selected ids against its own list, so Home hands it the nodes it shows — without that the
   // click selects an id that resolves to nothing and the details panel has no node. A node can be both recent and
@@ -91,35 +107,16 @@ watch(() => files.revision, load);
       </div>
     </template>
 
-    <h2 class="mt-[40px] text-17 font-semibold leading-[26px]">{{ t('home.recent') }}</h2>
-    <div v-if="recent.length" role="listbox" :aria-label="t('home.recent')" class="mt-1 grid gap-[14px]" style="grid-template-columns: repeat(auto-fill, 236px)">
-      <FileCard
-        v-for="node in recent"
-        :key="node.id"
-        :node="node"
-        :selected="files.isSelected(node.id)"
-        :focused="files.cursorId === node.id"
-        @click="files.selectFromEvent(node.id, $event)"
-        @dblclick="actions.open(node)"
-        @focus="files.focusedId = node.id"
-      />
-    </div>
-    <EmptyState v-else :icon="Clock" :title="t('empty.recent.title')" :hint="t('empty.recent.hint')" class="!py-10" />
+    <EmptyState v-if="failed" class="mt-24" :icon="AlertTriangle" :title="t('error.load.title')" :hint="t('error.load.hint')">
+      <Button variant="outline" @click="load()">{{ t('error.retry') }}</Button>
+    </EmptyState>
 
-    <h2 class="mt-[40px] text-17 font-semibold leading-[26px]">{{ t('home.starred') }}</h2>
-    <div v-if="starred.length" role="listbox" :aria-label="t('home.starred')" class="mt-1 grid gap-[14px]" style="grid-template-columns: repeat(auto-fill, 236px)">
-      <template v-for="node in starred" :key="node.id">
-        <FolderCard
-          v-if="node.kind === 'folder'"
-          :node="node"
-          :selected="files.isSelected(node.id)"
-          :focused="files.cursorId === node.id"
-          @click="files.selectFromEvent(node.id, $event)"
-          @dblclick="actions.open(node)"
-          @focus="files.focusedId = node.id"
-        />
+    <template v-else>
+      <h2 class="mt-[40px] text-17 font-semibold leading-[26px]">{{ t('home.recent') }}</h2>
+      <div v-if="recent.length" role="listbox" :aria-label="t('home.recent')" class="mt-1 grid gap-[14px]" style="grid-template-columns: repeat(auto-fill, 236px)">
         <FileCard
-          v-else
+          v-for="node in recent"
+          :key="node.id"
           :node="node"
           :selected="files.isSelected(node.id)"
           :focused="files.cursorId === node.id"
@@ -127,9 +124,34 @@ watch(() => files.revision, load);
           @dblclick="actions.open(node)"
           @focus="files.focusedId = node.id"
         />
-      </template>
-    </div>
-    <EmptyState v-else :icon="Star" :title="t('empty.starred.title')" :hint="t('empty.starred.hint')" class="!py-10" />
+      </div>
+      <EmptyState v-else :icon="Clock" :title="t('empty.recent.title')" :hint="t('empty.recent.hint')" class="!py-10" />
+
+      <h2 class="mt-[40px] text-17 font-semibold leading-[26px]">{{ t('home.starred') }}</h2>
+      <div v-if="starred.length" role="listbox" :aria-label="t('home.starred')" class="mt-1 grid gap-[14px]" style="grid-template-columns: repeat(auto-fill, 236px)">
+        <template v-for="node in starred" :key="node.id">
+          <FolderCard
+            v-if="node.kind === 'folder'"
+            :node="node"
+            :selected="files.isSelected(node.id)"
+            :focused="files.cursorId === node.id"
+            @click="files.selectFromEvent(node.id, $event)"
+            @dblclick="actions.open(node)"
+            @focus="files.focusedId = node.id"
+          />
+          <FileCard
+            v-else
+            :node="node"
+            :selected="files.isSelected(node.id)"
+            :focused="files.cursorId === node.id"
+            @click="files.selectFromEvent(node.id, $event)"
+            @dblclick="actions.open(node)"
+            @focus="files.focusedId = node.id"
+          />
+        </template>
+      </div>
+      <EmptyState v-else :icon="Star" :title="t('empty.starred.title')" :hint="t('empty.starred.hint')" class="!py-10" />
+    </template>
   </main>
 
   <!-- Home has no folder of its own, so the panel appears only once a card is picked. -->

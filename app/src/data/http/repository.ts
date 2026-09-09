@@ -2,6 +2,8 @@ import { DUPLICATE_NAME, OPERATION_PENDING, WRONG_PASSWORD, type Repository } fr
 import { matchesFilter, MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
 import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantContext, type AssistantConversation, type AssistantMode, type AssistantReport, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type Branding, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
+import { i18n } from '@/i18n';
+import { isInside, joinPath, nameOf, parentPath, splitPath } from '@/lib/address';
 import { HttpError, putChunk, request, streamJSON } from './client';
 import {
   fromFileNode,
@@ -9,11 +11,7 @@ import {
   fromModelNode,
   fromSnippet,
   fromTrashEntry,
-  joinPath,
-  nameOf,
-  parentPath,
   SELF,
-  splitPath,
   toQuota,
   toStorage,
   type WireFileNode,
@@ -35,6 +33,7 @@ import {
   fromAssistantHit,
   type WireAssistantHit,
   previewUrl,
+  downloadUrl,
 } from './map';
 
 /**
@@ -71,15 +70,9 @@ const POLL_MAX_MS = 2000;
  */
 const POLL_GIVE_UP_MS = 60_000;
 
-/**
- * Staged uploads (docs/UPLOADS.md): `begin` opens a session, each `PUT` carries one chunk and answers with the
- * offset the server now holds, `commit` turns the staging area into a node. The chunk size the server hands back
- * is binding; this is only what to ask for, and what to fall back on if it says nothing.
- *
- * 1 MiB rather than the server's 8 MiB default, because the chunk is also the resolution of the progress bar and
- * the unit a failure costs: at 8 MiB most documents would be one chunk, and their bar would only ever read 0 or
- * 100. The extra round trips are cheap next to the bytes they carry.
- */
+/** What filex ships with (`model.MaxAssistantSessions`), used only until the first session listing states its own. */
+const DEFAULT_ASSISTANT_SESSION_MAX = 100;
+
 const NOTIFY_SETTINGS = '/api/notifications/settings';
 const ASSISTANT_SESSIONS = '/api/assistant/sessions';
 const ASSISTANT_STATUS = '/api/assistant/status';
@@ -207,6 +200,15 @@ interface WireBranding {
 }
 
 const UPLOAD = '/api/files/upload';
+/**
+ * Staged uploads (docs/UPLOADS.md): `begin` opens a session, each `PUT` carries one chunk and answers with the
+ * offset the server now holds, `commit` turns the staging area into a node. The chunk size the server hands back
+ * is binding; this is only what to ask for, and what to fall back on if it says nothing.
+ *
+ * 1 MiB rather than the server's 8 MiB default, because the chunk is also the resolution of the progress bar and
+ * the unit a failure costs: at 8 MiB most documents would be one chunk, and their bar would only ever read 0 or
+ * 100. The extra round trips are cheap next to the bytes they carry.
+ */
 const CHUNK_BYTES = 1024 * 1024;
 
 /** How many rows the metadata listings return; filex caps starred at 500 and recent at 200. */
@@ -222,7 +224,6 @@ const TRASH_LIMIT = 500;
 const SHARED_LIMIT = 500;
 const SEARCH_LIMIT = 100;
 
-/** filex answers a name collision with 409 on every write verb; the modals expect the shared error. */
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SIZE_UNIT_BYTES = { KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3 } as const;
 
@@ -301,13 +302,43 @@ function listingFacets(filter?: ListingFilter): Record<string, string | number |
   return out;
 }
 
+/**
+ * Who shared a row and when, as the Shared-with-me columns print them.
+ *
+ * The display NAME only. filex withholds the granter's e-mail on purpose — this is the one listing whose whole
+ * purpose is to show one account's details to another — so an account that has set no name is a neutral
+ * placeholder here rather than the address it signs in with.
+ */
+function granter(wire: WireFileNode | undefined): Pick<Node, 'sharedBy' | 'sharedAt'> {
+  if (!wire) return {};
+  return {
+    ...(wire.shared_by === undefined ? {} : { sharedBy: wire.shared_by_name || i18n.global.t('files.sharedByUnknown') }),
+    ...(wire.shared_at === undefined ? {} : { sharedAt: new Date(wire.shared_at).toISOString() }),
+  };
+}
+
+/**
+ * `SearchScope` → `search.ParseScope`. "All" is the server's default, so it is sent as nothing at all; `paths` is
+ * the server's alias of the name scope (a name plus the whole address, never the contents), and `tags` is answered
+ * from `node_meta` rather than from the index.
+ */
+const SEARCH_SCOPES_WIRE: Record<SearchQuery['scope'], string> = { all: '', content: 'content', paths: 'path', tags: 'tags' };
+
 /** The text as one phrase, with any quotes of its own removed — a stray one would make the whole form unreadable. */
 function quoted(text: string): string {
   const inner = text.replaceAll('"', ' ').trim();
   return inner ? `"${inner}"` : '';
 }
 
-function asRepositoryError(error: unknown): never {
+/**
+ * The 409 that really is a taken name, and only that.
+ *
+ * filex answers 409 on more than a collision — a move that crosses an encryption boundary, a staged upload whose
+ * session is no longer in the state the call assumes — and every one of those used to reach the user as "a file
+ * with this name already exists", which is a sentence about the wrong thing. So the translation belongs to the two
+ * verbs where a 409 has one meaning: creating a folder and renaming. Everything else keeps the server's own error.
+ */
+function asDuplicateName(error: unknown): never {
   if (error instanceof HttpError && error.status === 409) throw new Error(DUPLICATE_NAME);
   throw error;
 }
@@ -435,6 +466,8 @@ export class HttpRepository implements Repository {
   private readonly trashed = new Map<string, number>();
   private storages: Storage[] | null = null;
   private user: User | null = null;
+  /** The conversation ceiling the last session listing reported; see `assistantSessionMax`. */
+  private assistantMax = DEFAULT_ASSISTANT_SESSION_MAX;
 
   private remember(path: string, id: number): void {
     this.ids.set(path, id);
@@ -448,6 +481,28 @@ export class HttpRepository implements Repository {
     const id = this.ids.get(path);
     if (id === undefined) throw new Error(`no node id known for ${path}`);
     return id;
+  }
+
+  /**
+   * Forgets a node's number AND every number remembered under it.
+   *
+   * An address is a path, so a folder that was renamed, moved or trashed took its whole subtree with it. Dropping
+   * only the folder's own entry left the children filed under addresses nothing lives at any more — and the next
+   * star, tag or version call for one of those paths would send the number of a node that is now somewhere else.
+   */
+  private forget(path: string): void {
+    this.ids.delete(path);
+    for (const known of [...this.ids.keys()]) {
+      if (isInside(known, path)) this.ids.delete(known);
+    }
+  }
+
+  /**
+   * Drops the cached drive list. It carries what each drive HOLDS, so every byte written or freed makes it wrong:
+   * cached for the session, the quota bar in the sidebar and on the drive cards never moved again after start-up.
+   */
+  private forgetStorages(): void {
+    this.storages = null;
   }
 
   private project(rows: WireFileNode[]): Node[] {
@@ -571,9 +626,12 @@ export class HttpRepository implements Repository {
     return this.user;
   }
 
-  /** filex checks the old password itself and answers 401 when it is wrong; every other status is a real failure. */
   previewUrl(id: string): string | undefined {
     return previewUrl(id);
+  }
+
+  downloadUrl(id: string): string | undefined {
+    return downloadUrl(id);
   }
 
   archiveUrl(nodes: Node[]): string | null {
@@ -624,6 +682,7 @@ export class HttpRepository implements Repository {
     await request(`/api/auth/sessions/${id}`, { method: 'DELETE' });
   }
 
+  /** filex checks the old password itself and answers 401 when it is wrong; every other status is a real failure. */
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
     try {
       await request('/api/auth/password', { method: 'POST', body: { old_password: currentPassword, new_password: newPassword } });
@@ -635,8 +694,9 @@ export class HttpRepository implements Repository {
 
   /**
    * filex reports what the STORAGE DRIVERS can do; the rest of the block names features it has endpoints for but
-   * does not advertise. Two are deliberately off: emptying the trash and deleting for good are admin-only routes
-   * (`/api/admin/trash`), and there is no assistant or per-node activity feed at all — see docs/BACKEND-GAP.md.
+   * does not advertise — zipping a subtree, purging the trash, the per-node activity feed, tags, permissions and
+   * the connection screens are filex's own work rather than a driver's, and each is noted below. The assistant is
+   * the one that is asked about rather than assumed: `/api/assistant/status` says whether this install has one.
    */
   async capabilities(): Promise<Capabilities> {
     const [wire, assistant] = await Promise.all([request<WireCapabilities>('/api/files/capabilities'), this.assistantEnabled()]);
@@ -790,8 +850,8 @@ export class HttpRepository implements Repository {
     const { nodes } = await request<{ nodes: WireNode[] }>(`${MANAGER}/recent`, {
       query: { limit: RECENT_LIMIT, ...listingFacets(filter) },
     });
-    // The endpoint answers newest-opened first; `openedAt` is what the Recent page sorts on, and filex reports the
-    // order without the timestamp, so the order is preserved and the field left unset.
+    // The endpoint answers newest-opened first and now dates each row with `opened_at`, which `fromModelNode` reads
+    // into `openedAt` — the field the page sorts and makes its day groups from.
     const files = this.projectModel(nodes).filter((n) => n.kind === 'file');
     return this.withStars(files);
   }
@@ -811,7 +871,9 @@ export class HttpRepository implements Repository {
    */
   async listShared(filter?: ListingFilter): Promise<Node[]> {
     const { files } = await request<{ files: WireFileNode[] }>(`${MANAGER}/shared-with-me`, { query: { limit: SHARED_LIMIT } });
-    const shared = this.project(files).map((n) => ({ ...n, shared: true }));
+    // A row's address is its identity, which is how the grant's own fields find their node again after projection.
+    const grants = new Map(files.map((row) => [row.path, row] as const));
+    const shared = this.project(files).map((n) => ({ ...n, shared: true, ...granter(grants.get(n.id)) }));
     return HttpRepository.narrow(shared, filter);
   }
 
@@ -831,7 +893,7 @@ export class HttpRepository implements Repository {
   // ── mutations ───────────────────────────────────────────────────────────────
 
   async createFolder(parentId: string, name: string): Promise<Node> {
-    await request(MANAGER, { method: 'POST', query: { q: 'newfolder' }, body: { path: parentId, name } }).catch(asRepositoryError);
+    await request(MANAGER, { method: 'POST', query: { q: 'newfolder' }, body: { path: parentId, name } }).catch(asDuplicateName);
     return this.getNode(childPath(parentId, name));
   }
 
@@ -848,7 +910,7 @@ export class HttpRepository implements Repository {
       method: 'POST',
       body: { path: parentId, name: file.name, size: blob.size, mime: blob.type || undefined, chunk_size: CHUNK_BYTES },
       signal: options?.signal,
-    }).catch(asRepositoryError);
+    });
     // ⚠ Told to the caller BEFORE a byte moves. `begin` always opens a new
     // session at offset 0 — it never picks up an old one — so an id nobody
     // wrote down is a staged upload nobody can ever continue, only expire.
@@ -862,9 +924,12 @@ export class HttpRepository implements Repository {
       // A session the server has finished with is not one to carry on.
       if (wire.state && wire.state !== 'staging') return null;
       return { id, offset: wire.offset ?? 0, size: wire.total_size ?? wire.totalSize ?? 0 };
-    } catch {
-      // Gone, expired, or never ours. Either way there is nothing to resume.
-      return null;
+    } catch (error) {
+      // Gone, expired, or never ours — the server saying so is the only thing that means "nothing to resume".
+      // Anything else (offline, a proxy, a 500) is not an answer about the session: reading it as one wiped every
+      // resumable record on an offline start, while the staged bytes and their quota reservation were still there.
+      if (error instanceof HttpError && (error.status === 404 || error.status === 410)) return null;
+      throw error;
     }
   }
 
@@ -877,12 +942,12 @@ export class HttpRepository implements Repository {
   async resumeUpload(id: string, parentId: string, file: UploadInput, options?: UploadOptions): Promise<Node> {
     const blob = file.blob;
     if (!blob) throw new Error('upload without bytes');
-    const wire = await request<WireUploadStatus>(`${UPLOAD}/${id}`).catch(asRepositoryError);
+    const wire = await request<WireUploadStatus>(`${UPLOAD}/${id}`);
     return this.pump(id, parentId, file, blob, wire.offset ?? 0, wire.chunk_size ?? wire.chunkSize ?? CHUNK_BYTES, options);
   }
 
   async abortUpload(id: string): Promise<void> {
-    await request(`${UPLOAD}/${id}`, { method: 'DELETE' }).catch(asRepositoryError);
+    await request(`${UPLOAD}/${id}`, { method: 'DELETE' });
   }
 
   /** The chunk loop, from `from` to the end, then the commit. Shared by a fresh upload and a resumed one. */
@@ -905,16 +970,17 @@ export class HttpRepository implements Repository {
       options?.onProgress?.(sent, blob.size);
     }
 
-    const commit = await request<WireUploadCommit>(`${UPLOAD}/${id}/commit`, { method: 'POST', signal: options?.signal }).catch(asRepositoryError);
-    await this.awaitOpId(commit.op_id ?? commit.opId);
+    const commit = await request<WireUploadCommit>(`${UPLOAD}/${id}/commit`, { method: 'POST', signal: options?.signal });
+    await this.awaitOpId(commit.op_id ?? commit.opId, options?.signal);
+    this.forgetStorages();
     return this.getNode(childPath(parentId, file.name));
   }
 
   async rename(id: string, name: string): Promise<Node> {
     const parent = parentPath(id);
     if (!parent) throw new Error('a storage root cannot be renamed');
-    await request(MANAGER, { method: 'POST', query: { q: 'rename' }, body: { path: parent, item: id, name } }).catch(asRepositoryError);
-    this.ids.delete(id);
+    await request(MANAGER, { method: 'POST', query: { q: 'rename' }, body: { path: parent, item: id, name } }).catch(asDuplicateName);
+    this.forget(id);
     return this.getNode(childPath(parent, name));
   }
 
@@ -923,13 +989,13 @@ export class HttpRepository implements Repository {
    * is what makes Restore possible. The queued worker performs the identical soft delete as the synchronous handler
    * — the same `trash.Put`, the same retag — so nothing about what lands in the trash changes with the route here.
    */
-  async moveToTrash(ids: string[]): Promise<void> {
+  async moveToTrash(ids: string[], signal?: AbortSignal): Promise<void> {
     if (!ids.length) return;
-    await this.submitOp('delete', { source: ids });
+    await this.submitOp('delete', { source: ids }, signal);
     for (const id of ids) {
       const numeric = this.ids.get(id);
       if (numeric !== undefined) this.trashed.set(id, numeric);
-      this.ids.delete(id);
+      this.forget(id);
     }
   }
 
@@ -952,10 +1018,11 @@ export class HttpRepository implements Repository {
   /** One entry at a time; purging a deleted FOLDER takes everything that went into the trash inside it. */
   async deleteForever(ids: string[]): Promise<void> {
     for (const id of ids) {
-      await request(`${MANAGER}/trash/${this.trashedNodeId(id)}`, { method: 'DELETE' }).catch(asRepositoryError);
+      await request(`${MANAGER}/trash/${this.trashedNodeId(id)}`, { method: 'DELETE' });
       this.trashed.delete(id);
       this.ids.delete(id);
     }
+    this.forgetStorages();
   }
 
   /**
@@ -969,6 +1036,7 @@ export class HttpRepository implements Repository {
       if (!answer.more || !answer.purged) break;
     }
     this.trashed.clear();
+    this.forgetStorages();
   }
 
   async setStarred(ids: string[], starred: boolean): Promise<void> {
@@ -991,26 +1059,28 @@ export class HttpRepository implements Repository {
     await request(`${MANAGER}/tags`, { method: 'POST', body: { node_id: this.nodeId(id), tags } });
   }
 
-  async move(ids: string[], targetFolderId: string): Promise<void> {
+  async move(ids: string[], targetFolderId: string, signal?: AbortSignal): Promise<void> {
     if (!ids.length) return;
-    await this.submitOp('move', { source: ids, target: targetFolderId });
+    await this.submitOp('move', { source: ids, target: targetFolderId }, signal);
     // Every moved node now answers to a different address, so the numbers remembered against the old ones are stale.
-    for (const id of ids) this.ids.delete(id);
+    for (const id of ids) this.forget(id);
   }
 
   /**
    * filex names the copy itself (`<base>-copy<ext>` when the name is taken), so nothing is returned: the caller
    * re-reads the folder and sees what landed.
    */
-  async copy(ids: string[], targetFolderId: string): Promise<void> {
+  async copy(ids: string[], targetFolderId: string, signal?: AbortSignal): Promise<void> {
     if (!ids.length) return;
-    await this.submitOp('copy', { source: ids, target: targetFolderId });
+    await this.submitOp('copy', { source: ids, target: targetFolderId }, signal);
   }
 
   /** Queues one job on `POST /api/files/{verb}` and waits for it. The submit's own 4xx is still a 4xx. */
-  private async submitOp(verb: 'copy' | 'move' | 'delete', body: Record<string, unknown>): Promise<void> {
-    const { op } = await request<{ op: WireOp }>(`/api/files/${verb}`, { method: 'POST', body }).catch(asRepositoryError);
-    await this.awaitOp(op);
+  private async submitOp(verb: 'copy' | 'move' | 'delete', body: Record<string, unknown>, signal?: AbortSignal): Promise<void> {
+    const { op } = await request<{ op: WireOp }>(`/api/files/${verb}`, { method: 'POST', body });
+    // Whatever the job does to the tree, it can also change what a drive holds.
+    this.forgetStorages();
+    await this.awaitOp(op, signal);
   }
 
   /**
@@ -1018,21 +1088,38 @@ export class HttpRepository implements Repository {
    * still running when the wait runs out raises OPERATION_PENDING, which says something different — nothing went
    * wrong, the answer is simply not in yet, and the caller must neither claim success nor offer to undo half a move.
    */
-  private async awaitOp(op: WireOp): Promise<void> {
+  private async awaitOp(op: WireOp, signal?: AbortSignal): Promise<void> {
     const deadline = Date.now() + POLL_GIVE_UP_MS;
     let current = op;
+    /** The last poll that did not arrive, cleared by the next one that does; see the catch below. */
+    let unanswered: unknown = null;
     for (let wait = POLL_STEP_MS; current.status === 'pending' || current.status === 'running'; wait = Math.min(wait * 2, POLL_MAX_MS)) {
-      if (Date.now() > deadline) throw new Error(OPERATION_PENDING);
+      // Nobody is waiting any more — the page was left, the upload was cancelled. The worker is restart-safe and
+      // carries on either way, so this is the same answer as running out of time, not a cancelled operation.
+      if (signal?.aborted) throw new Error(OPERATION_PENDING);
+      // Out of time: still running is OPERATION_PENDING, but a wait that ended with nobody answering is the
+      // transport failure, which is a different thing to put in front of a person.
+      if (Date.now() > deadline) throw unanswered ?? new Error(OPERATION_PENDING);
       await new Promise((resolve) => setTimeout(resolve, wait));
-      current = await request<WireOp>(`${OPS}/${op.id}`);
+      // Asked again on the far side of the wait, which is where a caller usually leaves: no request is spent then.
+      if (signal?.aborted) throw new Error(OPERATION_PENDING);
+      try {
+        current = await request<WireOp>(`${OPS}/${op.id}`, { signal });
+        unanswered = null;
+      } catch (error) {
+        // A poll that did not arrive says nothing about the JOB: it is a row on the server, and asking again costs
+        // nothing. Reading one dropped connection as a failed move is what had people repeat a move that had in
+        // fact succeeded, and end up with it done twice — so only the server's own verdict below fails an operation.
+        unanswered = error;
+      }
     }
     if (current.status !== 'ok') throw new Error(current.error || `${current.kind} ${current.status}`);
   }
 
   /** The same wait, for a verb that answers with an op id instead of the op: the first poll fetches the row. */
-  private async awaitOpId(id: number | undefined): Promise<void> {
+  private async awaitOpId(id: number | undefined, signal?: AbortSignal): Promise<void> {
     if (id === undefined) return;
-    await this.awaitOp({ id, kind: 'upload-commit', status: 'pending' });
+    await this.awaitOp({ id, kind: 'upload-commit', status: 'pending' }, signal);
   }
 
   async createShareLink(id: string): Promise<string> {
@@ -1121,15 +1208,23 @@ export class HttpRepository implements Repository {
     const rows = [...(versions ?? [])].sort((a, b) => b.version_n - a.version_n);
     // An unattributed revision stays unattributed. Stamping the reader's own name on it, which is what this did
     // before the column existed, told everyone they had written every version of every file they opened.
-    return rows.map((v, i) => ({
+    //
+    // No row is marked as the live contents, because none of them is: filex snapshots a file's bytes BEFORE it
+    // overwrites them, so the newest row here is what the file was before its last save. Calling it "current"
+    // labelled the previous contents as the present ones and withheld Restore from the one revision somebody
+    // rolling back actually wants.
+    return rows.map((v) => ({
       id: String(v.id),
       at: v.created_at,
       size: v.size,
       ...(v.created_by === undefined ? {} : { authorId: String(v.created_by), authorName: v.author_name }),
-      current: i === 0,
     }));
   }
 
+  /**
+   * `snapshot_current`: the live bytes are snapshotted before the older ones overwrite them, so a rollback is
+   * itself undoable. It is why the list grows by a row on every restore, and why no row on it is the live file.
+   */
   async restoreVersion(nodeId: string, versionId: string): Promise<void> {
     await request('/api/files/versions/restore', {
       method: 'POST',
@@ -1169,7 +1264,10 @@ export class HttpRepository implements Repository {
    * filex's query language has no form of.
    */
   async search(query: SearchQuery): Promise<SearchResult> {
-    const scope = query.scope === 'content' ? 'content' : query.scope === 'paths' ? 'path' : '';
+    // The form's four scopes, in the server's spelling. "All" is the server's default and travels as no scope at
+    // all; the other three each name a set of fields, and `tags` used to travel as nothing — so choosing Tags
+    // searched names, paths AND contents, which is exactly what All does.
+    const scope = SEARCH_SCOPES_WIRE[query.scope];
     // "Whole phrase" is sent the way every search box in the world spells it: the text in quotes. The server reads a
     // fully quoted query as a phrase INSIDE files; filename matching drops the quotes and stays subsequence-based,
     // because `invoice 2026` has to keep finding `invoice_2026.pdf`. The tag terms stay outside the quotes.
@@ -1186,7 +1284,16 @@ export class HttpRepository implements Repository {
     // carry.
     const { results, capped } = await request<{ results: (WireNode & { snippet?: string })[]; capped?: boolean }>('/api/files/search', {
       method: 'POST',
-      body: { query: text, limit: SEARCH_LIMIT, ...(scope ? { scope } : {}), ...searchFacets(query, confine) },
+      body: {
+        query: text,
+        limit: SEARCH_LIMIT,
+        ...(scope ? { scope } : {}),
+        // "Search in → Shared files" is a facet, not a scope: it says WHICH files may answer. Its meaning is the
+        // one the `shared` badge carries in every listing — a file this account published a link to that still
+        // opens — and NOT "shared with me", which is a different listing with a page of its own.
+        ...(query.searchIn === 'shared' ? { shared_only: true } : {}),
+        ...searchFacets(query, confine),
+      },
     });
     const hits: SearchHit[] = [];
     for (const row of results) {
@@ -1257,8 +1364,14 @@ export class HttpRepository implements Repository {
   // ── assistant history ───────────────────────────────────────────────────────
 
   async listAssistantSessions(): Promise<AssistantSession[]> {
-    const { sessions } = await request<{ sessions: WireChatSession[] }>(ASSISTANT_SESSIONS);
+    const { sessions, max } = await request<{ sessions: WireChatSession[]; max?: number }>(ASSISTANT_SESSIONS);
+    // The limit rides along with the list it applies to, so the client never has to hold a second copy of it.
+    if (max !== undefined && max > 0) this.assistantMax = max;
     return (sessions ?? []).map(fromChatSession);
+  }
+
+  assistantSessionMax(): number {
+    return this.assistantMax;
   }
 
   async createAssistantSession(title?: string): Promise<AssistantSession> {

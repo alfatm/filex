@@ -54,6 +54,13 @@ const nextTheme = computed(() => THEMES[(THEMES.indexOf(theme.value) + 1) % THEM
 const themeLabel = computed(() => t('topbar.theme', { current: t(`settings.theme.${theme.value}`), next: t(`settings.theme.${nextTheme.value}`) }));
 
 /**
+ * The trigger, when there is something behind it: the server has to offer an assistant AND this browser has to
+ * have it switched on. Gated on the server alone, the button still opened a panel that the setting closes again
+ * the moment it appears.
+ */
+const assistantOffered = computed(() => !view.assistantOpen && capabilities.can.assistant && settings.settings.assistantEnabled);
+
+/**
  * The admin panel, same origin: the backend serves this app under `/app/` and the console under `/admin/`.
  * Offered only to an admin — the panel's own guard sends everybody else back out, so a member would follow the
  * entry to a bounce. Over HTTP the server only ever says `admin` or `member`; the mock account is an `owner`.
@@ -101,6 +108,10 @@ function isEditable(target: EventTarget | null) {
 
 // ⌘K / Ctrl+K focuses the box from anywhere; a bare letter or digit typed outside an input does too.
 function onKeydown(event: KeyboardEvent) {
+  // Somebody nearer the key already used it. This listens on the window, so it runs after every handler in the
+  // page: the listing's own `r` (refresh) reached here too, and the letter that refreshed the folder also threw
+  // focus into the search box, where the next arrow key and the next Delete then went.
+  if (event.defaultPrevented) return;
   if (search.open) return;
   if (event.code === 'KeyK' && (event.metaKey || event.ctrlKey)) {
     event.preventDefault();
@@ -151,7 +162,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
 
     <div class="ml-auto flex items-center gap-2 pl-6">
       <!-- The panel's own X closes it; hiding the trigger keeps the bar at the reference width while it is open. -->
-      <IconButton v-if="!view.assistantOpen && capabilities.can.assistant" :label="t('topbar.assistant')" @click="view.assistantOpen = true">
+      <IconButton v-if="assistantOffered" :label="t('topbar.assistant')" @click="view.assistantOpen = true">
         <Sparkles :size="22" :stroke-width="1.75" />
       </IconButton>
       <IconButton :label="themeLabel" @click="settings.settings.theme = nextTheme">

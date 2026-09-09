@@ -44,6 +44,16 @@ func (h *Activity) AttachACL(r *acl.Resolver) { h.ACL = r }
 // history; anything longer belongs to the admin audit page.
 const activityLimit = 50
 
+// activityMetaFields is the whole of meta_json this feed passes on: `from` and
+// `to` are what tell a rename from a move, `origin` names the surface that
+// wrote. It is a whitelist and not a list of things to strip, because meta_json
+// is a BELL payload and carries whatever the emitting surface put there —
+// `share.created` puts the share's TOKEN in it (notify.ShareRef), so dropping
+// only `actor` and `node` handed the credential for a public link, anonymous
+// drop links included, to every account holding viewer on the file. A whitelist
+// also cannot leak whatever field a future emitter adds.
+var activityMetaFields = []string{"from", "to", "origin"}
+
 // activityEvent is one row on the wire. `meta` is the event's own payload —
 // `from`/`to` on a move, `origin` everywhere — which is what lets a client tell
 // a rename from a move without a second vocabulary here.
@@ -110,18 +120,21 @@ func (h *Activity) project(ctx context.Context, rows []*model.Notification) []ac
 		e := activityEvent{ID: row.ID, Event: row.Event, At: row.CreatedAt}
 		var meta struct {
 			Actor *struct {
-				ID    int64  `json:"id"`
-				Email string `json:"email"`
+				ID int64 `json:"id"`
 			} `json:"actor"`
 		}
 		if len(row.MetaJSON) > 0 {
 			_ = json.Unmarshal(row.MetaJSON, &meta)
 			var free map[string]any
 			if json.Unmarshal(row.MetaJSON, &free) == nil {
-				delete(free, "actor")
-				delete(free, "node")
-				if len(free) > 0 {
-					e.Meta = free
+				kept := make(map[string]any, len(activityMetaFields))
+				for _, k := range activityMetaFields {
+					if v, ok := free[k]; ok {
+						kept[k] = v
+					}
+				}
+				if len(kept) > 0 {
+					e.Meta = kept
 				}
 			}
 		}
@@ -130,9 +143,15 @@ func (h *Activity) project(ctx context.Context, rows []*model.Notification) []ac
 			e.ActorID = &id
 			name, seen := names[id]
 			if !seen {
-				name = meta.Actor.Email
-				if u, err := h.Store.GetUser(ctx, id); err == nil && u != nil && u.DisplayName != "" {
-					name = u.DisplayName
+				// ⚠ The display name ONLY — the e-mail recorded in the row is
+				// not a fallback for it. Anybody who may read a folder may read
+				// its activity, so naming an account by its address handed every
+				// reader the addresses of the colleagues who had touched it. An
+				// account that has set no display name comes back with the id and
+				// no name, and the panel says who it is in the reader's own
+				// language.
+				if u, err := h.Store.GetUser(ctx, id); err == nil && u != nil {
+					name = strings.TrimSpace(u.DisplayName)
 				}
 				names[id] = name
 			}

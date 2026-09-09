@@ -52,10 +52,6 @@ export function previewKind(node: Node): PreviewKind {
   return TEXT_EXTENSIONS.has(ext) && node.size <= TEXT_MAX_BYTES ? 'text' : 'none';
 }
 
-export function downloadUrl(node: Node): string | undefined {
-  return node.assetUrl && `${node.assetUrl}?download=1`;
-}
-
 /** Lines of a text file; a single trailing newline does not add an empty last line. */
 export function splitLines(text: string): string[] {
   const lines = text.split(/\r\n|\r|\n/);

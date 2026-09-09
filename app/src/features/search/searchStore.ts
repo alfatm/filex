@@ -108,6 +108,11 @@ export const useSearchStore = defineStore('search', () => {
   /** The answer stopped at the limit, so `total` is a floor: the count line says "N+" rather than "N". */
   const capped = ref(false);
   const loading = ref(false);
+  /**
+   * The last run did not answer. `run` still rejects — a caller that awaits it must be able to tell — but nothing
+   * ever caught it, so a search against an unreachable server drew "No results", which is a claim about the drive.
+   */
+  const failed = ref(false);
 
   function assign(next: SearchQuery) {
     Object.assign(query, next, { size: { ...next.size }, tags: [...next.tags] });
@@ -143,10 +148,20 @@ export const useSearchStore = defineStore('search', () => {
       hits.value = result.hits;
       total.value = result.total;
       capped.value = result.capped;
+      failed.value = false;
+    } catch (error) {
+      // A newer request owns the results; its own answer decides what they say.
+      if (id === seq) {
+        failed.value = true;
+        hits.value = [];
+        total.value = 0;
+        capped.value = false;
+      }
+      throw error;
     } finally {
       if (id === seq) loading.value = false;
     }
   }
 
-  return { open, query, hits, total, capped, loading, assign, reset, openModal, close, run };
+  return { open, query, hits, total, capped, loading, failed, assign, reset, openModal, close, run };
 });

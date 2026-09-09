@@ -32,16 +32,10 @@ import (
 	"io"
 	"path"
 
+	"github.com/brf-tech/filex/backend/internal/e2e"
+	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/storage"
 )
-
-// skipNames are filex's own bookkeeping directories. They are storage-local by
-// definition — a copied trash is not the destination's trash, and thumbnails
-// are rebuilt on demand — so a tree walk steps over them.
-var skipNames = map[string]bool{
-	".filex-trash": true,
-	".thumbs":      true,
-}
 
 // TransferHooks let the caller mirror each finished step into whatever
 // catalogue it keeps. Both are optional and are called only after the bytes
@@ -139,7 +133,19 @@ func transferDir(ctx context.Context, srcDrv, dstDrv storage.Driver, wr storage.
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if skipNames[o.Name] {
+		// filex's own buckets are storage-local by definition — a copied trash
+		// is not the destination's trash, thumbnails are rebuilt on demand, and
+		// a version tree belongs to the storage whose keys it snapshots — so
+		// the walk steps over them, matched per path COMPONENT rather than by
+		// the private two-name list this replaces.
+		//
+		// ⚠ The encrypted-folder marker is the one reserved name that MUST
+		// travel: it is the folder's own content, not bookkeeping, and
+		// versioning/guard.go says out loud that a lost marker makes an
+		// encrypted folder permanently unopenable. Skipping it here would hand
+		// the destination a folder whose bytes are all present and none of them
+		// readable.
+		if o.Name != e2e.MarkerName && model.IsReservedPath(o.Name) {
 			continue
 		}
 		// ⚠ Drivers differ on whether Object.Path is storage-relative or bare;

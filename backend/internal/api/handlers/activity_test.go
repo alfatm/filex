@@ -111,3 +111,60 @@ func TestActivity_RefusesAPathItCannotAddress(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, rec.Code, "path %q", path)
 	}
 }
+
+// meta_json is the bell payload, and the bell payload of a `share.created`
+// carries the share's token (notify.ShareRef). The feed used to copy every key
+// it did not explicitly strip, so any account with ≥viewer on a file read the
+// credential for its public link straight out of the Activity tab — and for a
+// `kind=drop` link that is a viewer who can now upload anonymously. The feed is
+// keyed by path, so the tokens outlived the file: delete it, recreate the same
+// name, and the new file's viewers inherit the old one's links.
+func TestActivity_NeverHandsOutAShareToken(t *testing.T) {
+	f := newActivityFixture(t)
+	ctx := context.Background()
+	svc := notify.New(f.store, notify.Config{})
+
+	_, err := svc.Send(ctx, notify.Event{
+		Event: notify.EventShareCreated, Severity: notify.SeverityInfo, Title: "shared",
+		Meta:  map[string]any{"kind": "drop", "has_pin": true, "origin": "manager"},
+		Node:  &notify.NodeRef{StorageID: f.st.ID, Path: "/Docs/notes.md", Name: "notes.md"},
+		Share: &notify.ShareRef{Token: "s3cr3t-token", Path: "/Docs/notes.md"},
+	})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	f.h.List(rec, httptest.NewRequest(http.MethodGet, "/api/files/activity?path=main://Docs/notes.md", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	// Checked against the raw body, not only the parsed meta: the token must not
+	// reach the client under any key, however the payload is nested.
+	require.NotContains(t, rec.Body.String(), "s3cr3t-token")
+
+	got := f.events(t, "main://Docs/notes.md")
+	require.Len(t, got, 1)
+	require.Equal(t, "share.created", got[0]["event"])
+	meta, _ := got[0]["meta"].(map[string]any)
+	require.NotContains(t, meta, "share")
+	require.NotContains(t, meta, "has_pin", "the UI never shows it and it describes the link's protection")
+	// The whitelist is a whitelist and not a hole: what the feed does render
+	// still comes through.
+	require.Equal(t, "manager", meta["origin"])
+}
+
+func TestActivity_KeepsTheFieldsTheFeedActuallyRenders(t *testing.T) {
+	f := newActivityFixture(t)
+	ctx := context.Background()
+	svc := notify.New(f.store, notify.Config{})
+
+	_, err := svc.Send(ctx, notify.Event{
+		Event: notify.EventFileTrashed, Severity: notify.SeverityInfo, Title: "trashed",
+		Meta: map[string]any{"origin": "manager", "trash_path": ".filex-trash/1700000000__gizli.md"},
+		Node: &notify.NodeRef{StorageID: f.st.ID, Path: "/Docs/gizli.md", Name: "gizli.md"},
+	})
+	require.NoError(t, err)
+
+	got := f.events(t, "main://Docs/gizli.md")
+	require.Len(t, got, 1)
+	meta, _ := got[0]["meta"].(map[string]any)
+	require.Equal(t, "manager", meta["origin"])
+	require.NotContains(t, meta, "trash_path", "the internal trash key is not something a details panel shows")
+}

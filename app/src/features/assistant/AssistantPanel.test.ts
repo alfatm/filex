@@ -5,6 +5,7 @@ import { createMemoryHistory, createRouter } from 'vue-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AssistantEvent, AssistantMode, SearchHit } from '@/data/types';
 import { i18n } from '@/i18n';
+import { useSettingsStore } from '@/features/settings/settingsStore';
 import AssistantPanel from './AssistantPanel.vue';
 import { useAssistantStore } from './assistantStore';
 
@@ -31,6 +32,7 @@ vi.mock('@/data', () => ({
     async listStorages() {
       return [];
     },
+    assistantSessionMax: () => 100,
     async currentUser() {
       return { id: 'demo', name: 'demo', initial: 'D' };
     },
@@ -88,6 +90,19 @@ describe('AssistantPanel', () => {
     const handled = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
     handled.preventDefault();
     window.dispatchEvent(handled);
+    expect(wrapper.emitted('close')).toHaveLength(1);
+  });
+
+  // The person's own switch (User settings → AI assistant), which is not the server's: an installation with no
+  // provider reports no assistant and the panel is never offered, while this says whether it is wanted.
+  it('closes itself when the assistant is switched off in the settings', async () => {
+    const { wrapper } = await setup();
+    cleanup = () => wrapper.unmount();
+    const settings = useSettingsStore();
+    expect(wrapper.emitted('close')).toBeUndefined();
+
+    settings.apply({ ...settings.settings, assistantEnabled: false });
+    await nextTick();
     expect(wrapper.emitted('close')).toHaveLength(1);
   });
 

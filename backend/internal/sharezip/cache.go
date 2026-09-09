@@ -39,6 +39,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/storage"
 )
 
@@ -310,8 +311,8 @@ func (c *Cache) run(cachePath string, files []File, nodeID int64, drv storage.Dr
 }
 
 // collectFiles walks root and returns every file under it (metadata only).
-// Internal dirs (trash, thumbnails, keepdir) are skipped so the archive matches
-// what the streaming path would produce.
+// filex's own buckets (model.ReservedNames) and keepdir markers are skipped so
+// the archive matches what the streaming path would produce.
 func collectFiles(ctx context.Context, drv storage.Driver, root string) ([]File, error) {
 	var out []File
 	var walk func(dir, prefix string) error
@@ -321,10 +322,17 @@ func collectFiles(ctx context.Context, drv storage.Driver, root string) ([]File,
 			return err
 		}
 		for _, o := range objs {
-			if o.Name == ".filex-trash" || o.Name == ".thumbs" || o.Name == ".keepdir" {
+			entry := prefix + o.Name
+			// Whole path COMPONENTS, through the shared model.IsReservedPath:
+			// the two names this walk knew were half the list, so a cached
+			// archive of a shared folder still carried `.versions/` into it.
+			// The test is on the SHARE-relative entry, which is what the
+			// archive is built from — drivers disagree about whether
+			// Object.Path is storage-relative or bare. `.keepdir` stays
+			// separate: a driver's empty-folder marker, not a bucket.
+			if model.IsReservedPath(entry) || o.Name == ".keepdir" {
 				continue
 			}
-			entry := prefix + o.Name
 			switch o.Kind {
 			case storage.KindDirectory:
 				if err := walk(o.Path, entry+"/"); err != nil {

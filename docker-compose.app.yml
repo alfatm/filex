@@ -17,14 +17,26 @@
 # name their server container `filex`, so running the two at once fails on the
 # name rather than starting two servers that would fight over nothing.
 #
-# The app is served by Vite rather than as a built bundle because filex does
-# not embed it — `backend/embed` carries the admin SPA and the embed widget and
-# nothing else. Hot reload comes along with that, which is what makes an edit
-# on the host visible here without rebuilding anything.
+# The app is served by Vite rather than by filex because filex does not embed
+# it — `backend/embed` carries the admin SPA and the embed widget and nothing
+# else, and the Go server has no `/app` route at all. What Vite serves is the
+# BUILT bundle (`vite preview`), NOT the dev server: the dev server carries the
+# screenshot/e2e URL hooks (`?modal=`, `?caps=`, `?demo=`, see
+# `app/src/dev/screenshotQuery.ts`) that monkeypatch the repository, fake
+# capabilities and post mock rows, and pointed at a real server those turn the
+# demo into a claim the server never made. The price is that an edit on the host
+# is not live here — restart the `app` container, or run `pnpm --filter ./app
+# dev` on the host while you are editing.
+#
+# `packages/core` is BUILT here as well. The app imports it through that
+# package's `exports`, which point at `dist/`, and `dist/` is gitignored — so on
+# a fresh clone nothing that imports core resolves until this build has run. It
+# is why the first `up` takes minutes before :5175 answers.
 #
 # What is NOT production shape, and would have to change before this faced
 # anyone but you: the admin password below, a server whose database and drive
-# are throwaway volumes, and the app on a dev server. `docker compose -f
+# are throwaway volumes, and the app on Vite's preview server rather than behind
+# a real one. `docker compose -f
 # docker-compose.app.yml down -v` erases the lot and gives a fresh install on
 # the next `up`.
 #
@@ -101,9 +113,11 @@ services:
       start_period: 5s
 
   # ---------------------------------------------------------------------
-  # The end-user app, on Vite's dev server so an edit on the host is visible
-  # without rebuilding anything. `VITE_FILEX_API` is what switches
-  # `src/data/index.ts` off the mock repository and onto the HTTP one.
+  # The end-user app: built inside the container, then served by `vite preview`.
+  # `VITE_FILEX_API` is what switches `src/data/index.ts` off the mock
+  # repository and onto the HTTP one — and it is read at BUILD time now, not at
+  # run time, because a production build without it refuses to run at all
+  # (app/vite.config.ts) rather than shipping demo data that looks real.
   # ---------------------------------------------------------------------
   app:
     image: node:20-alpine
@@ -116,13 +130,10 @@ services:
       - "${APP_PORT:-5175}:5174"
     environment:
       VITE_FILEX_API: "1"
-      # Same-origin from the browser's side: the dev server forwards /api, so
-      # the session cookie rides along and nothing needs CORS.
+      # Same-origin from the browser's side: the preview server forwards /api,
+      # so the session cookie rides along and nothing needs CORS.
       FILEX_API_PROXY: http://filex:5212
       VITE_HOST: 0.0.0.0
-      # Hot reload dials back to the PUBLISHED port, which is not the one Vite
-      # binds inside the container.
-      VITE_HMR_CLIENT_PORT: ${APP_PORT:-5175}
       NODE_OPTIONS: --max-old-space-size=4096
     volumes:
       - ./:/repo
@@ -136,10 +147,13 @@ services:
       - sh
       - -c
       - |
+        set -e
         corepack enable
         pnpm config set store-dir /pnpm-store
         pnpm install --filter @brftech/filex-app... --no-frozen-lockfile
-        pnpm --filter @brftech/filex-app dev
+        pnpm --filter @brftech/filex-core build
+        pnpm --filter @brftech/filex-app build
+        pnpm --filter @brftech/filex-app preview
 
 volumes:
   filex-data:

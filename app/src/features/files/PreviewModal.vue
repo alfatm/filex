@@ -8,7 +8,7 @@ import type { Node } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
 import FileTypeTile from '@/pages/files/FileTypeTile.vue';
 import { useFilesStore } from '@/stores/files';
-import { CSV_MAX_ROWS, downloadUrl, parseCsv, previewKind, splitLines } from './preview';
+import { CSV_MAX_ROWS, parseCsv, previewKind, splitLines } from './preview';
 import ShareModal from './ShareModal.vue';
 
 /**
@@ -29,7 +29,7 @@ const MONO_FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 const index = ref(props.index);
 const current = computed(() => props.nodes[index.value]);
 const kind = computed(() => previewKind(current.value));
-const download = computed(() => downloadUrl(current.value));
+const download = computed(() => (current.value.kind === 'file' ? repository.downloadUrl(current.value.id) : undefined));
 const hasPrevious = computed(() => index.value > 0);
 const hasNext = computed(() => index.value < props.nodes.length - 1);
 

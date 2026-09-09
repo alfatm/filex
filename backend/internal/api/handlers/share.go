@@ -468,7 +468,7 @@ func (h *Share) warmFolderThumbs(node *model.Node) {
 				if rendered >= prewarmThumbMax || ctx.Err() != nil {
 					return
 				}
-				if browseSkipNames[o.Name] {
+				if shareHidden(o.Name) {
 					continue
 				}
 				child := joinShareRel(dir, o.Name)
@@ -908,7 +908,7 @@ func (h *Share) streamFolderZip(ctx context.Context, w http.ResponseWriter, drv 
 			return err
 		}
 		for _, o := range objs {
-			if o.Name == ".filex-trash" || o.Name == ".thumbs" || o.Name == ".keepdir" {
+			if shareHidden(o.Name) {
 				continue
 			}
 			entry := prefix + o.Name

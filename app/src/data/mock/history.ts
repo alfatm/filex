@@ -34,7 +34,13 @@ function id(prefix: string): string {
   return `${prefix}-${++seq}`;
 }
 
-/** Revisions of a file, newest first. Folders have none, so the modal says so instead of inventing history. */
+/**
+ * Revisions of a file, newest first. Folders have none, so the modal says so instead of inventing history.
+ *
+ * Every row is content the file USED to hold: filex snapshots the bytes before overwriting them, so the live file
+ * has no row of its own and the newest row is what it was before its last save. The seeds start one gap back from
+ * the file's own date for that reason.
+ */
 export function listVersions(nodeId: string): Version[] {
   const node = byId(nodeId);
   if (!node || node.kind !== 'file') return [];
@@ -43,30 +49,33 @@ export function listVersions(nodeId: string): Version[] {
   const at = Date.parse(node.modifiedAt ?? '');
   const seeded = Array.from({ length: SEEDED_VERSIONS }, (_, i) => ({
     id: `${nodeId}@${i}`,
-    at: new Date(at - i * VERSION_GAP_HOURS * HOUR).toISOString(),
-    size: Math.round(node.size * VERSION_SHRINK ** i),
+    at: new Date(at - (i + 1) * VERSION_GAP_HOURS * HOUR).toISOString(),
+    size: Math.round(node.size * VERSION_SHRINK ** (i + 1)),
     authorId: node.ownerId,
     authorName: node.ownerName ?? user.name,
-    current: i === 0,
   }));
   versions.set(nodeId, seeded);
   return seeded;
 }
 
-/** The restored revision's content becomes a new current revision; the history in between is kept. */
+/**
+ * Restoring snapshots the LIVE bytes first and then writes the older ones over them — `snapshot_current` on the
+ * server. So the list grows by a row describing the file as it was a moment ago, and the file itself goes back to
+ * the chosen revision. Nothing in between is lost, and the restored revision keeps its own row.
+ */
 export function restoreVersion(nodeId: string, versionId: string): Version {
   const list = listVersions(nodeId);
   const source = list.find((v) => v.id === versionId);
   if (!source) throw new Error(`version not found: ${versionId}`);
-  const now = new Date().toISOString();
-  const restored: Version = { ...source, id: id('version'), at: now, current: true, authorId: user.id, authorName: user.name };
-  versions.set(nodeId, [restored, ...list.map((v) => ({ ...v, current: false }))]);
   const node = byId(nodeId);
+  const now = new Date().toISOString();
+  const replaced: Version = { id: id('version'), at: now, size: node?.size ?? source.size, authorId: user.id, authorName: user.name };
+  versions.set(nodeId, [replaced, ...list]);
   if (node) {
     node.size = source.size;
     node.modifiedAt = now;
   }
-  return restored;
+  return replaced;
 }
 
 export function listActivity(nodeId: string): ActivityEvent[] {

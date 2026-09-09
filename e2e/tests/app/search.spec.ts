@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { countIn, searchHits } from '../../helpers/mockTree';
 
 /** Ctrl+K focuses the topbar box; the sliders button beside it opens the Advanced search modal with the text prefilled. */
 async function openAdvancedSearch(page: Page, text: string) {
@@ -39,11 +40,11 @@ test.describe('Search', () => {
     await expect(dialog.getByRole('textbox', { name: 'Path' })).toHaveValue('');
     await expect(dialog.getByRole('radio', { name: 'Current folder: demo' })).toBeChecked();
 
-    // "design" matches the Design folder, its two indexed files, the 8 files inside it (by path), UI Design.fig and
-    // two files whose text mentions it; the count is the real one.
-    await expect(dialog.getByText('14 matching items')).toBeVisible();
+    // "design" matches the Design folder, its two indexed files, the files inside it (by path), UI Design.fig and
+    // the files whose text mentions it; the count is the real one, counted off the same tree the mock is built from.
+    await expect(dialog.getByText(`${searchHits('design')} matching items`)).toBeVisible();
     const results = dialog.getByRole('list').last().getByRole('listitem');
-    await expect(results.filter({ hasText: 'Design' }).first()).toContainText('8 items');
+    await expect(results.filter({ hasText: 'Design' }).first()).toContainText(`${countIn('Design')} items`);
     const overview = results.filter({ hasText: 'overview.pdf' });
     await expect(overview).toContainText('/demo/Design');
     await expect(overview.locator('mark').first()).toHaveText('design');
@@ -85,10 +86,10 @@ test.describe('Search', () => {
     await page.goto('search?q=beach');
     await expect(page.getByRole('heading', { name: 'Search results' })).toBeVisible();
     await expect(page.getByText('“beach”')).toBeVisible();
-    // The indexed Design/beach.png, the root README (mentions "a beach photo"), the root beach.png and two Photos.
-    await expect(page.getByText('5 matching items')).toBeVisible();
+    // The indexed Design/beach.png, the root README (mentions "a beach photo"), the root beach.png and the Photos.
+    await expect(page.getByText(`${searchHits('beach')} matching items`)).toBeVisible();
     const body = page.getByRole('main').getByRole('table').locator('tbody tr');
-    await expect(body).toHaveCount(5);
+    await expect(body).toHaveCount(searchHits('beach'));
     await expect(body.nth(0)).toContainText('beach.png');
     await expect(body.nth(0)).toContainText('/demo/Design');
     await expect(body.nth(2)).toContainText('beach.png');

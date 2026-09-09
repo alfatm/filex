@@ -19,8 +19,10 @@ type NodeComment struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 
-	// AuthorName is the joined users.display_name (falling back to email)
-	// filled by ListNodeComments. Not persisted.
+	// AuthorName is the joined users.display_name, filled by ListNodeComments.
+	// Empty when the account has set none — the address is never a fallback
+	// for it, because a comment thread is readable by everybody who may open
+	// the file. Not persisted.
 	AuthorName string `json:"author_name,omitempty"`
 	// CanDelete marks whether the CURRENT caller may delete this comment
 	// (author or admin). Computed by the API layer. Not persisted.

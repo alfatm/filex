@@ -39,6 +39,10 @@ func TestStarredAndRecent_NameTheOwnerRatherThanOnlyNumberingThem(t *testing.T) 
 	require.NoError(t, err)
 	writer, err := store.CreateUser(ctx, "yazan@filex.test", "x", model.RoleUser, "en", "UTC")
 	require.NoError(t, err)
+	// The DISPLAY name is what the column may print. It used to fall back to the
+	// address when an account had set none, which published every colleague's
+	// e-mail to everybody holding viewer on the drive.
+	require.NoError(t, store.UpdateUserDisplayName(ctx, writer.ID, "Yazan Bey"))
 
 	mk := func(name string, owner *int64) *model.Node {
 		p := "/" + name
@@ -86,8 +90,10 @@ func TestStarredAndRecent_NameTheOwnerRatherThanOnlyNumberingThem(t *testing.T) 
 				byName[n.Name] = n.OwnerName
 				owned[n.Name] = n.OwnerID != nil
 			}
-			assert.Equal(t, "yazan@filex.test", byName["onun.md"],
+			assert.Equal(t, "Yazan Bey", byName["onun.md"],
 				"the name, not only the id: the reader has to be able to see it is not theirs")
+			assert.NotContains(t, rec.Body.String(), "yazan@filex.test",
+				"the name they chose, never the address behind it")
 			assert.True(t, owned["onun.md"])
 			// "unowned" and "owned by nobody in particular" are different statements,
 			// and a row the sync found carries neither field rather than a blank one.

@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { nextTick } from 'vue';
 import { describe, expect, it, vi } from 'vitest';
 import { repository } from '@/data';
+import type { Node } from '@/data/types';
 import { resetMock } from '@/data/mock';
 import { useFilesStore } from './files';
 import { useToastStore } from './toast';
@@ -313,5 +314,91 @@ describe('files store', () => {
     expect(files.ordered[0]?.name).toBe('Q3 report.pdf');
     const times = files.ordered.map((n) => Date.parse(n.modifiedAt ?? ''));
     expect(times).toEqual([...times].sort((a, b) => b - a));
+  });
+});
+
+describe('a helper request that fails', () => {
+  // The People chip's options shared the listing's `try`, so a refusal there threw away a listing that HAD
+  // arrived and put "Could not load this listing" over it.
+  it('leaves the listing standing when the People chip cannot be filled', async () => {
+    const files = await setup();
+    const spy = vi.spyOn(repository, 'listFilterPeople').mockRejectedValue(new Error('offline'));
+    await files.openPath(null, 'Design');
+    spy.mockRestore();
+
+    expect(files.error).toBeNull();
+    expect(files.items.length).toBeGreaterThan(0);
+  });
+
+  // Same request, same reasoning, at start-up: it sat in the `Promise.all` with the drives and the account, so a
+  // refused chip started the whole app in the "could not load" state.
+  it('still starts the app when the People chip cannot be filled at bootstrap', async () => {
+    resetMock();
+    setActivePinia(createPinia());
+    const spy = vi.spyOn(repository, 'listFilterPeople').mockRejectedValue(new Error('offline'));
+    const files = useFilesStore();
+    await files.bootstrap();
+    spy.mockRestore();
+
+    expect(files.error).toBeNull();
+    expect(files.ready).toBe(true);
+    expect(files.storages.length).toBeGreaterThan(0);
+    expect(files.filterPeople).toEqual([]);
+  });
+
+  // Otherwise the details panel keeps the PREVIOUS node's people and location under the new node's name.
+  it('forgets the previous node when the focused one cannot be described', async () => {
+    const files = await setup();
+    files.select('design');
+    await nextTick();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(files.focusPath.length).toBeGreaterThan(0);
+
+    const people = vi.spyOn(repository, 'listPeople').mockRejectedValue(new Error('forbidden'));
+    const path = vi.spyOn(repository, 'getPath').mockRejectedValue(new Error('forbidden'));
+    files.select('code');
+    await nextTick();
+    await vi.waitFor(() => expect(files.focusPath).toEqual([]));
+    people.mockRestore();
+    path.mockRestore();
+
+    expect(files.people).toEqual([]);
+    expect(files.canManagePeople).toBe(false);
+  });
+});
+
+describe('a navigation that is overtaken', () => {
+  // `resolvePath` is a request of its own over HTTP: the folder that was clicked first can answer last, and it
+  // used to open itself over the listing the person had already moved on to.
+  it('drops a folder that resolves after a newer listing is open', async () => {
+    const files = await setup();
+    const design = files.ordered.find((n) => n.name === 'Design')!;
+    let land!: (node: Node) => void;
+    const spy = vi.spyOn(repository, 'resolvePath').mockReturnValue(new Promise<Node>((resolve) => (land = resolve)));
+    const slow = files.openPath(null, 'Design');
+    await files.openListing('starred');
+    land(design);
+    await slow;
+    spy.mockRestore();
+
+    expect(files.listing).toEqual({ kind: 'starred' });
+    expect(files.folder).toBeNull();
+    expect(files.error).toBeNull();
+  });
+
+  // The same for the refusal: a late "no such folder" must not put not-found over the listing on screen.
+  it('drops an address that fails to resolve after a newer listing is open', async () => {
+    const files = await setup();
+    let refuse!: (error: Error) => void;
+    const spy = vi.spyOn(repository, 'resolvePath').mockReturnValue(new Promise<Node>((_, reject) => (refuse = reject)));
+    const slow = files.openPath(null, 'Nope');
+    await files.openListing('starred');
+    refuse(new Error('path not found'));
+    await slow;
+    spy.mockRestore();
+
+    expect(files.error).toBeNull();
+    expect(files.listing).toEqual({ kind: 'starred' });
   });
 });

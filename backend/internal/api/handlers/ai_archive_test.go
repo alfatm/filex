@@ -126,3 +126,42 @@ func TestAI_Zip_ConfinementRejected(t *testing.T) {
 	assert.NotEqual(t, http.StatusOK, resp.StatusCode, "extracting outside the confinement root must fail")
 	resp.Body.Close()
 }
+
+// A folder holding a file the person named after one of filex's buckets.
+//
+// The zip walk dropped members with `strings.Contains(o.Path, ".thumbs")`, so
+// `my.thumbsup.png` was left out of the archive — silently: the zip simply came
+// out one file short, and nothing anywhere said why. The bucket beside it is
+// still dropped, which is what makes this a fix rather than a removed filter.
+func TestAI_Zip_KeepsAFileNamedAfterOneOfFilexsOwnBuckets(t *testing.T) {
+	srv, client, _, tok := aiFixture(t)
+
+	for path, content := range map[string]string{
+		"main://pack/my.thumbsup.png":   "not a bucket",
+		"main://pack/notes.versions.md": "nor is this",
+		"main://pack/.thumbs/cache.jpg": "bookkeeping",
+	} {
+		resp := aiReq(t, client, "POST", srv.URL+"/api/ai/upload", tok, map[string]any{"path": path, "content": content})
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		resp.Body.Close()
+	}
+
+	resp := aiReq(t, client, "POST", srv.URL+"/api/ai/zip", tok, map[string]any{
+		"sources": []string{"main://pack"},
+		"dest":    "main://out/pack.zip",
+	})
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
+	code, raw := aiDownload(t, client, srv.URL, tok, "main://out/pack.zip")
+	require.Equal(t, http.StatusOK, code)
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	require.NoError(t, err)
+	names := map[string]bool{}
+	for _, f := range zr.File {
+		names[f.Name] = true
+	}
+	assert.True(t, names["pack/my.thumbsup.png"], "the person's own file belongs in their archive — got %v", names)
+	assert.True(t, names["pack/notes.versions.md"], "and so does this one — got %v", names)
+	assert.False(t, names["pack/.thumbs/cache.jpg"], "the bucket itself is still bookkeeping — got %v", names)
+}

@@ -107,6 +107,11 @@ function removeTag(tag: string) {
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 
+/** As on the results page: the failure is `store.failed`, shown below the count, not an uncaught rejection. */
+function search() {
+  void store.run().catch(() => undefined);
+}
+
 function submit() {
   clearTimeout(timer);
   store.close();
@@ -119,7 +124,7 @@ function cancel() {
   store.close();
   if (route.name !== 'search') return;
   store.assign(fromUrlQuery(route.query));
-  void store.run();
+  search();
 }
 
 // Live results follow the form with a short debounce; the first run after opening is immediate.
@@ -128,8 +133,8 @@ watch(
   ([open], previous) => {
     clearTimeout(timer);
     if (!open) return;
-    if (previous?.[0]) timer = setTimeout(() => void store.run(), DEBOUNCE_MS);
-    else void store.run();
+    if (previous?.[0]) timer = setTimeout(search, DEBOUNCE_MS);
+    else search();
   },
   { immediate: true },
 );
@@ -299,7 +304,8 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
               {{ hit.node.kind === 'folder' ? (hit.node.itemCount === undefined ? t('type.folder') : t('files.items', hit.node.itemCount)) : formatSize(hit.node.size) }}
             </span>
           </li>
-          <li v-if="!liveHits.length && !store.loading" class="flex h-9 items-center text-15 text-text-3">{{ t('search.noResults') }}</li>
+          <li v-if="store.failed" class="flex h-9 items-center text-15 text-danger" role="alert">{{ t('search.failed') }}</li>
+          <li v-else-if="!liveHits.length && !store.loading" class="flex h-9 items-center text-15 text-text-3">{{ t('search.noResults') }}</li>
         </ul>
 
         <div class="mt-[25px] flex items-center">

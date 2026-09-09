@@ -3,9 +3,10 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ChevronRight, HardDrive, Loader2, Search } from 'lucide-vue-next';
 import { repository } from '@/data';
-import { splitPath } from '@/data/http/map';
 import type { Node } from '@/data/types';
 import { subjectMessage } from '@/i18n/subject';
+import { isInside, splitPath } from '@/lib/address';
+import { errorMessage } from '@/lib/errors';
 import FolderIcon from '@/pages/files/FolderIcon.vue';
 import { HOME_STORAGE, useFilesStore } from '@/stores/files';
 import { Button, Input, Select } from '@/ui';
@@ -30,16 +31,24 @@ interface Row {
 }
 
 const copying = computed(() => props.mode === 'copy');
-/** The drive the nodes live on. A copy cannot leave it, so it is also the only destination drive offered. */
-const source = files.storage?.id ?? '';
+/**
+ * The drive(s) the nodes live on, read from the nodes themselves.
+ *
+ * A node's id is its address, so the drive is in it. It used to be taken from the open listing instead, which is
+ * only the same thing inside a folder: on Starred, Recent and Shared the listing has no drive of its own and the
+ * store falls back to the home one, so a copy of something on another mount greyed out every drive but the wrong.
+ */
+const sourceDrives = new Set(props.nodes.map((n) => splitPath(n.id).adapter));
+const source = [...sourceDrives][0] ?? files.storage?.id ?? '';
 const storageId = ref(source);
 // A copy across drives spans two adapters, which the server refuses. The other drives stay listed and greyed:
-// the answer the UI owes here is "not to there", not "there is nowhere else".
+// the answer the UI owes here is "not to there", not "there is nowhere else". A selection spanning two drives has
+// no drive it can be copied to at all, and says so the same way.
 const storageOptions = computed(() =>
   files.storages.map((s) => ({
     value: s.id,
     label: s.id === HOME_STORAGE ? t('storage.home', { name: s.name }) : s.name,
-    disabled: copying.value && s.id !== source,
+    disabled: copying.value && !(sourceDrives.size === 1 && sourceDrives.has(s.id)),
   })),
 );
 /**
@@ -58,6 +67,9 @@ const INDENT = 22;
 /** Every folder this modal has seen, so a selected id can be resolved to a node whichever list produced it. */
 const known = ref(new Map<string, Node>());
 
+/** What the server said about the last folder read or filter search; null while nothing has gone wrong. */
+const error = ref<string | null>(null);
+
 function remember(nodes: Node[]) {
   for (const node of nodes) known.value.set(node.id, node);
 }
@@ -65,10 +77,14 @@ function remember(nodes: Node[]) {
 async function load(id: string) {
   if (children.value.has(id) || loading.value.has(id)) return;
   loading.value = new Set(loading.value).add(id);
+  error.value = null;
   try {
     const found = await repository.listSubfolders(id);
     remember(found);
     children.value = new Map(children.value).set(id, found);
+  } catch (e) {
+    // Nothing is cached for the folder, so opening it again is a fresh attempt rather than a permanent empty.
+    error.value = errorMessage(e);
   } finally {
     const next = new Set(loading.value);
     next.delete(id);
@@ -88,6 +104,13 @@ async function toggle(id: string) {
 
 const moving = computed(() => new Set(props.nodes.map((n) => n.id)));
 const parents = computed(() => new Set(props.nodes.map((n) => n.parentId)));
+/** The folders on the move: nothing inside one of them can be where it goes. */
+const movingFolders = computed(() => props.nodes.filter((n) => n.kind === 'folder').map((n) => n.id));
+
+/** A folder that cannot take these nodes: one of them, or somewhere inside one of them. */
+function insideMoved(id: string): boolean {
+  return moving.value.has(id) || movingFolders.value.some((folder) => isInside(id, folder));
+}
 
 // Depth-first over what is open; a folder and everything inside it cannot be its own destination. The folder the
 // nodes already sit in is a target for a copy — that duplicates them where they are — but not for a move, which has
@@ -149,7 +172,9 @@ const rows = computed<Row[]>(() => {
   return hits.value.map((node) => ({
     node,
     depth: 0,
-    disabled: moving.value.has(node.id) || (!copying.value && parents.value.has(node.id)),
+    // The tree blocks a folder's whole subtree by walking into it; a flat hit list has no walk, so the ADDRESS
+    // answers instead — without this a search found the folder being moved from inside itself and offered it.
+    disabled: insideMoved(node.id) || (!copying.value && parents.value.has(node.id)),
     location: locationOf(node),
   }));
 });
@@ -184,11 +209,24 @@ watch(filter, (text) => {
   if (!needle) {
     hits.value = [];
     searching.value = false;
+    error.value = null;
     return;
   }
   searching.value = true;
+  error.value = null;
   filterTimer = setTimeout(async () => {
-    const found = await repository.searchFolders(storageId.value, needle);
+    let found: Node[];
+    try {
+      found = await repository.searchFolders(storageId.value, needle);
+    } catch (e) {
+      // A newer keystroke owns the box; its own answer decides. Otherwise: "Searching…" stops — it used to stay up
+      // for the rest of the modal's life — and the reason takes its place.
+      if (filter.value.trim() !== needle) return;
+      hits.value = [];
+      error.value = errorMessage(e);
+      searching.value = false;
+      return;
+    }
     if (filter.value.trim() !== needle) return;
     remember(found);
     hits.value = found;
@@ -257,8 +295,9 @@ async function submit() {
         </button>
       </li>
       <li v-if="searching" class="px-3 py-6 text-center text-15 text-text-3">{{ t('modal.destination.searching') }}</li>
-      <li v-else-if="!rows.length" class="px-3 py-6 text-center text-15 text-text-3">{{ t('modal.destination.noMatch') }}</li>
+      <li v-else-if="!rows.length && !error" class="px-3 py-6 text-center text-15 text-text-3">{{ t('modal.destination.noMatch') }}</li>
     </ul>
+    <p v-if="error" class="mt-2 text-13 leading-none text-danger" role="alert">{{ error }}</p>
     <template #footer>
       <Button variant="outline" @click="emit('close')">{{ t('modal.cancel') }}</Button>
       <Button :disabled="!target" class="disabled:opacity-50" @click="submit">{{ t(copying ? 'modal.destination.copyConfirm' : 'modal.destination.moveConfirm') }}</Button>

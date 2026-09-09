@@ -42,7 +42,9 @@ import (
 
 // maxPromptBytes bounds one question. Generous for anything typed, small
 // enough that a client cannot push a file's worth of text through the model on
-// the operator's bill.
+// the operator's bill. It is also the ceiling on the assistant's other request
+// bodies — a title, a path, a decision — which are far smaller still: a bound
+// that is loose for all of them is better than the three that were unbounded.
 const maxPromptBytes = 32 * 1024
 
 // AttachAI wires the model side. Without it the status endpoint reports no
@@ -249,6 +251,30 @@ func withScope(history []assistant.Message, mode string) []assistant.Message {
 	return history
 }
 
+// The two ways a turn is refused before it starts. They ride in the 429's
+// `code`, the same field name and the same flat vocabulary the error frame
+// uses for "quota" and "unavailable", so the panel has one thing to read.
+const (
+	// turnCodeBusy: this account already has a turn streaming — usually the
+	// person's own other tab. It clears itself when that one ends.
+	turnCodeBusy = "busy"
+	// turnCodeRateLimited: the per-minute ceiling. Waiting is the whole fix.
+	turnCodeRateLimited = "rate_limited"
+)
+
+// turnRefusalCode names the refusal, or "" for one that has no name yet —
+// anything unclassified stays generic rather than being labelled as the wrong
+// one of the two.
+func turnRefusalCode(err error) string {
+	switch {
+	case errors.Is(err, assistant.ErrBusy):
+		return turnCodeBusy
+	case errors.Is(err, assistant.ErrRateLimited):
+		return turnCodeRateLimited
+	}
+	return ""
+}
+
 // Turn asks the model and streams the answer back as server-sent events:
 //
 //	{"type":"meta","conversation_id":"7"}   once, first
@@ -292,9 +318,16 @@ func (h *Assistant) Turn(w http.ResponseWriter, r *http.Request) {
 	}
 	release, err := h.AI.Begin(user.ID, cfg.TurnsPerMinute)
 	if err != nil {
-		// 429 for both: one turn at a time and N per minute are the same
-		// answer to the client — wait and try again.
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": err.Error()})
+		// 429 for both, but not the same thing to the person: one means their
+		// own other tab is mid-answer, the other means this account has asked
+		// too often in the last minute. The code is what the panel branches on
+		// — the sentence beside it is English prose and matching against it
+		// would break on the day it is reworded.
+		refusal := map[string]string{"error": err.Error()}
+		if code := turnRefusalCode(err); code != "" {
+			refusal["code"] = code
+		}
+		writeJSON(w, http.StatusTooManyRequests, refusal)
 		return
 	}
 	defer release()
@@ -328,16 +361,23 @@ func (h *Assistant) Turn(w http.ResponseWriter, r *http.Request) {
 	// it would turn the stream back into one slow response.
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
+	// ⚠ The keepalive writes from a goroutine of its own, so every write to the
+	// stream goes through this lock — two writers interleaving would tear a
+	// frame in half.
+	var writing sync.Mutex
 	send := func(event map[string]any) error {
 		payload, err := json.Marshal(event)
 		if err != nil {
 			return err
 		}
+		writing.Lock()
+		defer writing.Unlock()
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
 			return err
 		}
 		return stream.Flush()
 	}
+	defer startKeepalive(r.Context(), w, stream, &writing)()
 	_ = send(map[string]any{"type": "meta", "conversation_id": strconv.FormatInt(session.ID, 10)})
 
 	// The toolbox is built per turn: the session id is half of every permission
@@ -360,9 +400,14 @@ func (h *Assistant) Turn(w http.ResponseWriter, r *http.Request) {
 		// the chat — the model reads contents or a refusal, the same as any
 		// other tool result, and the person types nothing.
 		tools.ask = func(ctx context.Context, card assistant.Card) string {
-			_ = send(cardEvent(card))
+			// ⚠ The waiter is registered BEFORE the card goes out, and the
+			// registration is dropped however this returns. Sending first left
+			// a gap: a person who pressed Allow inside it found no waiter to
+			// hand the decision to, and the turn then stood still for the full
+			// approvalWait before telling the model the request had expired.
 			answer := h.desk.expect(session.ID, card.Path)
 			defer h.desk.forget(session.ID, card.Path)
+			_ = send(cardEvent(card))
 			card.Decision = assistant.DecisionExpired
 			select {
 			case card.Decision = <-answer:
@@ -426,6 +471,56 @@ func (h *Assistant) Turn(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = send(map[string]any{"type": "done"})
+}
+
+// keepaliveInterval is how often a turn that is producing nothing says the
+// connection is still alive.
+//
+// A turn stands still for minutes on purpose: a read request waits up to
+// approvalWait for a button, an OCR or a large PDF takes its time, and a model
+// can be slow to its first token. Both ends of the connection treat silence as
+// death long before that — a reverse proxy's default proxy_read_timeout is 60s
+// and the panel's own silence watchdog is the same — so the ceiling here is
+// well under a minute, and low enough that one missed tick is still not a
+// timeout.
+//
+// ⚠ A var only so a test can shorten it; nothing writes it at run time.
+var keepaliveInterval = 15 * time.Second
+
+// startKeepalive writes an SSE COMMENT down the stream at that interval, and
+// returns the function that stops it.
+//
+// A comment rather than a new frame type: the client already drops comment
+// lines, so nothing has to learn a word for "still here", the stored answer
+// cannot be polluted by something that is never parsed, and a stop is
+// unaffected — the ping carries no meaning to lose.
+func startKeepalive(ctx context.Context, w http.ResponseWriter, stream *http.ResponseController, writing *sync.Mutex) func() {
+	stop, stopped := make(chan struct{}), make(chan struct{})
+	ticker := time.NewTicker(keepaliveInterval)
+	go func() {
+		defer close(stopped)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				writing.Lock()
+				if _, err := fmt.Fprint(w, ": keepalive\n\n"); err == nil {
+					_ = stream.Flush()
+				}
+				writing.Unlock()
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		// ⚠ Waited for, not merely signalled. A write to the ResponseWriter
+		// after the handler has returned races with the server recycling it.
+		<-stopped
+	}
 }
 
 // history replays the conversation for the model, oldest first.
@@ -631,7 +726,7 @@ func (h *Assistant) Approve(w http.ResponseWriter, r *http.Request) {
 		Path     string `json:"path"`
 		Decision string `json:"decision"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPromptBytes)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
 		return
 	}

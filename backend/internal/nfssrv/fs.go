@@ -28,20 +28,10 @@ import (
 // who exported `main/projects/acme` means — `mount server:/x/<secret> /mnt` and
 // then `ls /mnt` should show what is in acme, not a directory called `main`.
 
-var hiddenNames = map[string]bool{
-	".filex-trash": true,
-	".versions":    true,
-	".thumbs":      true,
-}
-
-func hiddenPath(rel string) bool {
-	for _, seg := range strings.Split(rel, "/") {
-		if hiddenNames[seg] {
-			return true
-		}
-	}
-	return false
-}
+// hiddenPath reports whether rel names one of filex's own buckets, or lives
+// anywhere beneath one — per path COMPONENT, through the shared
+// model.IsReservedPath rather than a private copy of the list.
+func hiddenPath(rel string) bool { return model.IsReservedPath(rel) }
 
 type fs struct {
 	srv       *Server

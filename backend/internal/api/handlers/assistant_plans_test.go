@@ -9,9 +9,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -344,4 +347,85 @@ func TestAssistantPlan_MoveIntoItselfIsRefused(t *testing.T) {
 	events := turnStream(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", "move notes into notes/inner")
 	assert.Empty(t, eventsOfType(events, "card"))
 	assert.Contains(t, provider.sent(), "cannot be moved into itself")
+}
+
+// ⚠⚠ A plan runs ONCE, however many approvals arrive at the same moment.
+//
+// A double click, a proxy that retried, two tabs: the old code read the status,
+// found `pending` in every request, ran the work in every request, and only
+// then tried to close the row. For plan_create_share that minted a second
+// public link whose URL was never shown to anybody — the loser got a 409 with
+// no results at all. So the plan is claimed BEFORE a single item runs.
+func TestAssistantPlan_ConcurrentApprovalsRunTheWorkOnce(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "plan_create_share", map[string]any{
+			"path": "main://notes/hello.txt", "summary": "Share the notes file by link",
+		}),
+		textFrame("Proposed."),
+	)
+	srv, client, store := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+	card := planCard(t, turnStream(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", "share it"))
+	planID, _ := card["plan_id"].(string)
+	require.NotEmpty(t, planID)
+
+	// Eight at once rather than two: the window the old code left open is
+	// short, and one racer that loses it proves nothing.
+	const racers = 8
+	url := srv.URL + "/api/assistant/sessions/" + session + "/plans/" + planID + "/approve"
+	codes := make([]int, racers)
+	start, wg, ready := make(chan struct{}), sync.WaitGroup{}, sync.WaitGroup{}
+	ready.Add(racers)
+	for i := range racers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// Warm up first, so what the barrier releases is eight requests on
+			// eight open connections rather than eight TCP handshakes taking
+			// turns — the window under test is a few hundred microseconds wide.
+			warm, err := client.Get(srv.URL + "/api/assistant/sessions")
+			if err == nil {
+				_, _ = io.Copy(io.Discard, warm.Body)
+				warm.Body.Close()
+			}
+			ready.Done()
+			<-start
+			// Never require/assert from here: a failed assertion in a goroutine
+			// that is not the test's own aborts the process rather than the test.
+			req, err := http.NewRequest(http.MethodPost, url, strings.NewReader("{}"))
+			if err != nil {
+				codes[i] = -1
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := client.Do(req)
+			if err != nil {
+				codes[i] = -1
+				return
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			codes[i] = resp.StatusCode
+		}()
+	}
+	ready.Wait()
+	close(start)
+	wg.Wait()
+
+	ok, conflict := 0, 0
+	for _, code := range codes {
+		switch code {
+		case http.StatusOK:
+			ok++
+		case http.StatusConflict:
+			conflict++
+		}
+	}
+	assert.Equal(t, 1, ok, "exactly one approval runs the plan, got %v", codes)
+	assert.Equal(t, racers-1, conflict, "every other approval is told the plan was already decided, got %v", codes)
+
+	node := nodeAt(t, store, "main://notes/hello.txt")
+	links, err := store.ListSharesByNode(context.Background(), node.ID)
+	require.NoError(t, err)
+	assert.Len(t, links, 1, "one approved plan is one link; a second one is a public URL nobody was ever shown")
 }

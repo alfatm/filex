@@ -9,6 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A new end-user app, `app/`.** The file surface people actually work in —
+  My files, Recent, Starred, Shared with me, Trash, search, the details panel,
+  the preview modal, the assistant panel — written from scratch as its own Vue
+  workspace package, in English, Russian and Turkish. ⚠ **filex does not serve
+  it yet**: `backend/embed` carries the admin SPA and the embed widget and
+  nothing else, and the Go server has no `/app` route, so the only way to run it
+  is the demo stand (`docker compose -f docker-compose.app.yml up --build`,
+  then http://localhost:5175/app/). Embedding it in the binary is a later wave.
+  The stand serves a BUILT bundle rather than the dev server, because the dev
+  server's screenshot hooks fake capabilities and post mock rows — against a
+  real backend that would be a demo making claims the server never made.
+- **Download a selection, or a whole folder, as one zip.**
+  `GET /api/files/download/zip?path=…&path=…` streams `archive/zip` built on the
+  fly from any mix of files and folders. A GET, because the download has to be a
+  navigation for the browser to own the save dialog and the disk write; every
+  root is stat'ed and authorised before the first byte, since a failure after
+  that point can only be a truncated file. Roots whose basenames collide are
+  de-duplicated (`report (2).txt`) instead of writing two members under one name
+  and letting the unpacker keep whichever it saw last.
+- **A person can empty their own trash, and delete one item from it for good.**
+  `DELETE /api/files/manager/trash/{id}` and
+  `POST /api/files/manager/trash/empty`, both scoped to what the caller could
+  have deleted in the first place — confinement on the entry's ORIGINAL path and
+  ≥editor there — where purging had been an admin-only action. Until now a
+  user's trash was a room they could put things into and never take anything out
+  of: items sat there until the retention sweep, and the app had to keep "Delete
+  forever" and "Empty trash" switched off. An entry the caller may not purge is
+  skipped rather than refused, so somebody else's deletion on a shared drive
+  cannot make "empty my trash" fail altogether.
+- **What has happened to ONE file.** `GET /api/files/activity?path=…` answers
+  the details panel's Activity tab, which had no endpoint behind it and rendered
+  empty. The events were being recorded already — as bell entries scoped to
+  whoever acted, with the file buried in `meta_json` — so migration 00034 adds
+  the two indexed columns that make them findable per node. Readable by whoever
+  may read the file (≥viewer), keyed by path, and with no backfill: history
+  starts at the upgrade. The queue's worker now writes the submitter's id on the
+  ops it runs, so a queued move or delete no longer reports "somebody" as its
+  actor.
+- **Search facets on `POST /api/files/search`**: `path_prefix`, `ext`,
+  `modified_after`, `size_min`, `size_max`, `owner_id` and `dirs_only`. The
+  index knows a document's name, path, mime and type and nothing else, so every
+  other filter the advanced form offers had been applied to the ANSWER — the
+  first 100 hits, minus what did not fit — and a file ranked past that window
+  was invisible in a way no client could tell from "there are none". They are
+  resolved against the node table and pushed into the index as a restriction, so
+  the count is a count of the filtered set. A fully quoted query is a phrase
+  search inside files, which is what the form's "whole phrase" box always meant.
+- **The drive list is an endpoint.** `GET /api/files/storages` answers with the
+  drives the caller may see (same RBAC filter as a folder listing) plus
+  `used_bytes` per drive, so a client can draw its drive switcher before picking
+  a drive and each drive card reports for itself instead of repeating the
+  ACCOUNT's figure under every one. The ceiling stays the account's, because
+  that is the only ceiling filex has.
+- **An account can see and end its own sign-ins.** `GET /api/auth/sessions` and
+  `DELETE /api/auth/sessions/{id}`. filex has recorded a row per sign-in since
+  its first migration and had never shown it to the person who made it; the
+  session the request itself is made with is marked and cannot be ended, because
+  that is what signing out is. `ip` and `user_agent` were also never WRITTEN —
+  both login drivers passed empty strings — so they are filled from now on and
+  older rows read as an unknown device.
 - **Long lists leave the chat as a report card.** The assistant may name at
   most 20 files in an answer; a folder's contents, everything a search found or
   a written report go through the new `write_report` tool instead. The person
@@ -18,6 +78,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   missing rather than written into the file. The tool changes nothing and needs
   no approval. The turn stream carries it as a `report` frame; it is stored
   with the answer and comes back as `reports` on the message.
+
+- **The assistant panel can be resized, and it comes back the way it was
+  left.** Drag its left edge (or focus the handle and use ←/→) between 320 and
+  720 px. Width, open/closed state and the conversation on screen are
+  remembered in the browser, so a reload or a new tab returns to the same chat;
+  a remembered chat that was deleted or evicted is forgotten and the panel
+  opens empty.
+- **The assistant sees what is on screen.** The app sends the page, the open
+  folder, the selected rows and — on the search page — the query, its settings,
+  the count and the first hits with every question (`context` on the turn), so
+  "these files" and "this folder" mean what the person is looking at. Appended
+  to that one question only, like the mode chip; never stored or replayed.
+- **`plan_move`: the assistant can propose moving files and folders into one
+  folder**, creating the folder first as its own line of the plan. Same-drive
+  only, never overwrites (a name already taken in the destination is skipped as
+  `taken`, checked against the driver rather than the cache), and like every
+  plan it runs only after the person approves it in the panel. The listing on
+  screen is re-read once a plan has done something, so a move shows without a
+  reload. A long plan scrolls inside its card, and a button on the card opens
+  it in a modal with the room to read it and the same Approve / Don't buttons.
+- **The assistant proposes a plan on the first ask.** The standing instructions
+  used to describe a "write the plan, wait for a yes, then act" protocol, which
+  the model followed literally — the plan came out as prose, the person had to
+  say yes in the chat, and only then was the card offered; between the two it
+  could claim the work was done. The instructions now say what is true: the
+  plan tool call IS the plan, the card IS the approval, and nothing may be
+  reported as done until the interface says what happened.
 
 ### Changed
 
@@ -68,34 +155,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The two canned prompts under the assistant's mode chips ("Find contracts
   from July", "Search by tag: design"): they fit no real drive.
 
-### Added
+### Security
 
-- **The assistant panel can be resized, and it comes back the way it was
-  left.** Drag its left edge (or focus the handle and use ←/→) between 320 and
-  720 px. Width, open/closed state and the conversation on screen are
-  remembered in the browser, so a reload or a new tab returns to the same chat;
-  a remembered chat that was deleted or evicted is forgotten and the panel
-  opens empty.
-- **The assistant sees what is on screen.** The app sends the page, the open
-  folder, the selected rows and — on the search page — the query, its settings,
-  the count and the first hits with every question (`context` on the turn), so
-  "these files" and "this folder" mean what the person is looking at. Appended
-  to that one question only, like the mode chip; never stored or replayed.
-- **`plan_move`: the assistant can propose moving files and folders into one
-  folder**, creating the folder first as its own line of the plan. Same-drive
-  only, never overwrites (a name already taken in the destination is skipped as
-  `taken`, checked against the driver rather than the cache), and like every
-  plan it runs only after the person approves it in the panel. The listing on
-  screen is re-read once a plan has done something, so a move shows without a
-  reload. A long plan scrolls inside its card, and a button on the card opens
-  it in a modal with the room to read it and the same Approve / Don't buttons.
-- **The assistant proposes a plan on the first ask.** The standing instructions
-  used to describe a "write the plan, wait for a yes, then act" protocol, which
-  the model followed literally — the plan came out as prose, the person had to
-  say yes in the chat, and only then was the card offered; between the two it
-  could claim the work was done. The instructions now say what is true: the
-  plan tool call IS the plan, the card IS the approval, and nothing may be
-  reported as done until the interface says what happened.
+- **Any signed-in account could read and roll back another person's file
+  versions.** The three routes under `/api/files/versions` took a numeric
+  `node_id` and asserted nothing about it, so guessing an integer was enough to
+  read a stranger's revision history — every author and size of every write —
+  and to restore an older revision over their live bytes. They are guarded now:
+  ≥viewer to list a timeline, ≥editor to snapshot or to restore, plus the same
+  tenant-root confinement every other file route applies. An unknown id answers
+  404 rather than an empty timeline, which was itself an answer about whether
+  that id names a file.
+- **A zip of a storage root carried filex's internal buckets.** The archive
+  walks the storage DRIVER, which is below the listing projections that hide
+  `.filex-trash/`, `.versions/`, `.thumbs/` and the e2e marker — so "download
+  this folder" on a drive root packed up every account's deleted files and every
+  snapshot ever taken of every file, for anyone holding viewer on the root. The
+  walk drops those buckets by path component now, at the root or nested.
+- **The per-file activity feed handed out public-link tokens.** `meta_json` is a
+  bell payload and carries whatever the emitting surface put there;
+  `share.created` puts the share's TOKEN in it. The feed stripped `actor` and
+  `node` and passed the rest through, so the credential for a public link —
+  anonymous drop links included — reached every account with viewer on the file.
+  It is a whitelist now (`from`, `to`, `origin`), which also cannot leak
+  whatever a future emitter adds.
+- **The assistant's trash tools showed the WHOLE installation's trash.**
+  `trash.Service.List` takes no user and filters nothing — it is the
+  administrator's listing — and both `list_trash` and `plan_empty_trash` were
+  handing it straight to the model, so other people's deleted file names, paths
+  and sizes went to the model provider, and `plan_empty_trash` counted its
+  50-item ceiling over all of them. Both apply the same two passes the trash page
+  applies (confinement, then ≥viewer on the entry's original path) before the
+  model sees a row, and the reported total counts what survives them.
+- **An approved plan could be run twice.** The status moved out of `pending` in
+  the statement that RECORDED the outcome, so two approvals racing — a double
+  click, a retried request, two tabs — both passed the check and both executed
+  the work; for `create_share` that meant a second public link whose URL was
+  never shown to anybody. The row is claimed before any work starts, and
+  execution then runs on a context detached from the request, so a client that
+  hangs up mid-plan can no longer leave the plan half-done and still approvable.
+- **Emptying your own trash silently emptied nothing.** `POST
+  /api/files/manager/trash/empty` judged the first page of a listing ordered by
+  deletion time across every account, so with 500 other people's deletions in
+  front of the caller's own, every request answered `purged: 0, skipped: 500` —
+  and the app, which stops asking as soon as a round purges nothing, reported a
+  trash it had emptied and had not. It now steps over pages that purged nothing
+  until one produces a result or the listing runs out.
 
 ## [0.34.0] - 2026-09-06
 

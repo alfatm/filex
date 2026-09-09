@@ -60,6 +60,7 @@ function onFilesPicked(event: Event) {
     :items="entries"
     :x="menu.state.x"
     :y="menu.state.y"
+    :anchor="menu.state.anchor"
     :width="MENU_WIDTH"
     :label="label"
     @select="onSelect"

@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import { copyFileSync, createReadStream, existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -137,10 +137,46 @@ function demoAssets(): Plugin {
   };
 }
 
-// Vite config for the filex end-user UI. `base` MUST stay '/app/' — the backend
-// mounts this SPA there.
+/**
+ * `src/data/index.ts` picks the mock repository whenever `VITE_FILEX_API` is unset. In dev that is the point —
+ * the app runs with nothing behind it. In a production build it is a trap: the bundle looks like the product and
+ * serves demo data, and nothing on screen says so. So that build refuses to start. A demo bundle is still
+ * buildable, but has to say it is one: `vite build --mode demo`.
+ */
+function requireApiTarget(): Plugin {
+  return {
+    name: 'filex-require-api-target',
+    config(_config, { command, mode }) {
+      if (command !== 'build' || mode !== 'production') return;
+      // Reads `.env*` next to this file as well as the process environment, which is where the stand sets it.
+      if (loadEnv(mode, __dirname, 'VITE_').VITE_FILEX_API) return;
+      throw new Error(
+        'VITE_FILEX_API is not set: this production build would ship the mock repository and look like the real app.\n' +
+          '  Set VITE_FILEX_API=1 (dev server proxies /api) or to the server URL, or build the demo explicitly:\n' +
+          '  vite build --mode demo',
+      );
+    },
+  };
+}
+
+/**
+ * Same rewriting for `vite` and `vite preview`: the app is one origin from the browser's side either way, so the
+ * session cookie rides along and nothing needs CORS. The target moves with the deployment — docker-compose.app.yml
+ * points it at the `filex` service; a plain local backend is the default.
+ */
+const apiProxy = {
+  '/api': process.env.FILEX_API_PROXY ?? 'http://localhost:5212',
+  // The admin console, so the account menu's "Admin settings" opens it from here too. In a deployment the
+  // two are one origin already; here they are two ports, and a same-origin link would reopen this app.
+  '/admin': process.env.FILEX_API_PROXY ?? 'http://localhost:5212',
+};
+
+// Vite config for the filex end-user UI. `base` MUST stay '/app/': it is the path the app is served from and the
+// prefix its router and asset URLs are built with. Nothing in the Go server mounts it — `backend/embed` carries
+// the admin SPA and the embed widget only, and there is no `/app` route — so the one way to run this today is
+// `docker-compose.app.yml`, which serves the built bundle under that same base. See docs/BACKEND-GAP.md § Hosting.
 export default defineConfig({
-  plugins: [vue(), demoAssets()],
+  plugins: [vue(), demoAssets(), requireApiTarget()],
   base: '/app/',
   resolve: {
     alias: {
@@ -156,17 +192,19 @@ export default defineConfig({
   },
   server: {
     port: 5174,
-    // Host so the dev server is reachable from outside a container; the proxy target moves with it
-    // (docker-compose.app.yml points it at the filex service). Both default to a plain local backend.
+    // Host so the dev server is reachable from outside a container.
     host: process.env.VITE_HOST ?? 'localhost',
     // Behind a container port mapping the browser reaches a different port than Vite binds; the HMR socket has
     // to be told which one to dial, or every edit silently fails to reload.
     hmr: process.env.VITE_HMR_CLIENT_PORT ? { clientPort: Number(process.env.VITE_HMR_CLIENT_PORT) } : undefined,
-    proxy: {
-      '/api': process.env.FILEX_API_PROXY ?? 'http://localhost:5212',
-      // The admin console, so the account menu's "Admin settings" opens it from here too. In a deployment the
-      // two are one origin already; in dev they are two ports, and a same-origin link would reopen this app.
-      '/admin': process.env.FILEX_API_PROXY ?? 'http://localhost:5212',
-    },
+    proxy: apiProxy,
+  },
+  // `vite preview` serves `dist/`, which is what docker-compose.app.yml runs: a stand pointed at a real server
+  // has to show what a BUILD does, and the dev server's screenshot/e2e hooks (src/dev/screenshotQuery.ts, behind
+  // `import.meta.env.DEV`) are not in one. Same port and host as the dev server so the stand's mapping is the same.
+  preview: {
+    port: 5174,
+    host: process.env.VITE_HOST ?? 'localhost',
+    proxy: apiProxy,
   },
 });

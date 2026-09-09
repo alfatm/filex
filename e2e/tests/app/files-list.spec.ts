@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
+import { countIn } from '../../helpers/mockTree';
 
-const ROW_COUNT = 17;
+const ROW_COUNT = countIn();
 
 function rows(page: Page) {
   return page.getByRole('grid').locator('tbody tr');

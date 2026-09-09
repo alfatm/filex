@@ -1,5 +1,7 @@
 import { computed, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useFilesStore } from '@/stores/files';
+import { useToastStore } from '@/stores/toast';
 import { useClipboardStore } from './clipboardStore';
 import { useItemMenuStore } from './itemMenuStore';
 import { useUndoStore } from './undoStore';
@@ -18,6 +20,8 @@ export function useListingKeyboard() {
   const itemMenu = useItemMenuStore();
   const clipboard = useClipboardStore();
   const history = useUndoStore();
+  const toast = useToastStore();
+  const { t } = useI18n();
 
   function onKeydown(event: KeyboardEvent) {
     if ((event.target as HTMLElement | null)?.closest(INTERACTIVE)) return;
@@ -40,7 +44,10 @@ export function useListingKeyboard() {
         return event.preventDefault();
       }
       if (event.code === 'KeyZ') {
-        void (event.shiftKey ? history.redo() : history.undo());
+        const back = !event.shiftKey;
+        // The step is still armed after a failure (see `undoStore.replay`), so saying so is what turns "nothing
+        // happened" into "press it again": the key used to swallow the rejection and the step with it.
+        void (back ? history.undo() : history.redo()).catch(() => toast.push(t(back ? 'toast.undoFailed' : 'toast.redoFailed')));
         return event.preventDefault();
       }
       // Anything else with a modifier falls through: Ctrl+A is select-all, and it lives in `handleKeydown`.

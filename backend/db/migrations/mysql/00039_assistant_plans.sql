@@ -36,12 +36,13 @@ CREATE TABLE IF NOT EXISTS assistant_plans (
     result_json MEDIUMTEXT NOT NULL,
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     decided_at  DATETIME NULL,
+    -- Declared inline, like every other index in this directory: MySQL 8 has no
+    -- `CREATE INDEX IF NOT EXISTS` (that spelling is MariaDB's), and a syntax
+    -- error here stops the migration run the server does at startup.
+    INDEX idx_assistant_plans_session (session_id, id),
     CONSTRAINT fk_assistant_plans_session FOREIGN KEY (session_id)
         REFERENCES assistant_sessions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE INDEX IF NOT EXISTS idx_assistant_plans_session
-    ON assistant_plans (session_id, id);
 
 -- +goose StatementEnd
 

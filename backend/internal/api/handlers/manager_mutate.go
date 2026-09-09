@@ -122,6 +122,13 @@ func (h *Manager) vfNewFolder(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, mapDriverErr(err), map[string]string{"error": err.Error()})
 		return
 	}
+	// EnsureDirTarget passes an existing FOLDER through, and Mkdir is
+	// MkdirAll, so without this the caller gets 200 and the client adopts
+	// somebody else's folder as the one it just created.
+	if err := ensureNameFree(r.Context(), drv, fullRel); err != nil {
+		writeJSON(w, mapDriverErr(err), map[string]string{"error": err.Error()})
+		return
+	}
 	if err := mk.Mkdir(r.Context(), fullRel); err != nil {
 		writeJSON(w, mapDriverErr(err), map[string]string{"error": "mkdir: " + err.Error()})
 		return
@@ -223,6 +230,14 @@ func (h *Manager) vfRename(w http.ResponseWriter, r *http.Request) {
 	if dstRel == srcRel {
 		// No-op rename — just re-render.
 		h.vfIndex(w, r, current, parentRel, storageNames, false)
+		return
+	}
+	// No driver refuses an occupied destination for us: os.Rename on Linux
+	// silently REPLACES the file already sitting there, and the object stores
+	// overwrite the key. Renaming onto a taken name has to be a 409 here or it
+	// is data loss on the main UI path.
+	if err := ensureNameFree(r.Context(), drv, dstRel); err != nil {
+		writeJSON(w, mapDriverErr(err), map[string]string{"error": "rename: " + err.Error()})
 		return
 	}
 	if err := mv.Move(r.Context(), srcRel, dstRel); err != nil {
@@ -983,6 +998,31 @@ func (h *Manager) applyDBMove(ctx context.Context, storageID int64, srcRel, dstR
 	if fresh, _ := h.Store.GetNode(ctx, existing.ID); fresh != nil {
 		h.indexNode(ctx, fresh)
 	}
+}
+
+// ensureNameFree reports os.ErrExist — a 409 through mapDriverErr — when the
+// target name is already taken, whatever kind of entry holds it.
+//
+// Stat is the check, because Stat is the one call in the base Driver interface:
+// local, s3, sftp, smb, webdav and ftp all answer it, and none of them refuses
+// an occupied destination on its own.
+//
+// It fails open exactly like the kind guards in internal/storage: any error
+// that is not a clean ErrNotFound leaves the verdict unreachable, and a backend
+// too unwell to answer Stat must not start refusing renames. The write it
+// guards is about to fail anyway.
+func ensureNameFree(ctx context.Context, d storage.Driver, p string) error {
+	if d == nil || p == "" {
+		return nil
+	}
+	if _, err := d.Stat(ctx, p); err != nil {
+		if !errors.Is(err, storage.ErrNotFound) {
+			slog.Debug("manager: name guard stat inconclusive, allowing write",
+				slog.String("path", p), slog.String("err", err.Error()))
+		}
+		return nil
+	}
+	return fmt.Errorf("%w: %q", os.ErrExist, p)
 }
 
 // mapDriverErr normalizes driver errors into HTTP statuses for the

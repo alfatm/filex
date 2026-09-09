@@ -72,8 +72,16 @@ above are the enforcement, and they hold whether or not the model cooperates.
 
 The assistant's file access goes through the same ACL chokepoint as the REST and
 [MCP](MCP.md) surfaces, running **as the person asking**. It sees their drives,
-their grants, their trash — never more, and an administrator's assistant is not
-special.
+their grants, their own entries in the trash — never more, and an
+administrator's assistant is not special.
+
+⚠ The trash is the one place where "as the person asking" had to be built
+rather than inherited: `trash.Service.List` takes no user and filters nothing —
+it is the ADMINISTRATOR's listing. Both trash tools now read a page of it and
+apply the same two passes `GET /api/files/manager/trash` applies, confinement
+then ≥viewer on the entry's original path, before the model sees anything. The
+reported total is the count of what survives that filter, and
+`plan_empty_trash` counts its 50-item ceiling over the same survivors.
 
 | Tool | What it returns |
 |---|---|
@@ -82,7 +90,7 @@ special.
 | `search_files` | name and content search on one drive, with short snippets — the rows also go to the panel as result cards |
 | `list_versions` | the stored revisions of one file, with their ids |
 | `list_shares` | the public links on one item, with their ids — ⚠ never the link token itself |
-| `list_trash` | what is in the trash, with sizes and deletion dates |
+| `list_trash` | what is in **this person's** trash, with sizes and deletion dates — filtered out of the installation-wide listing, of which one page (500 rows) is scanned |
 | `read_file` | a text file's contents — plain text as it is, PDF / DOCX / XLSX / PPTX through the search index's extractors — **gated**, see below |
 | `read_image_text` | the words in a picture, by OCR (`tesseract`, when installed) — **gated** the same way |
 | `view_image` | the picture itself, scaled to fit and attached to the result for the model to see; needs a model that accepts images — **gated** the same way |
@@ -171,11 +179,20 @@ model ──plan_tags(…)──► server: resolve + fingerprint ──► assi
                                      server executes THE ROW ───┘        (no model here)
 ```
 
-A plan runs at most once: the status is claimed from `pending` in the same
-statement that marks it done, so two approvals racing leave one winner. Most
-items are idempotent anyway — a tag set twice is one tag — but a restore run
-twice would take a version back over a version, and that is not recoverable by
-retrying.
+A plan runs at most once, and the row is claimed out of `pending` **before**
+any work starts — not by the statement that records the outcome. Two approvals
+racing (a double click, a retried request, two tabs) both pass the cheap status
+read; only one wins the claim, and the loser answers 409 having done nothing.
+Claiming afterwards meant both ran the work and one threw its own result away —
+for `create_share`, a second public link whose URL was never shown to anybody.
+Most items are idempotent anyway — a tag set twice is one tag — but a restore
+run twice would take a version back over a version, and that is not recoverable
+by retrying.
+
+Once claimed, the plan is carried to a stored outcome regardless of the client:
+execution runs on a context detached from the request, so a browser that hangs
+up mid-plan cannot leave the row `pending` with half the work already done and
+an approve button still live.
 
 Cancelling is a decision too: a refused plan is `cancelled`, and a later
 approval of it answers 409. When the conversation is reopened, the card is
@@ -212,9 +229,13 @@ API. The second check is not redundant: minutes can pass, and a grant can be
 withdrawn in between.
 
 ⚠ The executor also checks ≥editor **itself** rather than leaning on the
-endpoints it calls. `/api/files/versions` takes a node id and restores, with no
-ACL assertion in the handler — a pre-existing gap in that surface, which the
-plan executor declines to inherit.
+endpoints it calls. This is defence in depth, not a patch over somebody else's
+hole: `/api/files/versions` guards its own node — `guardedNode` resolves the
+`node_id`, refuses one that does not exist, and requires ≥viewer to read a
+timeline and ≥editor to snapshot or restore. The executor keeps its own check
+because it has to be correct on its own terms: it runs from a stored row,
+minutes after the plan was built, and its authority to act has to come from
+what it checked itself rather than from whichever handler it happens to call.
 
 ### What a plan may contain
 

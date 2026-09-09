@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Node } from '@/data/types';
-import { CSV_MAX_ROWS, downloadUrl, parseCsv, previewKind, previewList, splitLines, TEXT_MAX_BYTES } from './preview';
+import { CSV_MAX_ROWS, parseCsv, previewKind, previewList, splitLines, TEXT_MAX_BYTES } from './preview';
 
 const file = (name: string, extra: Partial<Node> = {}): Node =>
   ({ id: name, name, kind: 'file', size: 100, assetUrl: `/app/demo-assets/${name}`, fileType: 'other', ...extra }) as Node;
@@ -24,13 +24,6 @@ describe('previewKind', () => {
     expect(previewKind(file('big.txt', { size: TEXT_MAX_BYTES + 1 }))).toBe('none');
     expect(previewKind(file('big.csv', { fileType: 'csv', size: TEXT_MAX_BYTES + 1 }))).toBe('none');
     expect(previewKind({ ...file('Docs'), kind: 'folder' })).toBe('none');
-  });
-});
-
-describe('downloadUrl', () => {
-  it('adds the download flag to the asset URL', () => {
-    expect(downloadUrl(file('a b.txt', { assetUrl: '/app/demo-assets/a%20b.txt' }))).toBe('/app/demo-assets/a%20b.txt?download=1');
-    expect(downloadUrl(file('a.txt', { assetUrl: undefined }))).toBeUndefined();
   });
 });
 

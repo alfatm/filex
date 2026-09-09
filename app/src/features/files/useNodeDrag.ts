@@ -36,10 +36,12 @@ export function useNodeDrag() {
     if (!drag.canDrop(node)) return;
     event.preventDefault();
     event.stopPropagation();
-    const dropped = event.dataTransfer?.files;
+    const dropped = event.dataTransfer;
     const moved = [...drag.nodes];
     drag.end();
-    if (dropped?.length) await uploads.start(dropped, node.id);
+    // The whole DataTransfer, not its `files`: a dropped FOLDER is only recognisable through the item entries, and
+    // handing over the file list alone sent the server a zero-length file named after the folder.
+    if (dropped?.files.length) await uploads.start(dropped, node.id);
     else if (moved.length) await files.move(moved, node);
   }
 

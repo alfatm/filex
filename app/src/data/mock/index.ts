@@ -241,6 +241,11 @@ export const mockRepository: Repository = {
   previewUrl(id: string) {
     return nodes.find((n) => n.id === id)?.assetUrl;
   },
+  downloadUrl(id) {
+    // The demo's files are static assets: the flag only tells the dev server to send them as an attachment.
+    const asset = nodes.find((n) => n.id === id)?.assetUrl;
+    return asset && `${asset}?download=1`;
+  },
   archiveUrl() {
     // Zipping is the server's work, and the demo has no server; the capability says so and the UI stays honest.
     return null;
@@ -326,6 +331,9 @@ export const mockRepository: Repository = {
   // server would let the demo show a list the real thing cannot produce.
   async listAssistantSessions() {
     return [...chatSessions].sort((a, b) => b.lastActiveAt.localeCompare(a.lastActiveAt)).map((s) => ({ ...s }));
+  },
+  assistantSessionMax() {
+    return MAX_CHAT_SESSIONS;
   },
   async createAssistantSession(title) {
     const now = new Date().toISOString();

@@ -82,6 +82,13 @@ export interface Repository {
    * a request per line.
    */
   previewUrl(id: string): string | undefined;
+  /**
+   * Where to point the browser to save a file, or undefined when it has no bytes to save. The data layer's job and
+   * not a helper's: filex serves a download from the same manager endpoint as a preview but under a different verb,
+   * while the demo's files are static assets — so "the preview address plus a flag" is only true of the demo, and
+   * against a real server it produced a second `?` INSIDE the query, which the server read as part of the path.
+   */
+  downloadUrl(id: string): string | undefined;
 
   /** How this account signs in, and what it may change here: the Security card asks before it offers anything. */
   authMethods(): Promise<AuthMethods>;
@@ -110,6 +117,12 @@ export interface Repository {
   // to anybody else, an administrator included.
   /** Most recently active first — the order the list is drawn in and the order eviction reads from the far end. */
   listAssistantSessions(): Promise<AssistantSession[]>;
+  /**
+   * How many conversations the account may keep, as the session listing states it (`max` in its answer). A number
+   * the server owns and has always sent; the panel used to print a constant of its own beside the count, which is
+   * only right until an install changes the limit. Reads what the last listing said, so ask after listing.
+   */
+  assistantSessionMax(): number;
   /** Starts one. Reaching the per-account cap evicts the least recently active session rather than refusing. */
   createAssistantSession(title?: string): Promise<AssistantSession>;
   /** The turns of one conversation, plus the files it has been given permission to open. */
@@ -163,7 +176,12 @@ export interface Repository {
   /** Drops a staged upload: its staging area and its quota reservation go with it. */
   abortUpload(id: string): Promise<void>;
   rename(id: string, name: string): Promise<Node>;
-  moveToTrash(ids: string[]): Promise<void>;
+  /**
+   * The three queued verbs (`moveToTrash`, `move`, `copy`) submit a job and then wait on it. `signal` gives that
+   * wait up: the job is on the server and carries on, so the call then rejects with `OPERATION_PENDING` like any
+   * other wait that ended without an answer.
+   */
+  moveToTrash(ids: string[], signal?: AbortSignal): Promise<void>;
   restore(ids: string[]): Promise<void>;
   deleteForever(ids: string[]): Promise<void>;
   emptyTrash(): Promise<void>;
@@ -172,12 +190,12 @@ export interface Repository {
   listTags(id: string): Promise<string[]>;
   /** Replaces the node's tag list; an empty array clears it. */
   setTags(id: string, tags: string[]): Promise<void>;
-  move(ids: string[], targetFolderId: string): Promise<void>;
+  move(ids: string[], targetFolderId: string, signal?: AbortSignal): Promise<void>;
   /**
    * Server-side copy into `targetFolderId`, subtrees included. A name already taken there becomes
    * `<base>-copy<ext>`, then `-copy-2`, so pasting into the source's own folder duplicates rather than failing.
    */
-  copy(ids: string[], targetFolderId: string): Promise<void>;
+  copy(ids: string[], targetFolderId: string, signal?: AbortSignal): Promise<void>;
   createShareLink(id: string): Promise<string>;
   /**
    * The caller's own live public link to this node, or null when they have none. A listing row says THAT a node

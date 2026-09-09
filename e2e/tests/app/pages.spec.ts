@@ -5,6 +5,14 @@ import { test, expect, type Page } from '@playwright/test';
  * (they feed Recent's "Today" / "Yesterday"), so the page clock is pinned to keep the groups deterministic.
  */
 const FIXED_TIME = '2026-07-10T16:00:00Z';
+const DAY = 24 * 60 * 60 * 1000;
+
+/** A Recent day heading — "Today", "Yesterday" or "Jul 8, 2026" — as a number the run can order. */
+function dayOf(label: string): number {
+  if (label === 'Today') return Date.parse(FIXED_TIME);
+  if (label === 'Yesterday') return Date.parse(FIXED_TIME) - DAY;
+  return Date.parse(`${label} UTC`);
+}
 
 function rows(page: Page) {
   return page.getByRole('grid').locator('tbody tr');
@@ -74,26 +82,17 @@ test.describe('Pages', () => {
     await page.goto('recent');
     await expect(page.getByRole('heading', { name: 'Recent' })).toBeVisible();
     const headings = page.getByRole('grid').locator('tbody tr').filter({ hasNot: page.locator('[data-id]') }).filter({ has: page.locator('td[colspan]') });
-    // Root files carry the reference dates; the files inside each folder are dated hourly below their folder's date.
-    await expect(headings).toHaveText([
-      'Today',
-      'Yesterday',
-      'Jul 8, 2026',
-      'Jul 7, 2026',
-      'Jul 6, 2026',
-      'Jul 5, 2026',
-      'Jul 3, 2026',
-      'Jul 1, 2026',
-      'Jun 28, 2026',
-      'Jun 27, 2026',
-      'Jun 20, 2026',
-      'Jun 19, 2026',
-      'Jun 18, 2026',
-      'Jun 14, 2026',
-      'Jun 13, 2026',
-      'Jun 10, 2026',
-      'Jun 5, 2026',
-    ]);
+    // Root files carry the reference dates; the files inside each folder are dated hourly below their folder's
+    // date, so WHICH days appear is a property of the generated asset tree — a transcript of them was a list that
+    // had to be retyped every time the tree was regenerated. What the page promises is asserted instead: one
+    // heading per day, newest first, opening on the days the reference dates pin.
+    // `allTextContents` reads once, so wait for the grid before reading it.
+    await expect(headings.first()).toHaveText('Today');
+    const days = await headings.allTextContents();
+    expect(days[1]).toBe('Yesterday');
+    for (const pinned of ['Jul 8, 2026', 'Jul 1, 2026', 'Jun 5, 2026']) expect(days).toContain(pinned);
+    expect(new Set(days).size).toBe(days.length);
+    expect(days.map(dayOf)).toEqual([...days.map(dayOf)].sort((a, b) => b - a));
     const files = page.locator('tbody tr[data-id]');
     await expect(files.first()).toContainText('Q3 report.pdf');
     await expect(files.nth(1)).toContainText('README.md');

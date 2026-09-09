@@ -27,7 +27,10 @@ export const useDragStore = defineStore('drag', () => {
   /** A node may not be dropped on itself, and an OS drag may land on any folder. */
   function canDrop(target: Node): boolean {
     if (target.kind !== 'folder' || target.deletedAt) return false;
-    return files.value || (nodes.value.length > 0 && !nodes.value.some((n) => n.id === target.id));
+    // The nodes decide whenever there are any: the two conditions used to be an `||`, so a stale `files` flag made
+    // the folder BEING dragged a valid target for itself.
+    if (nodes.value.length) return !nodes.value.some((n) => n.id === target.id);
+    return files.value;
   }
 
   return { nodes, overId, files, start, end, canDrop };

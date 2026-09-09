@@ -16,6 +16,8 @@
 package handlers
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -76,7 +78,15 @@ func (h *AssistantAdmin) DeleteSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
 		return
 	}
-	if _, err := h.Store.GetAssistantSession(r.Context(), id); err != nil {
+	// Two outcomes, not one: an id that is not there is a 404, and a database
+	// that will not answer is a 500. Reporting the second as the first hid every
+	// degradation from monitoring and told the operator the row was already gone.
+	session, err := h.Store.GetAssistantSession(r.Context(), id)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if err != nil || session == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}

@@ -1,6 +1,6 @@
 /**
- * The one place that talks to filex over HTTP. Everything goes through `request`, so the session cookie, the error
- * shape and the "you are signed out" path are decided once.
+ * The one place that talks to filex over HTTP. Everything goes through `request`, so the session cookie and the
+ * error shape are decided once.
  *
  * Paths are relative to the origin: the dev server proxies `/api` to the backend (vite.config.ts), and in production
  * the SPA is served by filex itself.
@@ -17,9 +17,6 @@ export class HttpError extends Error {
     this.name = 'HttpError';
   }
 }
-
-/** Raised once per session when the server says the caller is not signed in. */
-export const UNAUTHORIZED_EVENT = 'filex:unauthorized';
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -51,8 +48,11 @@ async function settle<T>(response: Response): Promise<T> {
   const text = await response.text();
   const payload: unknown = text ? safeParse(text) : null;
   if (!response.ok) {
-    // Whoever is listening (the shell) sends the user to the login page; the caller still gets its rejection.
-    if (response.status === 401) window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+    // 401 is raised like any other status, deliberately: it was also broadcast as a "session expired" event that
+    // nothing ever listened for, and could not have been listened for safely — a wrong current password in
+    // Settings → Security is a 401 too, so a shell acting on the event would sign the person out of the app from
+    // inside the password form. Bring it back once this app owns a sign-in route (today's form lives in the admin
+    // SPA) and a caller can say which 401s it expects; until then the layer that made the call is the one that knows.
     throw new HttpError(response.status, payload, messageOf(response.status, payload));
   }
   return payload as T;

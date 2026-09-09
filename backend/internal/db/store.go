@@ -326,6 +326,10 @@ type Store interface {
 	// SetAssistantSessionTitle records a title; manual marks it as chosen by a
 	// person, which stops the generator from replacing it later.
 	SetAssistantSessionTitle(ctx context.Context, id int64, title string, manual bool) error
+	// DeleteAssistantSession removes a conversation and everything scoped to
+	// it — messages, read grants, plans — atomically. The grants are the
+	// person's consent to open named files and do not outlive the conversation
+	// they were given in.
 	DeleteAssistantSession(ctx context.Context, id int64) error
 	// EvictAssistantSessions drops everything past `keep` for this user, oldest
 	// by LAST ACTIVITY, and answers with how many it removed. Ordering by
@@ -356,13 +360,26 @@ type Store interface {
 	CreateAssistantPlan(ctx context.Context, p *model.AssistantPlan) (*model.AssistantPlan, error)
 	GetAssistantPlan(ctx context.Context, id int64) (*model.AssistantPlan, error)
 	ListAssistantPlans(ctx context.Context, sessionID int64) ([]*model.AssistantPlan, error)
-	// FinishAssistantPlan records the outcome and closes the plan.
+	// ClaimAssistantPlan takes a pending plan for execution and reports whether
+	// this caller is the one that got it.
 	//
-	// ⚠ It moves the row out of `pending` ONLY while it is still pending, and
-	// reports whether it did. That is what makes a plan run at most once: two
-	// approvals racing (a double click, a retried request) leave exactly one
-	// winner, and the loser is told the work was already decided rather than
-	// repeating it.
+	// ⚠⚠ This — not FinishAssistantPlan — is what makes a plan run at most
+	// once. Closing the row afterwards is too late: two approvals racing (a
+	// double click, a retried request, two tabs) both read `pending`, both do
+	// the work, and only then does one of them lose the update — by which time
+	// a create_share plan has minted two public links and shown one of them to
+	// nobody. So the claim happens BEFORE the first item runs.
+	//
+	// The claim is `decided_at`, not a new status: the row stays `pending`
+	// while it runs, so FinishAssistantPlan closes it exactly as before and no
+	// status value the interface does not know ever reaches it. A plan whose
+	// execution died half-way is therefore pending with a decided_at, which is
+	// refused rather than run again — the safe way round, since what it did
+	// before it died is not known.
+	ClaimAssistantPlan(ctx context.Context, id int64) (bool, error)
+	// FinishAssistantPlan records the outcome and closes the plan. It moves the
+	// row out of `pending` ONLY while it is still pending, and reports whether
+	// it did.
 	FinishAssistantPlan(ctx context.Context, id int64, status, resultJSON string) (bool, error)
 	// CountAssistantSessions is the admin overview's figure: how many
 	// conversations an account holds, never what is in them.
@@ -440,6 +457,10 @@ type Store interface {
 	// NodeOwners answers for a whole listing at once, already joined to the
 	// account's name. GetNodeOwner per row would be one query per file, and it
 	// would still leave the caller holding a number nobody can read.
+	//
+	// ⚠ Name means DISPLAY NAME, and is empty for an account that has set none.
+	// The e-mail is never a fallback for it: this row is drawn for everybody who
+	// may see the listing.
 	NodeOwners(ctx context.Context, nodeIDs []int64) ([]NodeOwner, error)
 
 	// Listing enrichment — one query for a whole page, keyed by node id.
@@ -486,6 +507,15 @@ type Store interface {
 	// would hand back the matches within the newest N rows and call that the
 	// answer.
 	ListNodesByUserMeta(ctx context.Context, userID int64, key string, f NodeFacets, limit int) ([]*model.Node, error)
+	// UserNodeMetaTimes reports WHEN each of these nodes was flagged with
+	// (key) for this user — the same user_node_meta.updated_at that
+	// ListNodesByUserMeta orders by. No node row can carry it: "recently
+	// opened" is a fact about the reader, not about the file. Without it a
+	// client has only the file's own mtime to show and to sort by, which
+	// undoes the server's order and dates "Today" by when the file was
+	// written rather than read. Nodes with no such row are absent from the
+	// answer rather than carried as a zero time.
+	UserNodeMetaTimes(ctx context.Context, userID int64, key string, nodeIDs []int64) (map[int64]time.Time, error)
 
 	// Tags use the shared node_meta table (key='tag:<name>', value='1').
 	SetNodeTags(ctx context.Context, nodeID int64, tags []string) error
@@ -634,12 +664,19 @@ type NodeFacets struct {
 	// whole drive to have something to filter. Setting both is a contradiction
 	// and the caller that builds the facets refuses it rather than resolving it.
 	DirsOnly bool
+	// SharedOnly keeps only the nodes the caller has published a link to —
+	// "shared" as SharedNodeIDs already means it for the badge on a listing
+	// row: a share row exists and still opens. It is the advanced search's
+	// "Search in → Shared files", which narrowed nothing at all before,
+	// because the server had no word for it.
+	SharedOnly bool
 }
 
 // Any reports whether the facets narrow anything at all.
 func (f NodeFacets) Any() bool {
 	return f.PathPrefix != "" || len(f.Exts) > 0 || f.ModifiedAfter != nil ||
-		f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.FilesOnly || f.DirsOnly
+		f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.FilesOnly ||
+		f.DirsOnly || f.SharedOnly
 }
 
 // Where renders the facets as SQL predicates, to be ANDed into whatever the
@@ -649,11 +686,15 @@ func (f NodeFacets) Any() bool {
 // step, and the two drivers differ only in how a placeholder is spelled.
 //
 // `bind` appends a value to the caller's argument list and returns the
-// placeholder for it ("?" on sqlite, "$N" on postgres). `alias` qualifies the
-// columns ("n." for a joined query, "" for a plain one). `modified` names the
-// column the date window tests, because not every listing dates its rows the
-// same way: the trash listing means "when it was deleted", every other listing
-// means "when it was last written".
+// placeholder for it ("?" on sqlite, "$N" on postgres). It also owns how a
+// time.Time reaches the engine: sqlite stores its date columns as TEXT and
+// compares them as TEXT, so the driver renders the bound moment in the shape
+// its own CURRENT_TIMESTAMP writes, while postgres binds the instant itself.
+//
+// `alias` qualifies the columns ("n." for a joined query, "" for a plain one).
+// `modified` names the column the date window tests, because not every listing
+// dates its rows the same way: the trash listing means "when it was deleted",
+// every other listing means "when it was last written".
 func (f NodeFacets) Where(alias, modified string, bind func(any) string) []string {
 	var where []string
 	if f.FilesOnly {
@@ -664,12 +705,12 @@ func (f NodeFacets) Where(alias, modified string, bind func(any) string) []strin
 	}
 	if f.PathPrefix != "" && f.PathPrefix != "/" {
 		// The subtree, and the folder itself.
-		where = append(where, "("+alias+"path = "+bind(f.PathPrefix)+" OR "+alias+"path LIKE "+bind(f.PathPrefix+"/%")+")")
+		where = append(where, "("+alias+"path = "+bind(f.PathPrefix)+" OR "+alias+"path LIKE "+bind(likeEscape(f.PathPrefix)+"/%")+likeEscapeClause+")")
 	}
 	if len(f.Exts) > 0 {
 		ors := make([]string, 0, len(f.Exts))
 		for _, ext := range f.Exts {
-			ors = append(ors, "LOWER("+alias+"name) LIKE "+bind("%."+ext))
+			ors = append(ors, "LOWER("+alias+"name) LIKE "+bind("%."+likeEscape(ext))+likeEscapeClause)
 		}
 		where = append(where, "("+strings.Join(ors, " OR ")+")")
 	}
@@ -685,12 +726,63 @@ func (f NodeFacets) Where(alias, modified string, bind func(any) string) []strin
 	if f.OwnerID != nil {
 		where = append(where, alias+"owner_id = "+bind(*f.OwnerID))
 	}
+	if f.SharedOnly {
+		// The liveness test SharedNodeIDs applies, asked as a predicate so the
+		// filter narrows inside the query instead of over the page the query
+		// has already chosen. The moment is BOUND rather than spelled
+		// (CURRENT_TIMESTAMP / NOW()): "still opens" is a statement about now,
+		// and the drivers write and compare a Go time the same way here as
+		// they do for every other expiry.
+		// ⚠ The outer id is qualified even when nothing else here is. Inside the
+		// subquery an unqualified `id` resolves to `shares` — which also has
+		// one — so the correlation would silently read `sh.node_id = sh.id` and
+		// match nothing. Every caller of these facets queries `nodes`.
+		outer := alias
+		if outer == "" {
+			outer = "nodes."
+		}
+		where = append(where, "EXISTS (SELECT 1 FROM shares sh WHERE sh.node_id = "+outer+"id"+
+			" AND (sh.expires_at IS NULL OR sh.expires_at > "+bind(time.Now().UTC())+")"+
+			" AND (sh.max_downloads IS NULL OR sh.download_count < sh.max_downloads)"+
+			" AND (sh.max_uploads IS NULL OR sh.upload_count < sh.max_uploads))")
+	}
 	return where
 }
+
+// likeEscapeChar is the character that turns off LIKE's two wildcards in the
+// patterns built above.
+//
+// `!` rather than the usual backslash because the same SQL string is handed to
+// three engines: MySQL reads a backslash inside a string literal, so `ESCAPE
+// '\'` would have to be spelled differently there than on sqlite and postgres,
+// and one spelling that means the same thing everywhere is worth more than
+// following the convention.
+const likeEscapeChar = "!"
+
+// likeEscapeClause is appended to every LIKE built from a value that is meant
+// to be read literally. sqlite has no default escape character at all, so it
+// has to be named or the escaping below would be visible in the pattern.
+const likeEscapeClause = ` ESCAPE '` + likeEscapeChar + `'`
+
+var likeEscaper = strings.NewReplacer(
+	likeEscapeChar, likeEscapeChar+likeEscapeChar,
+	"%", likeEscapeChar+"%",
+	"_", likeEscapeChar+"_",
+)
+
+// likeEscape neutralises the wildcards in a value that is to be matched
+// literally. The values are BOUND, so this was never an injection — it was a
+// wrong answer: `_` matches any single character, so a folder named `My_Docs`
+// narrowed to `MyXDocs` as well, and an extension filter of `%` matched every
+// file on the drive.
+func likeEscape(s string) string { return likeEscaper.Replace(s) }
 
 // NodeOwner is one node's owner, named. Nodes with no owner — anything a
 // storage sync found rather than a person uploading it — are simply absent from
 // the answer rather than carried as a null.
+//
+// Name is the account's display name and is empty when it has set none — never
+// its e-mail address. See the note on NodeOwners.
 type NodeOwner struct {
 	NodeID  int64  `json:"node_id"`
 	OwnerID int64  `json:"owner_id"`

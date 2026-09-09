@@ -38,6 +38,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/storage"
 	"github.com/brf-tech/filex/backend/internal/storage/drivers/local"
 	"github.com/brf-tech/filex/backend/internal/testutil"
+	"github.com/brf-tech/filex/backend/internal/trash"
 	"github.com/brf-tech/filex/backend/internal/versioning"
 )
 
@@ -185,4 +186,35 @@ func TestVersions_UnknownNodeIsNotFoundRatherThanAnEmptyHistory(t *testing.T) {
 	f := newVersionACLFixture(t)
 	rec := f.call(t, f.owner, f.handler.List, http.MethodGet, "/versions?node_id=999999", nil)
 	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// A node in the trash keeps its history, and the grant that reaches it is the
+// one on the folder the file was deleted OUT of. Soft-deleting renames the row
+// to `.filex-trash/<ts>__name` and stashes the original path in `storage_key`;
+// checking the guard against the renamed path meant the holder of a grant on
+// `Docs/` was refused the history of a file they had just deleted from `Docs/`
+// — the one moment "should I restore this?" makes the timeline worth reading.
+func (f *versionACLFixture) bin(t *testing.T) {
+	t.Helper()
+	key := "/" + trash.NewKey("maas.md")
+	require.NoError(t, f.store.SoftDeleteAndRetag(context.Background(), f.node.ID,
+		key, pathkey.Hash(f.node.StorageID, key), f.node.Path))
+}
+
+func TestVersionsList_TrashedNodeIsJudgedByWhereItUsedToLive(t *testing.T) {
+	f := newVersionACLFixture(t)
+	f.bin(t)
+	target := fmt.Sprintf("/versions?node_id=%d", f.node.ID)
+
+	allowed := f.call(t, f.owner, f.handler.List, http.MethodGet, target, nil)
+	require.Equal(t, http.StatusOK, allowed.Code, allowed.Body.String())
+	var body struct {
+		Versions []map[string]any `json:"versions"`
+	}
+	require.NoError(t, json.Unmarshal(allowed.Body.Bytes(), &body))
+	assert.Len(t, body.Versions, 1, "the editor on Docs/ still reads the history of what they deleted from it")
+
+	denied := f.call(t, f.stranger, f.handler.List, http.MethodGet, target, nil)
+	assert.Equal(t, http.StatusForbidden, denied.Code,
+		"and the trash is not a way round the grant for an account that never had one")
 }

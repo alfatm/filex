@@ -30,12 +30,24 @@ export const useFilesStore = defineStore('files', () => {
 
   const storages = ref<Storage[]>([]);
   /**
+   * The drive a files route with no drive in it opens — the one "My files" leads to.
+   *
+   * `HOME_STORAGE` when it is mounted, and otherwise simply the first drive there is: nothing guarantees an
+   * installation calls its home drive `main`, and the demo dataset has a single drive named `demo`. Deriving the
+   * default from the drive list rather than from the constant is what keeps "My files" and the drive rows in step —
+   * against a dataset without `main`, the constant made "My files" name a drive that is not there.
+   */
+  const homeStorageId = computed(() =>
+    storages.value.some((s) => s.id === HOME_STORAGE) ? HOME_STORAGE : storages.value[0]?.id ?? null,
+  );
+  /**
    * The drives the "Storages" section lists: every one but the home drive.
    *
-   * `main` is the system drive that holds the users' own files — their home, the way `/home` is — and "My files" is
-   * how it is reached. Listing it beside the extra mounts made it look like one more drive to pick, which it is not.
+   * The home drive holds the users' own files — their home, the way `/home` is — and "My files" is how it is
+   * reached. Listing it beside the extra mounts made it look like one more drive to pick, which it is not, and
+   * would light two rows at once for the same listing.
    */
-  const listedStorages = computed(() => storages.value.filter((s) => s.id !== HOME_STORAGE));
+  const listedStorages = computed(() => storages.value.filter((s) => s.id !== homeStorageId.value));
   /**
    * The drive the folder view is in, by id.
    *
@@ -48,11 +60,7 @@ export const useFilesStore = defineStore('files', () => {
    * home drive. A drive that is gone falls back the same way.
    */
   const storage = computed(
-    () =>
-      storages.value.find((s) => s.id === storageId.value) ??
-      storages.value.find((s) => s.id === HOME_STORAGE) ??
-      storages.value[0] ??
-      null,
+    () => storages.value.find((s) => s.id === storageId.value) ?? storages.value.find((s) => s.id === homeStorageId.value) ?? null,
   );
   const user = ref<User | null>(null);
   /** Current folder in the folder view; null on the flat listings. */
@@ -123,11 +131,24 @@ export const useFilesStore = defineStore('files', () => {
   // here rather than derived from `path`, because the listings beside the tree (Recent, Starred, Shared) describe
   // nodes that are not in the open folder at all — their location has to come from the node.
   watch(focusNode, async (node) => {
-    const [access, chain] = node
-      ? await Promise.all([repository.listPeople(node.id), repository.getPath(node.id)])
-      : [{ people: [], canManage: false }, []];
+    const forget = () => {
+      people.value = [];
+      canManagePeople.value = false;
+      focusPath.value = [];
+    };
+    if (!node) return forget();
+    let access: { people: Person[]; canManage: boolean };
+    let chain: Node[];
+    try {
+      [access, chain] = await Promise.all([repository.listPeople(node.id), repository.getPath(node.id)]);
+    } catch {
+      // A node this account may not read (403) tells us nothing about itself. Keeping what the PREVIOUS node
+      // answered would leave the panel showing that node's people and location under this node's name.
+      if (focusNode.value?.id === node.id) forget();
+      return;
+    }
     // A faster selection change may have resolved meanwhile; keep the newest node's answers.
-    if (focusNode.value?.id !== node?.id) return;
+    if (focusNode.value?.id !== node.id) return;
     people.value = access.people;
     canManagePeople.value = access.canManage;
     focusPath.value = chain;
@@ -139,10 +160,6 @@ export const useFilesStore = defineStore('files', () => {
     error.value = null;
     try {
       await read(target, seq);
-      // The People chip's options are learned from the rows a listing carried (the HTTP repository has no other
-      // way to know who owns what), so they are re-read after every listing rather than only at bootstrap.
-      const people = await repository.listFilterPeople();
-      if (seq === loadSeq) filterPeople.value = people;
     } catch {
       // A newer load already owns the listing; its own result decides what is shown.
       if (seq === loadSeq) {
@@ -151,6 +168,16 @@ export const useFilesStore = defineStore('files', () => {
       }
     } finally {
       if (seq === loadSeq) loading.value = false;
+    }
+    // The People chip's options are learned from the rows a listing carried (the HTTP repository has no other
+    // way to know who owns what), so they are re-read after every listing rather than only at bootstrap. On its
+    // own request, though: sharing the listing's `try` meant a refused chip threw away a listing that had arrived
+    // and put "Could not load this listing" over it. The chip keeps the options it had instead.
+    try {
+      const people = await repository.listFilterPeople();
+      if (seq === loadSeq) filterPeople.value = people;
+    } catch {
+      // no new options for the chip; the listing is not affected
     }
   }
 
@@ -225,13 +252,18 @@ export const useFilesStore = defineStore('files', () => {
       error.value = 'load';
       return;
     }
+    // Resolving the address is a request of its own, and it is made BEFORE any load exists to guard its result.
+    // Over HTTP it can come back after the person has already navigated somewhere else — a slow folder answering
+    // last used to open itself over the listing that is now on screen. The same counter decides that here.
+    const seq = ++loadSeq;
     let node: Node;
     try {
       node = await repository.resolvePath(storage.value.id, folderPath);
     } catch {
-      showNotFound();
+      if (seq === loadSeq) showNotFound();
       return;
     }
+    if (seq !== loadSeq) return;
     await open(node.id);
   }
 
@@ -289,16 +321,19 @@ export const useFilesStore = defineStore('files', () => {
    */
   async function bootstrap() {
     try {
-      [storages.value, user.value, filterPeople.value] = await Promise.all([
-        repository.listStorages(),
-        repository.currentUser(),
-        repository.listFilterPeople(),
-      ]);
+      [storages.value, user.value] = await Promise.all([repository.listStorages(), repository.currentUser()]);
       error.value = null;
     } catch {
       error.value = 'load';
     } finally {
       ready.value = true;
+    }
+    // The People chip's options, off the critical path: they were in the `Promise.all` above, so a server that
+    // answered the drives and the account but refused this one started the app in the "could not load" state.
+    try {
+      filterPeople.value = await repository.listFilterPeople();
+    } catch {
+      // the chip has no options; nothing else here depends on them
     }
   }
 
@@ -351,13 +386,26 @@ export const useFilesStore = defineStore('files', () => {
     return node;
   }
 
+  /**
+   * One arriving file. Deliberately NOT through `mutate`: a drop of five hundred files would re-read the folder
+   * five hundred times — and, through `focusNode`, ask for the focused node's people and location twice as often
+   * again — while throwing away the Undo record on each. The upload store owns the batch and calls
+   * `uploadsLanded` once, when the last transfer of it is over.
+   */
   async function addUploaded(parentId: string, file: UploadInput, options?: UploadOptions) {
-    return mutate(() => repository.uploadFile(parentId, file, options));
+    return repository.uploadFile(parentId, file, options);
   }
 
   /** The same arrival, for a transfer the server had already started before the page was reloaded. */
   async function addResumed(sessionId: string, parentId: string, file: UploadInput, options?: UploadOptions) {
-    return mutate(() => repository.resumeUpload(sessionId, parentId, file, options));
+    return repository.resumeUpload(sessionId, parentId, file, options);
+  }
+
+  /** A batch of uploads is over: what `mutate` does after a mutation, paid once for the whole batch. */
+  async function uploadsLanded() {
+    undo.clear();
+    revision.value++;
+    await refresh();
   }
 
   async function rename(id: string, name: string) {
@@ -459,6 +507,7 @@ export const useFilesStore = defineStore('files', () => {
 
   return {
     storages,
+    homeStorageId,
     listedStorages,
     storage,
     ready,
@@ -499,6 +548,7 @@ export const useFilesStore = defineStore('files', () => {
     createFolder,
     addUploaded,
     addResumed,
+    uploadsLanded,
     rename,
     trash,
     restore,

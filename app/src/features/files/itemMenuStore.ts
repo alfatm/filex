@@ -10,6 +10,11 @@ export interface ItemMenuState {
   y: number;
   /** Element that had focus before the menu opened; focus returns there on close. */
   returnTo: HTMLElement | null;
+  /**
+   * The button the menu hangs under, when it hangs under one. The menu follows it: a scroll that moves it has
+   * taken the menu off it, and one that does not (the browser revealing the button that was just pressed) has not.
+   */
+  anchor: HTMLElement | null;
 }
 
 export const MENU_WIDTH = 232;
@@ -19,24 +24,24 @@ export const useItemMenuStore = defineStore('itemMenu', () => {
   const state = ref<ItemMenuState | null>(null);
 
   function openAt(node: Node, x: number, y: number) {
-    state.value = { node, x, y, returnTo: document.activeElement as HTMLElement | null };
+    state.value = { node, x, y, returnTo: document.activeElement as HTMLElement | null, anchor: null };
   }
 
   /** Below the ⋮ button, right-aligned to it. */
   function openFor(node: Node, anchor: HTMLElement) {
     const { x, y } = anchorBelow(anchor, MENU_WIDTH);
-    state.value = { node, x, y, returnTo: anchor };
+    state.value = { node, x, y, returnTo: anchor, anchor };
   }
 
   /** Right-click on empty listing surface. */
   function openBackgroundAt(x: number, y: number) {
-    state.value = { node: null, x, y, returnTo: document.activeElement as HTMLElement | null };
+    state.value = { node: null, x, y, returnTo: document.activeElement as HTMLElement | null, anchor: null };
   }
 
   /** The grid's ⋮ button, which offers the same listing actions. */
   function openBackgroundFor(anchor: HTMLElement) {
     const { x, y } = anchorBelow(anchor, MENU_WIDTH);
-    state.value = { node: null, x, y, returnTo: anchor };
+    state.value = { node: null, x, y, returnTo: anchor, anchor };
   }
 
   function close() {

@@ -45,6 +45,7 @@ import (
 
 	"github.com/brf-tech/filex/backend/internal/acl"
 	"github.com/brf-tech/filex/backend/internal/assistant"
+	"github.com/brf-tech/filex/backend/internal/confine"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/filebody"
 	"github.com/brf-tech/filex/backend/internal/model"
@@ -635,6 +636,20 @@ func (t *assistantTools) readImageText(ctx context.Context, raw string) assistan
 // model nothing it can use and costs context at every later turn.
 const visionMaxEdge = 1568
 
+// visionMaxPixels is the largest picture view_image will decode.
+//
+// ⚠⚠ It bounds an ALLOCATION, not a download. image.Decode builds the whole
+// uncompressed frame before anything is scaled, and compression makes the two
+// sizes unrelated: a 30000×30000 PNG of flat colour is a few hundred kilobytes
+// on disk and gigabytes in memory, well inside the 8 MiB a read is capped at.
+// Any account that can put a file in its own drive could ask the assistant to
+// look at one and take the process down with it.
+//
+// 40 megapixels is 160 MB as 8-bit RGBA and 320 MB for a 16-bit PNG, which is
+// survivable; it is also far above any photograph or scan somebody actually
+// wants described, so the refusal costs nothing real.
+const visionMaxPixels = 40_000_000
+
 // viewImage hands the picture itself to the model, scaled to fit and
 // re-encoded as JPEG so an 8 MiB photo does not travel as 8 MiB of base64.
 func (t *assistantTools) viewImage(ctx context.Context, raw string) assistant.ToolOutcome {
@@ -644,6 +659,17 @@ func (t *assistantTools) viewImage(ctx context.Context, raw string) assistant.To
 	}
 	if !strings.HasPrefix(mime, "image/") {
 		return failure("%s is not an image (%s); read_file reads it", path, mime)
+	}
+	// The header first. It is the only place the frame's size is known BEFORE
+	// the memory for it is asked for — see visionMaxPixels. A refusal here is
+	// a tool result the model reads and relays, not a failed request.
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(body))
+	if err != nil {
+		return failure("%s (%s) could not be decoded as a picture: %v", path, mime, err)
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > visionMaxPixels {
+		return failure("%s says it is %d×%d, which is past the %d megapixels this can open; tell the person it is too large to look at and ask for a smaller copy if they need one described",
+			path, cfg.Width, cfg.Height, visionMaxPixels/1_000_000)
 	}
 	src, _, err := image.Decode(bytes.NewReader(body))
 	if err != nil {
@@ -679,17 +705,16 @@ func extensionOf(p string) string {
 	return ""
 }
 
-// assistantHiddenNames are filex's own bookkeeping, not the person's files:
-// version snapshots and the e2e marker. The app's listing hides them, and the
-// assistant showing them would be worse than untidy — it would invite the model
-// to reason about, and offer to tidy up, a folder the person cannot even see.
-// (aiOps.List already drops the trash and thumbnail folders.)
-var assistantHiddenNames = map[string]bool{".versions": true, ".filex-e2e.json": true}
-
+// withoutBookkeeping drops filex's own buckets (model.ReservedNames) from what
+// the assistant sees. Showing them would be worse than untidy — it would invite
+// the model to reason about, and offer to tidy up, a folder the person cannot
+// even see. It knew two of the four names, and matched them as whole names only
+// by luck of the spelling; the shared test is by path component, so a file the
+// person called `my.thumbsup.png` stays visible.
 func withoutBookkeeping(entries []aiEntry) []aiEntry {
 	out := entries[:0]
 	for _, e := range entries {
-		if assistantHiddenNames[e.Name] {
+		if model.IsReservedPath(e.Name) {
 			continue
 		}
 		out = append(out, e)
@@ -760,9 +785,16 @@ func (t *assistantTools) listTrash(ctx context.Context) assistant.ToolOutcome {
 	if t.trash == nil {
 		return failure("the trash is not available on this server")
 	}
-	entries, total, err := t.trash.List(ctx, nil, true, db.NodeFacets{}, assistantListDefault, 0)
+	entries, _, err := t.trash.List(ctx, nil, true, db.NodeFacets{}, assistantTrashScan, 0)
 	if err != nil {
 		return failure("%v", err)
+	}
+	entries = t.ownTrash(ctx, entries)
+	result := map[string]any{}
+	if len(entries) > assistantListDefault {
+		// Reported rather than hidden, the same as a truncated folder listing.
+		result["truncated"] = true
+		entries = entries[:assistantListDefault]
 	}
 	out := make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
@@ -772,7 +804,46 @@ func (t *assistantTools) listTrash(ctx context.Context) assistant.ToolOutcome {
 			"deleted_at": e.DeletedAt.UTC().Format(time.RFC3339),
 		})
 	}
-	return payload(map[string]any{"entries": out, "total": total})
+	// The count is of what this person may see. `total` used to be the
+	// service's own, which counted the whole installation's trash.
+	result["entries"], result["total"] = out, len(out)
+	return payload(result)
+}
+
+// assistantTrashScan is how deep into the installation-wide trash listing the
+// two trash tools read before filtering it down to the person's own entries.
+// The same page `POST /trash/empty` reads, and for the same reason: the rows
+// that survive the filter are not the first rows of the query.
+const assistantTrashScan = trashEmptyMax
+
+// ownTrash is the person's trash, out of the installation's.
+//
+// ⚠⚠ trash.Service.List takes no user and filters nothing — it is the ADMIN
+// listing, and both trash tools were handing it straight to the model. Paths,
+// names and sizes of other people's deleted files went to the model provider,
+// and `plan_empty_trash` counted its 50-item ceiling over all of them, so
+// somebody with three deleted files of their own was refused for being over a
+// limit they were nowhere near.
+//
+// The two passes are the ones `GET /api/files/manager/trash` applies, in the
+// same order and on the same field: an entry's Path is its ORIGINAL path (the
+// service prefers storage_key, which is where a soft-delete stashes it), not
+// the `.filex-trash/…` key the row was renamed to.
+func (t *assistantTools) ownTrash(ctx context.Context, entries []trash.TrashEntry) []trash.TrashEntry {
+	kept := entries[:0]
+	for _, e := range entries {
+		// Confinement is read off the token here rather than off the request:
+		// the assistant surface bypasses confine.Middleware, exactly as aiOps
+		// does at its own chokepoint.
+		if root, ok := confine.RootFromToken(ctx); ok && !root.Within(e.StorageName, e.Path) {
+			continue
+		}
+		if !aclAllowName(ctx, t.acl, t.store, e.StorageName, e.Path, acl.LevelViewer) {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	return kept
 }
 
 // payload is a successful result: JSON, because a model reads structure more

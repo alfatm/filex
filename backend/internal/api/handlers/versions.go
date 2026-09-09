@@ -75,14 +75,25 @@ func (h *Versions) guardedNode(w http.ResponseWriter, r *http.Request, nodeID in
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return nil
 	}
+	// Both checks run on the ORIGINAL path. A soft-deleted row's `path` is the
+	// `.filex-trash/<ts>__name` key it was renamed to, which no confinement root
+	// contains and no grant is ever written against — so the holder of a grant on
+	// `Docs/` was refused the history of a file they had just deleted OUT of
+	// `Docs/`, which is the one moment the paragraph above says they need it.
+	// `storage_key` is where the original lives, and trash.go's own guard already
+	// reads it the same way.
+	target := node.Path
+	if node.DeletedAt != nil && node.StorageKey != "" {
+		target = node.StorageKey
+	}
 	if root, ok := confine.RootFrom(r.Context()); ok {
 		st, serr := h.Store.GetStorage(r.Context(), node.StorageID)
-		if serr != nil || st == nil || !root.Within(st.Name, node.Path) {
+		if serr != nil || st == nil || !root.Within(st.Name, target) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "path outside confined root"})
 			return nil
 		}
 	}
-	if !aclAllowID(r.Context(), h.ACL, h.Store, node.StorageID, node.Path, need) {
+	if !aclAllowID(r.Context(), h.ACL, h.Store, node.StorageID, target, need) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient permission"})
 		return nil
 	}
@@ -238,6 +249,12 @@ func (h *Versions) HardDelete(w http.ResponseWriter, r *http.Request) {
 // at the retention count and is usually the work of one or two people. Rows
 // written before the author was recorded keep no name, and the panel shows the
 // revision without one rather than attributing it to whoever is looking.
+//
+// ⚠ The display name ONLY, never the e-mail behind it — the rule "shared with
+// me" already applies to the granter. Anybody who may read a file may read its
+// history, so the fallback handed every reader the addresses of the colleagues
+// who had edited it. An account that has set no display name is reported
+// without a name and the panel says so in the reader's own language.
 func nameAuthors(ctx context.Context, store db.Store, versions []*model.NodeVersion) {
 	if store == nil {
 		return
@@ -251,9 +268,6 @@ func nameAuthors(ctx context.Context, store db.Store, versions []*model.NodeVers
 		if !seen {
 			if u, err := store.GetUser(ctx, *v.CreatedBy); err == nil && u != nil {
 				name = strings.TrimSpace(u.DisplayName)
-				if name == "" {
-					name = u.Email
-				}
 			}
 			names[*v.CreatedBy] = name
 		}

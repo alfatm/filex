@@ -70,6 +70,34 @@ describe('FloatingMenu', () => {
     expect(document.activeElement).toBe(s.trigger);
   });
 
+  // Pressing a row's ⋮ focuses it, and below roughly 1500px the browser scrolls the listing's horizontally
+  // scrollable wrapper to reveal it. That event arrives milliseconds after the menu opened, and any scroll used to
+  // close the menu — so on a narrow window the row menu opened and vanished on its own.
+  it('survives a scroll that left its anchor where it was, and goes when the anchor moves', async () => {
+    document.body.innerHTML = '';
+    const trigger = document.createElement('button');
+    document.body.appendChild(trigger);
+    let left = 100;
+    trigger.getBoundingClientRect = () => new DOMRect(left, 40, 20, 20);
+    wrapper = mount(FloatingMenu, { attachTo: document.body, props: { items, x: 10, y: 20, label: 'More', anchor: trigger } });
+    await nextTick();
+    await nextTick();
+
+    document.body.dispatchEvent(new Event('scroll', { bubbles: true }));
+    expect(wrapper.emitted('close')).toBeUndefined();
+
+    left = 40;
+    document.body.dispatchEvent(new Event('scroll', { bubbles: true }));
+    expect(wrapper.emitted('close')).toHaveLength(1);
+  });
+
+  it('closes on any scroll when it was opened at a bare point, with nothing to follow', async () => {
+    const s = await setup();
+    wrapper = s.wrapper;
+    document.body.dispatchEvent(new Event('scroll', { bubbles: true }));
+    expect(wrapper.emitted('close')).toHaveLength(1);
+  });
+
   it('closes on a pointer press outside, not inside', async () => {
     const s = await setup();
     wrapper = s.wrapper;

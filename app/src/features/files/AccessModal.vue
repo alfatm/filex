@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { UserMinus } from 'lucide-vue-next';
 import { repository } from '@/data';
 import type { Node, Person } from '@/data/types';
+import { errorMessage } from '@/lib/errors';
 import { useFilesStore } from '@/stores/files';
 import { Avatar, Button, IconButton, Input, Select } from '@/ui';
 import Modal from '@/ui/Modal.vue';
@@ -24,12 +25,21 @@ const email = ref('');
 const role = ref<(typeof GRANTABLE)[number]>('viewer');
 const input = ref<InstanceType<typeof Input>>();
 
+/** What the server said about the last read or change; every one of them can be refused, and silence was the answer. */
+const error = ref<string | null>(null);
+
 const roleOptions = computed(() => GRANTABLE.map((value) => ({ value, label: t(`panel.role.${value}`) })));
 /** An address, roughly: enough to catch a typo, not enough to argue about the RFC. */
 const valid = computed(() => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value.trim()));
 
 async function load() {
-  const access = await repository.listPeople(props.node.id);
+  let access: { people: Person[]; canManage: boolean };
+  try {
+    access = await repository.listPeople(props.node.id);
+  } catch (e) {
+    error.value = errorMessage(e);
+    return;
+  }
   people.value = access.people;
   canManage.value = access.canManage;
   // The details panel shows the same list.
@@ -40,18 +50,38 @@ onMounted(load);
 
 async function invite() {
   if (!valid.value) return;
-  await repository.addPerson(props.node.id, email.value, role.value);
+  error.value = null;
+  try {
+    await repository.addPerson(props.node.id, email.value, role.value);
+  } catch (e) {
+    // An address nobody here knows, or an account that may not hand out access: the box keeps what was typed so it
+    // can be corrected rather than retyped.
+    error.value = errorMessage(e);
+    return;
+  }
   email.value = '';
   await load();
 }
 
 async function changeRole(person: Person, next: string) {
-  await repository.setPersonRole(props.node.id, person.id, next as Person['role']);
+  error.value = null;
+  try {
+    await repository.setPersonRole(props.node.id, person.id, next as Person['role']);
+  } catch (e) {
+    error.value = errorMessage(e);
+  }
+  // Either way: a refused change must not leave the row showing the role the server did not give.
   await load();
 }
 
 async function revoke(person: Person) {
-  await repository.removePerson(props.node.id, person.id);
+  error.value = null;
+  try {
+    await repository.removePerson(props.node.id, person.id);
+  } catch (e) {
+    error.value = errorMessage(e);
+    return;
+  }
   await load();
 }
 </script>
@@ -99,6 +129,7 @@ async function revoke(person: Person) {
         </template>
       </li>
     </ul>
+    <p v-if="error" class="mt-3 text-13 leading-none text-danger" role="alert">{{ error }}</p>
 
     <template #footer>
       <Button variant="outline" @click="emit('close')">{{ t('modal.done') }}</Button>

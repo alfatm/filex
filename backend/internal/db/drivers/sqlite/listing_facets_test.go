@@ -153,3 +153,142 @@ func TestListTrashed_ModifiedWindowReadsTheDeletionDate(t *testing.T) {
 	assert.Equal(t, []string{"eski.md"}, names(rows),
 		"deleted today, so it is in the window however old the file itself is")
 }
+
+// The modified window compares two dates that are not written by the same
+// party: the lower bound arrives from a handler in UTC, while backend_mtime is
+// whatever zone the storage driver handed back (local, sftp and smb all report
+// the host's). modernc writes a time.Time with its offset and SQLite compares
+// those as TEXT, so before the dates were normalised the offset shifted the
+// string: east of UTC an hour-old file passed a thirty-minute window, west of
+// it a ten-minute-old file failed one.
+//
+// TestListNodesByUserMeta_ModifiedWindowReadsTheWriteDate above does not catch
+// this — both of its sides are in the same zone.
+func TestModifiedWindowIgnoresTheZoneTheMtimeWasWrittenIn(t *testing.T) {
+	ctx, store, user, mk := facetFixture(t)
+	east := time.FixedZone("+03", 3*60*60)
+	west := time.FixedZone("-05", -5*60*60)
+
+	stale := mk("eski.md", model.NodeTypeFile, func(n *model.Node) {
+		at := time.Now().Add(-time.Hour).In(east)
+		n.BackendMtime = &at
+	})
+	recent := mk("yeni.md", model.NodeTypeFile, func(n *model.Node) {
+		at := time.Now().Add(-10 * time.Minute).In(west)
+		n.BackendMtime = &at
+	})
+	for _, n := range []*model.Node{stale, recent} {
+		require.NoError(t, store.SetUserNodeMeta(ctx, user, n.ID, "opened", "1"))
+	}
+
+	cutoff := time.Now().Add(-30 * time.Minute).UTC()
+	window, err := store.ListNodesByUserMeta(ctx, user, "opened", db.NodeFacets{ModifiedAfter: &cutoff}, 50)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"yeni.md"}, names(window),
+		"the window is thirty minutes wide whatever zone the mtimes were recorded in")
+
+	ids, err := store.ListNodeIDsMatching(ctx, recent.StorageID, db.NodeFacets{ModifiedAfter: &cutoff}, 50)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{recent.ID}, ids, "the search facet reads the same dates as the listing")
+}
+
+// Deleting a folder stamps ONE deleted_at across every row under it, and
+// SQLite's CURRENT_TIMESTAMP is written to the second — so the whole block is
+// indistinguishable by the only key the trash listing ordered on. LIMIT/OFFSET
+// over an ambiguous order is free to hand the same row out twice and never hand
+// out another, which is what paging through a bulk delete did.
+//
+// The assertion is on the order itself rather than on a flake: with the
+// tie-break the pages read newest id first and every row appears exactly once.
+func TestListTrashed_PagingIsStableWhenOneDeleteSharesAStamp(t *testing.T) {
+	ctx, store, _, mk := facetFixture(t)
+	made := []string{"a.md", "b.md", "c.md", "d.md", "e.md", "f.md"}
+	for _, name := range made {
+		n := mk(name, model.NodeTypeFile)
+		require.NoError(t, store.SoftDeleteNode(ctx, n.ID))
+	}
+
+	var paged []string
+	for offset := 0; offset < len(made); offset += 2 {
+		rows, total, err := store.ListTrashed(ctx, nil, false, db.NodeFacets{}, 2, offset)
+		require.NoError(t, err)
+		require.Equal(t, len(made), total)
+		require.Len(t, rows, 2, "page at offset %d", offset)
+		paged = append(paged, names(rows)...)
+	}
+	assert.Equal(t, []string{"f.md", "e.md", "d.md", "c.md", "b.md", "a.md"}, paged,
+		"one stamp for six rows, so the id is what decides — newest first, each row once")
+}
+
+// The facet patterns are LIKE patterns built from what the caller typed. The
+// values are bound, so there was never an injection here — there was a wrong
+// answer: `%` means "anything", so an extension chip of `%` matched every file
+// on the drive.
+func TestFacetPatternsAreMatchedLiterally(t *testing.T) {
+	ctx, store, _, mk := facetFixture(t)
+	for _, name := range []string{"a.md", "kupa.png"} {
+		n := mk(name, model.NodeTypeFile)
+		require.NoError(t, store.SoftDeleteNode(ctx, n.ID))
+	}
+
+	rows, total, err := store.ListTrashed(ctx, nil, false, db.NodeFacets{Exts: []string{"%"}, FilesOnly: true}, 50, 0)
+	require.NoError(t, err)
+	assert.Empty(t, names(rows), "no file is called `.%%`, so the filter answers nothing")
+	assert.Zero(t, total)
+
+	// And a real extension still narrows, which is what makes the above mean
+	// something rather than "escaping broke LIKE".
+	rows, total, err = store.ListTrashed(ctx, nil, false, db.NodeFacets{Exts: []string{"png"}, FilesOnly: true}, 50, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"kupa.png"}, names(rows))
+	assert.Equal(t, 1, total)
+}
+
+// The same for the path prefix, where `_` is LIKE's single-character wildcard:
+// confining a search to `My_Docs` also reached into `MyXDocs`, a folder the
+// person was not asking about and may not even have meant to be reminded of.
+func TestPathPrefixUnderscoreIsNotAWildcard(t *testing.T) {
+	ctx, store, _, mk := facetFixture(t)
+	mine := mk("My_Docs/rapor.md", model.NodeTypeFile)
+	other := mk("MyXDocs/rapor.md", model.NodeTypeFile)
+
+	ids, err := store.ListNodeIDsMatching(ctx, mine.StorageID, db.NodeFacets{PathPrefix: "/My_Docs"}, 50)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{mine.ID}, ids)
+	assert.NotContains(t, ids, other.ID, "an underscore in a folder name is a character, not a wildcard")
+}
+
+// `deleted_at` is written by SQLite's own CURRENT_TIMESTAMP — UTC, to the
+// second, no zone on the end — while the window's lower bound arrives as a
+// time.Time the driver renders in Go's layout, offset and all. SQLite compares
+// the two as TEXT, so east of UTC the bound string reads as a later date than
+// every row deleted a moment ago and the trash answers "nothing".
+//
+// TestListTrashed_ModifiedWindowReadsTheDeletionDate above does not catch this:
+// its window is a week wide, so the day component still separates the two
+// strings whatever the offset does to the hour. A window of minutes — "deleted
+// today", the one the trash chip actually asks for — has nothing left to lean
+// on.
+func TestListTrashed_NarrowModifiedWindowIgnoresTheCutoffZone(t *testing.T) {
+	ctx, store, _, mk := facetFixture(t)
+	n := mk("eski.md", model.NodeTypeFile)
+	require.NoError(t, store.SoftDeleteNode(ctx, n.ID))
+
+	// A fixed zone rather than the host's, so the test means the same thing
+	// wherever it runs: +09 pushes the rendered date a day forward for most of
+	// the UTC day, which is exactly what the text comparison then reads.
+	cutoff := time.Now().Add(-5 * time.Minute).In(time.FixedZone("+09", 9*60*60))
+	rows, total, err := store.ListTrashed(ctx, nil, false, db.NodeFacets{ModifiedAfter: &cutoff}, 50, 0)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"eski.md"}, names(rows),
+		"deleted seconds ago, so a five-minute window holds it whatever zone the cutoff was expressed in")
+	assert.Equal(t, 1, total, "and the total counts the same set the page came from")
+
+	// The mirror: a window that closed before the deletion still excludes it,
+	// or the fix above would just be "the filter stopped filtering".
+	future := time.Now().Add(5 * time.Minute).In(time.FixedZone("-07", -7*60*60))
+	rows, total, err = store.ListTrashed(ctx, nil, false, db.NodeFacets{ModifiedAfter: &future}, 50, 0)
+	require.NoError(t, err)
+	assert.Empty(t, names(rows))
+	assert.Zero(t, total)
+}

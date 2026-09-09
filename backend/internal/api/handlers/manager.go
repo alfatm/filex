@@ -777,24 +777,14 @@ func projectDriverObjects(adapter, dir string, objs []storage.Object, dirsOnly b
 		if isDir {
 			typ = "dir"
 		}
-		// Hide the same internal entries the cache projector hides.
-		if strings.Contains(o.Path, ".thumbs") || o.Name == ".keepdir" ||
-			o.Name == ".versions" || strings.Contains(o.Path, ".versions") {
-			continue
-		}
-		// Trash bucket — never expose in regular listings.
-		if o.Name == ".filex-trash" || strings.Contains(o.Path, ".filex-trash") {
-			continue
-		}
-		/* wiring:e2 — hide the encrypted-folder marker (same contract as
-		   the DB projector; detection flags come from the response). */
-		if o.Name == e2e.MarkerName {
-			continue
-		}
-		/* /wiring:e2 */
 		rel := o.Path
 		if rel == "" {
 			rel = path.Join(dir, o.Name)
+		}
+		// Hide the same internal entries the cache projector hides — one list,
+		// one rule, model.ReservedNames.
+		if model.IsReservedPath(rel) || o.Name == ".keepdir" {
+			continue
 		}
 		// RBAC: drop entries the caller isn't allowed to see.
 		if set != nil && !set.CanSee(rel) {
@@ -1371,24 +1361,14 @@ func projectFileNodes(adapter string, nodes []*model.Node, dirsOnly bool, set *a
 		if n.DeletedAt != nil {
 			continue
 		}
-		// Hide internal buckets (trash, version history, thumbnails) from
-		// regular listings — they have dedicated surfaces / are implementation
-		// detail. The trash bucket lists via /admin/trash.
-		if strings.HasPrefix(n.Path, "/.filex-trash") || strings.HasPrefix(n.Path, ".filex-trash") || n.Name == ".filex-trash" {
+		// Hide filex's own buckets (trash, version history, thumbnails, the
+		// encrypted-folder marker) from regular listings — they have dedicated
+		// surfaces / are implementation detail. The trash lists via
+		// /admin/trash; the client learns about encryption from the
+		// response-level e2e/e2e_root flags, not from seeing the marker.
+		if model.IsReservedPath(n.Path) {
 			continue
 		}
-		if n.Name == ".versions" || n.Name == ".thumbs" ||
-			strings.Contains(n.Path, "/.versions") || strings.Contains(n.Path, "/.thumbs") {
-			continue
-		}
-		/* wiring:e2 — the encrypted-folder marker is an implementation
-		   detail: hidden from every listing/search projection (the client
-		   detects encryption via the response-level e2e/e2e_root flags and
-		   reads the marker itself through the preview endpoint). */
-		if n.Name == e2e.MarkerName {
-			continue
-		}
-		/* /wiring:e2 */
 		// RBAC: drop entries the caller isn't allowed to see.
 		if set != nil && !set.CanSee(n.Path) {
 			continue

@@ -9,6 +9,7 @@ import type { AuthMethods, Node, NotifyPrefs, Session } from '@/data/types';
 import { useToastStore } from '@/stores/toast';
 import { LOCALES, setLocale, type Locale } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
+import { useViewStore } from '@/stores/view';
 import { Avatar, Button, Input, Select } from '@/ui';
 import { useFormat } from '@/composables/useFormat';
 import Segmented from './Segmented.vue';
@@ -35,6 +36,7 @@ const AVATAR_QUALITY = 0.85;
 const { t, te, locale } = useI18n();
 const { formatDate } = useFormat();
 const files = useFilesStore();
+const view = useViewStore();
 const store = useSettingsStore();
 const toast = useToastStore();
 
@@ -49,7 +51,6 @@ const profile = ref({ fullName: '', displayName: '', jobTitle: '' });
 const notify = ref<NotifyPrefs | null>(null);
 const language = ref<Locale>(locale.value as Locale);
 const active = ref<SectionId>('profile');
-const folders = ref<Node[]>([]);
 // The picture belongs to the ACCOUNT, not to the local settings, so it is drafted on its own.
 const avatarUrl = ref('');
 const photoInput = ref<HTMLInputElement>();
@@ -117,15 +118,70 @@ const zoneOptions = computed(() => {
   return zones.map((value) => ({ value, label: zoneLabel(value) }));
 });
 
+/**
+ * The default-upload-folder select, a LEVEL at a time.
+ *
+ * `trail` is the chain from the drive root down to the chosen folder and `level` is what sits inside the chosen
+ * one; picking a folder drills into it, picking one of its ancestors comes back up to it. Filling this list by
+ * walking the whole drive was one request per folder, paid on every open of the modal, for a list of which two or
+ * three entries were ever looked at — the destination picker stopped doing that and so does this.
+ */
+const trail = ref<Node[]>([]);
+const level = ref<Node[]>([]);
+let foldersAsked = false;
+/** Two no-break spaces per level: an <option> cannot be indented any other way. */
+const INDENT = '\u00a0\u00a0';
+
 const folderOptions = computed(() => [
   { value: '', label: t('nav.files') },
-  ...folders.value.filter((f) => f.parentId).map((f) => ({ value: f.id, label: f.name })),
+  ...trail.value.map((node, depth) => ({ value: node.id, label: INDENT.repeat(depth + 1) + node.name })),
+  ...level.value.map((node) => ({ value: node.id, label: INDENT.repeat(trail.value.length + 1) + node.name })),
 ]);
+
+async function loadLevel() {
+  const id = trail.value.at(-1)?.id ?? files.storage?.rootId;
+  level.value = id ? await repository.listSubfolders(id).catch(() => []) : [];
+}
+
+/** Opening Preferences is what pays for the first level — and for resolving the folder that was saved. */
+async function openFolders() {
+  if (foldersAsked) return;
+  foldersAsked = true;
+  const saved = draft.value.defaultUploadFolder;
+  if (saved) {
+    try {
+      const [node, chain] = await Promise.all([repository.getNode(saved), repository.getPath(saved)]);
+      // The drive root is the "" option rather than a folder in the trail.
+      trail.value = [...chain.filter((n) => n.parentId !== null), node];
+    } catch {
+      // ⚠ A node id here IS a path, so renaming the folder leaves a setting that names nothing. The select falls
+      // back to the drive root and saying "Save changes" makes that the setting, instead of a dead id kept for ever.
+      draft.value.defaultUploadFolder = '';
+    }
+  }
+  await loadLevel();
+}
+
+async function pickFolder(id: string) {
+  draft.value.defaultUploadFolder = id;
+  const at = trail.value.findIndex((n) => n.id === id);
+  if (!id) trail.value = [];
+  else if (at >= 0) trail.value = trail.value.slice(0, at + 1);
+  else {
+    const node = level.value.find((n) => n.id === id);
+    if (node) trail.value = [...trail.value, node];
+  }
+  await loadLevel();
+}
+
+// Nothing is fetched until the panel holding the select is actually looked at.
+watch(active, (id) => {
+  if (id === 'preferences') void openFolders();
+});
 
 const displayName = computed(() => profile.value.displayName || files.user?.name || '');
 
 onMounted(async () => {
-  if (files.storage) folders.value = await repository.listFolders(files.storage.id);
   auth.value = await repository.authMethods();
   // The switches are the account's, so what they show has to come from the account rather than from a default.
   try {
@@ -249,6 +305,8 @@ async function save() {
     saving.value = false;
   }
   store.apply({ ...draft.value });
+  // Switching the assistant off closes the panel it controls; leaving it open would be the setting not applying.
+  if (!draft.value.assistantEnabled) view.assistantOpen = false;
   if (language.value !== locale.value) setLocale(language.value);
   store.open = false;
 }
@@ -393,12 +451,14 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
 
                 <div class="mt-3 flex flex-col gap-1">
                   <SettingRow :label="t('settings.storage.defaultFolder')">
+                    <!-- Not v-model: choosing a folder also fetches what is inside it, one level at a time. -->
                     <Select
-                      v-model="draft.defaultUploadFolder"
+                      :model-value="draft.defaultUploadFolder"
                       :options="folderOptions"
                       :icon="Folder"
                       :width="212"
                       :label="t('settings.storage.defaultFolder')"
+                      @update:model-value="pickFolder"
                     />
                   </SettingRow>
                   <SettingRow :label="t('settings.storage.autoPreview')" :hint="t('settings.storage.autoPreviewHint')">
@@ -524,7 +584,7 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                 <SettingRow :label="t('settings.assistant.enabled')">
                   <Toggle v-model="draft.assistantEnabled" :label="t('settings.assistant.enabled')" />
                 </SettingRow>
-                <SettingRow :label="t('settings.assistant.defaultMode')">
+                <SettingRow :label="t('settings.assistant.defaultMode')" :hint="t('settings.assistant.defaultModeHint')">
                   <Select v-model="draft.assistantMode" :options="modeOptions" :width="212" :label="t('settings.assistant.defaultMode')" />
                 </SettingRow>
               </div>

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
@@ -94,6 +95,46 @@ func resolveTagFilter(ctx context.Context, store db.Store, p search.Parsed) (*se
 		}
 	}
 	return f, included, nil
+}
+
+// tagScopeNodes answers the "Tags" scope: every node carrying a tag the typed
+// text names.
+//
+// The text DESCRIBES a tag here rather than naming one exactly, so `des` finds
+// everything tagged `design` — the way a search box is expected to behave, and
+// what the form's own demo does. The `tag:` operator stays exact: it names one
+// tag, and a filter that guessed would narrow to the wrong set. Empty text is
+// every tagged node, which is what the chip means on its own.
+func tagScopeNodes(ctx context.Context, store db.Store, text string) ([]*model.Node, error) {
+	// A fully quoted query is the form's "whole phrase" box; the quotes are
+	// its way of saying "these words, adjacent", not part of the tag.
+	if phrase, quoted := search.QuotedPhrase(text); quoted {
+		text = phrase
+	}
+	needle := strings.ToLower(strings.TrimSpace(text))
+	tags, err := store.ListAllTags(ctx)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[int64]bool{}
+	var out []*model.Node
+	for _, tag := range tags {
+		if needle != "" && !strings.Contains(tag, needle) {
+			continue
+		}
+		nodes, err := store.ListNodesByTag(ctx, tag, tagFilterMax)
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range nodes {
+			if seen[n.ID] {
+				continue
+			}
+			seen[n.ID] = true
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }
 
 // tagFilterAccepts applies a resolved filter to one node ID — the SQL
@@ -313,11 +354,23 @@ type searchRequest struct {
 	// search the levels somebody had already expanded — which is the same as
 	// not having one.
 	DirsOnly bool `json:"dirs_only,omitempty"`
+	// SharedOnly is the form's "Search in → Shared files": only the nodes the
+	// caller has published a link to. A facet rather than a scope — it says
+	// WHICH files may answer, not which of their fields are read.
+	SharedOnly bool `json:"shared_only,omitempty"`
 }
 
 // facets turns the request's filter fields into the store's query shape.
 func (req searchRequest) facets() db.NodeFacets {
-	f := db.NodeFacets{PathPrefix: req.PathPrefix, Exts: req.Exts}
+	f := db.NodeFacets{Exts: req.Exts, SharedOnly: req.SharedOnly}
+	// Rooted and without a trailing slash, the shape nodes.path is stored in and
+	// the shape the store's doc comment asks for. It was taken as given, so a
+	// client sending "Docs" or "/Docs/" — the same folder by any reading — got
+	// an empty answer with no sign that its filter, rather than its query, was
+	// what emptied it.
+	if prefix := strings.TrimSpace(req.PathPrefix); prefix != "" {
+		f.PathPrefix = "/" + strings.TrimLeft(path.Clean("/"+prefix), "/")
+	}
 	// A filter on extension or size is a filter for files: a folder has no
 	// extension and its size is a rollup. A date or an owner keeps folders.
 	f.FilesOnly = len(req.Exts) > 0 || req.SizeMin > 0 || req.SizeMax > 0
@@ -386,6 +439,7 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		req.Scope = q.Get("scope")
+		req.SharedOnly = q.Get("shared_only") == "1" || q.Get("shared_only") == "true"
 	} else {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
@@ -423,6 +477,36 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 
 	results := []searchResult{}
 	switch {
+	case sc == search.ScopeTag:
+		// The "Tags" chip: the text names a TAG, not a file. Tags are never in
+		// the index — they live in node_meta and change without the node being
+		// re-indexed — so this is a listing resolved against the database, the
+		// same shape a bare `tag:x` already has, and it never reads a filename
+		// or a file's contents. Before it, choosing "Tags" searched every field
+		// there is.
+		byTag, terr := tagScopeNodes(r.Context(), h.Store, parsed.Text)
+		if terr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": terr.Error()})
+			return
+		}
+		for _, n := range byTag {
+			if req.StorageID != 0 && n.StorageID != req.StorageID {
+				continue
+			}
+			/* wiring:e2 — the marker file stays hidden in name search too */
+			if n.Name == e2e.MarkerName {
+				continue
+			}
+			// Chip tags and facets narrow this listing the way they narrow the
+			// LIKE fallback: there is no index to push the restriction into.
+			if !tagFilterAccepts(tagFilter, n.ID) {
+				continue
+			}
+			results = append(results, searchResult{Node: n, Matched: search.MatchedName})
+			if len(results) > req.Limit {
+				break
+			}
+		}
 	case parsed.HasTagFilter() && parsed.Text == "":
 		// A bare `tag:x` is a listing, not a search: there is no text to
 		// score, so the tagged nodes ARE the answer (newest first, the
@@ -462,7 +546,8 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 	// index cannot answer would otherwise LIKE-scan every mount in the
 	// deployment. That gate is deliberate and predates this change; it is
 	// documented in docs/SEARCH.md and left alone here.
-	if len(results) == 0 && req.StorageID != 0 && parsed.Text != "" && sc != search.ScopeContent {
+	if len(results) == 0 && req.StorageID != 0 && parsed.Text != "" &&
+		sc != search.ScopeContent && sc != search.ScopeTag {
 		plan := search.PlanFallback(parsed.Text)
 		fallback, err := h.Store.SearchNodes(r.Context(), req.StorageID, plan.Like, req.Limit*search.FallbackOverFetch)
 		if err == nil {
@@ -507,6 +592,26 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 		kept := results[:0]
 		for _, res := range results {
 			if matchesFacets(res.Node, facets) {
+				kept = append(kept, res)
+			}
+		}
+		results = kept
+	}
+
+	// "Shared files" is exact over what came back, for the same reason the
+	// facet predicate above is applied twice: the index restriction was built
+	// from a possibly-truncated id set, and two of the three branches never
+	// consult the index at all. One query for the whole page, like every other
+	// listing that answers this question.
+	if facets.SharedOnly {
+		nodes := make([]*model.Node, 0, len(results))
+		for _, res := range results {
+			nodes = append(nodes, res.Node)
+		}
+		attachShared(r.Context(), h.Store, nodes)
+		kept := results[:0]
+		for _, res := range results {
+			if res.Shared {
 				kept = append(kept, res)
 			}
 		}

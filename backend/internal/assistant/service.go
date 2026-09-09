@@ -80,13 +80,18 @@ func New(store dbsetting.Store, box *secretbox.Box) *Service {
 // maxRedirects is the same ceiling net/http applies by default.
 const maxRedirects = 10
 
-// refuseOffHostRedirect keeps the key on the host it was configured for. Go
+// refuseOffHostRedirect keeps the key on the origin it was configured for. Go
 // drops Authorization when a redirect leaves the host, but not x-api-key, so
 // following one would hand the Anthropic header to whatever the provider
 // points at. A provider that moves announces it; it does not redirect.
+//
+// ⚠ The SCHEME is part of the comparison, not only the host. Go's own
+// same-host rule is what strips Authorization, and it says nothing about
+// https→http: a response redirecting to the very same host over plain HTTP
+// passed a host-only check and put the key on the wire in clear text.
 func refuseOffHostRedirect(req *http.Request, via []*http.Request) error {
-	if req.URL.Host != via[0].URL.Host {
-		return fmt.Errorf("assistant: provider redirected to %s; not following a redirect off the configured host", req.URL.Host)
+	if req.URL.Host != via[0].URL.Host || req.URL.Scheme != via[0].URL.Scheme {
+		return fmt.Errorf("assistant: provider redirected to %s://%s; not following a redirect off the configured origin", req.URL.Scheme, req.URL.Host)
 	}
 	if len(via) >= maxRedirects {
 		return fmt.Errorf("assistant: stopped after %d redirects", maxRedirects)

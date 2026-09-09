@@ -368,10 +368,12 @@ func (l *lister) truncate(_ string) {
 	}
 }
 
-// hiddenNames are filex's own bookkeeping trees. /dav, /sftp, /ftp and /nfs
-// each already hide exactly this set (dav/fs.go, sftpsrv/handlers.go,
-// ftpsrv/fs.go, nfssrv/fs.go) and so does the browser listing (manager.go);
-// the S3 gateway had no such filter on any verb, which made it the one
+// hiddenPath reports whether rel names one of filex's own bookkeeping trees,
+// or lives anywhere beneath one — per path COMPONENT, through the shared
+// model.IsReservedPath rather than a private copy of the list.
+//
+// /dav, /sftp, /ftp, /nfs and the browser listing hid those trees from the
+// start; the S3 gateway had no such filter on any verb, which made it the one
 // surface where .versions/42/1 was both listed and readable.
 //
 // That matters much more now than it did: with the pre-write overwrite guard
@@ -379,21 +381,7 @@ func (l *lister) truncate(_ string) {
 // a copy of every file any surface has ever replaced. Leaving it reachable
 // would hand any S3-key holder the prior contents of files whose folders they
 // may since have lost access to.
-var hiddenNames = map[string]bool{
-	".filex-trash": true,
-	".versions":    true,
-	".thumbs":      true,
-}
-
-// hiddenPath reports whether any segment of rel is an internal bucket.
-func hiddenPath(rel string) bool {
-	for _, seg := range strings.Split(rel, "/") {
-		if hiddenNames[seg] {
-			return true
-		}
-	}
-	return false
-}
+func hiddenPath(rel string) bool { return model.IsReservedPath(rel) }
 
 // visible reports whether a KEY may appear in Contents: not one of filex's own
 // internal trees, strictly inside the confinement, and granted.

@@ -26,7 +26,13 @@ void files.bootstrap().then(() => {
   if (account.locale && LOCALES.includes(account.locale as Locale)) setLocale(account.locale as Locale);
   if (account.timeZone) settings.apply({ ...settings.settings, timeZone: account.timeZone });
 });
-void useCapabilitiesStore().load();
+const capabilities = useCapabilitiesStore();
+void capabilities.load();
+// A snapshot that never arrived leaves every action reading "Not available on this server" for the rest of the
+// session; coming back online is the one moment worth asking again.
+window.addEventListener('online', () => {
+  if (capabilities.failed) void capabilities.load();
+});
 // The operator's name, mark and accent. Public and pre-session on the server, so it does not wait on the account;
 // the tab title follows it, which is the one piece of branding with nowhere else to show.
 const branding = useBrandingStore();

@@ -35,3 +35,33 @@ func TestClientRefusesRedirectOffHost(t *testing.T) {
 		t.Fatal("the request reached the redirect target")
 	}
 }
+
+// The same rule, one level down and on the half an httptest server cannot
+// stage: a redirect that keeps the host but drops from https to http.
+//
+// Go's own redirect handling strips Authorization only when the HOST changes,
+// so the downgrade used to be followed — and x-api-key is never stripped, so
+// the key went out in clear text to the same name the operator had configured.
+func TestRefuseRedirectDowngradingTheScheme(t *testing.T) {
+	origin, err := http.NewRequest(http.MethodPost, "https://api.provider.test/v1/messages", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := http.NewRequest(http.MethodPost, "http://api.provider.test/v1/messages", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseOffHostRedirect(plain, []*http.Request{origin}); err == nil {
+		t.Fatal("an https to http redirect on the same host was followed")
+	}
+
+	// The refusal is about the scheme, not about redirects: the same origin is
+	// still followed, which is what makes the assertion above mean something.
+	elsewhere, err := http.NewRequest(http.MethodPost, "https://api.provider.test/v2/messages", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseOffHostRedirect(elsewhere, []*http.Request{origin}); err != nil {
+		t.Fatalf("a same-origin redirect must still be followed: %v", err)
+	}
+}

@@ -76,7 +76,7 @@
     }
   },
   "trash": {
-    "banner": "Items in trash are deleted forever after 30 days",
+    "banner": "Items in trash are deleted forever after {days} days",
     "empty": "Empty trash"
   },
   "modal": {
@@ -97,8 +97,8 @@
     "delete": {
       "trash": {
         "title": "Move to trash?",
-        "bodyOne": "“{name}” will be moved to trash. You can restore it within 30 days.",
-        "bodyMany": "{count} item will be moved to trash. You can restore it within 30 days. | {count} items will be moved to trash. You can restore them within 30 days.",
+        "bodyOne": "“{name}” will be moved to trash. You can restore it from Trash until it is deleted forever.",
+        "bodyMany": "{count} item will be moved to trash. You can restore it from Trash until it is deleted forever. | {count} items will be moved to trash. You can restore them from Trash until they are deleted forever.",
         "confirm": "Move to trash"
       },
       "forever": {
@@ -144,8 +144,7 @@
     },
     "versions": {
       "title": "Version history",
-      "hint": "Every saved revision of “{name}”.",
-      "current": "Current",
+      "hint": "Earlier contents of “{name}”, saved before each change.",
       "by": "{name} • {size}",
       "restore": "Restore",
       "restored": "Restored the revision from {date}",
@@ -166,6 +165,8 @@
   "toast": {
     "close": "Dismiss",
     "undo": "Undo",
+    "undoFailed": "Could not undo the last action",
+    "redoFailed": "Could not redo the last action",
     "movedToTrashOne": "“{name}” moved to trash",
     "movedToTrashMany": "{count} item moved to trash | {count} items moved to trash",
     "restoredOne": "“{name}” restored",
@@ -197,7 +198,15 @@
     "wrongFile": "That is a different file. Pick the same one to carry on.",
     "cancelItem": "Cancel the upload of {name}",
     "cancelled": "Cancelled",
-    "close": "Close"
+    "close": "Close",
+    "waiting": "Waiting",
+    "conflictAsk": "“{name}” is already in this folder.",
+    "replace": "Replace",
+    "keepBoth": "Keep both",
+    "skip": "Skip",
+    "skipped": "Skipped — that name is already in this folder.",
+    "folderDropped": "“{name}” is a folder; a drop cannot carry one. Use New → Upload folder. | {count} folders were left out; a drop cannot carry them. Use New → Upload folder.",
+    "defaultFolderGone": "Your default upload folder is gone; uploading to “{folder}” instead."
   },
   "topbar": {
     "searchPlaceholder": "Search in {storage}…",
@@ -228,6 +237,7 @@
     "selectItem": "Select {name}",
     "emptyHint": "Files you add to this folder will appear here",
     "sharedBy": "Shared by",
+    "sharedByUnknown": "Someone",
     "sharedOn": "Shared on",
     "deleted": "Deleted",
     "originalPath": "Original location",
@@ -286,6 +296,7 @@
     "peopleWithAccess": "People with access",
     "sharedLink": "Shared link",
     "notShared": "Not shared",
+    "shareUnknown": "Could not read the link status",
     "createLink": "Create link",
     "copy": "Copy link",
     "remove": "Remove",
@@ -360,11 +371,11 @@
       "tags": "Tags"
     },
     "searchIn": "Search in",
-    "searchInHelp": "Look in the folder you are viewing, in every storage, or only in files shared with you.",
+    "searchInHelp": "Look in the folder you are viewing, in every storage, or only in files you have shared by link.",
     "in": {
       "current": "Current folder: {folder}",
       "all": "All storages",
-      "shared": "Shared files"
+      "shared": "Files you shared"
     },
     "modified": "Modified",
     "modifiedOptions": {
@@ -415,6 +426,7 @@
     "search": "Search",
     "resultsTitle": "Search results",
     "noResults": "No results",
+    "failed": "Search failed",
     "colName": "Name",
     "colPath": "Path",
     "colMatch": "Match",
@@ -445,7 +457,10 @@
       "failed": "Something went wrong. Please try again.",
       "quota": "The assistant's provider account is out of credit. Ask an administrator to top it up.",
       "unavailable": "The assistant is no longer available: it was switched off, or its provider stopped answering for it.",
-      "timeout": "No answer came for a minute, so the request was dropped. Try again."
+      "timeout": "No answer came for a minute, so the request was dropped. Try again.",
+      "busy": "The assistant is busy: another question of yours is still being answered, or you have asked too many times this minute. Wait a moment and ask again.",
+      "answering": "Your previous question is still being answered — wait for that answer, then ask again.",
+      "rateLimited": "You have asked too many times in the last minute. Wait a moment and ask again."
     },
     "thinking": "Thinking…",
     "stopped": "Stopped",
@@ -478,6 +493,15 @@
       "list_storages": "Looking at the drives",
       "list_folder": "Looking in",
       "search_files": "Searching for",
+      "list_versions": "Looking at the versions of",
+      "list_shares": "Looking at the links on",
+      "list_trash": "Looking in the trash",
+      "plan_tags": "Preparing a tagging plan",
+      "plan_restore_version": "Preparing a plan to restore a version of",
+      "plan_create_share": "Preparing a plan to create a link to",
+      "plan_revoke_share": "Preparing a plan to close the link on",
+      "plan_move": "Preparing a plan to move files to",
+      "plan_empty_trash": "Preparing a plan to empty the trash",
       "read_file": "Reading",
       "read_image_text": "Reading the text in",
       "view_image": "Looking at",
@@ -636,15 +660,21 @@
       "hint": "How the AI assistant behaves for you.",
       "enabled": "Enable AI assistant",
       "defaultMode": "Default search mode",
+      "defaultModeHint": "The mode a new chat starts in; the chips in the panel change it for that chat.",
       "providerNote": "The model and API key are configured by your administrator."
     },
     "saveFailed": "Could not save your profile."
   },
   "error": {
     "retry": "Try again",
+    "unexpected": "Something went wrong",
     "notFound": {
       "title": "Folder not found",
       "hint": "It may have been renamed, moved or deleted"
+    },
+    "noSuchPage": {
+      "title": "Page not found",
+      "hint": "The link may be out of date, or the address mistyped"
     },
     "load": {
       "title": "Could not load this listing",
@@ -667,6 +697,9 @@
     "taggingOne": "Saving the tags of “{name}”",
     "taggingMany": "Saving tags",
     "emptying": "Emptying the trash",
+    "sharing": "Creating a share link",
+    "unsharing": "Removing the share link",
+    "uploading": "Preparing the upload",
     "title": "In progress",
     "failed": "{n} operation failed | {n} operations failed",
     "pending": "Still running on the server — refresh to see it land",

@@ -2720,7 +2720,12 @@ func (s *Store) NodeOwners(ctx context.Context, nodeIDs []int64) ([]db.NodeOwner
 		marks = append(marks, "$"+strconv.Itoa(i+1))
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT n.id, u.id, COALESCE(NULLIF(u.display_name,''), u.email)
+		// ⚠ The display name ONLY, never the e-mail behind it. An owner column
+		// is drawn for anybody who may see the listing, so falling back to the
+		// address published every colleague's e-mail to everyone with read
+		// access. An account that has set no display name comes back with an
+		// empty name and the client prints who it is in the reader's language.
+		`SELECT n.id, u.id, COALESCE(u.display_name, '')
 		   FROM nodes n JOIN users u ON u.id = n.owner_id
 		  WHERE n.id IN (`+strings.Join(marks, ",")+`)`, args...)
 	if err != nil {
@@ -2749,17 +2754,15 @@ func inMarks(ids []int64) (string, []any) {
 	return strings.Join(marks, ","), args
 }
 
-// hiddenNames are the internal buckets every listing projection drops — see the
-// SQLite driver's copy and projectFileNodes in the manager handler.
-var hiddenNames = []string{".filex-trash", ".versions", ".thumbs", ".filex-e2e.json"}
-
+// ChildCounts excludes model.ReservedNames — see the SQLite driver's copy of
+// this query and model.IsReservedPath for why the list is shared.
 func (s *Store) ChildCounts(ctx context.Context, parentIDs []int64) (map[int64]int64, error) {
 	if len(parentIDs) == 0 {
 		return nil, nil
 	}
 	marks, args := inMarks(parentIDs)
-	hidden := make([]string, len(hiddenNames))
-	for i, name := range hiddenNames {
+	hidden := make([]string, len(model.ReservedNames))
+	for i, name := range model.ReservedNames {
 		hidden[i] = "$" + strconv.Itoa(len(args)+i+1)
 		args = append(args, name)
 	}
@@ -2841,11 +2844,27 @@ func (s *Store) SetAssistantSessionTitle(ctx context.Context, id int64, title st
 }
 
 func (s *Store) DeleteAssistantSession(ctx context.Context, id int64) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM assistant_messages WHERE session_id=$1`, id); err != nil {
-		return err
+	// All three children, explicitly, and in one transaction — see the sqlite
+	// driver for why: the FKs cascade, but the explicit delete is the guard
+	// against a deployment where they do not, and the read grants are the
+	// person's consent to open named files, which must not outlive the
+	// conversation any more than the messages do.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("postgres: delete assistant session: %w", err)
 	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM assistant_sessions WHERE id=$1`, id)
-	return err
+	defer func() { _ = tx.Rollback() }()
+	for _, stmt := range []string{
+		`DELETE FROM assistant_messages WHERE session_id=$1`,
+		`DELETE FROM assistant_read_grants WHERE session_id=$1`,
+		`DELETE FROM assistant_plans WHERE session_id=$1`,
+		`DELETE FROM assistant_sessions WHERE id=$1`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt, id); err != nil {
+			return fmt.Errorf("postgres: delete assistant session: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 func (s *Store) EvictAssistantSessions(ctx context.Context, userID int64, keep int) (int, error) {
@@ -2884,20 +2903,31 @@ func (s *Store) AppendAssistantMessage(ctx context.Context, m *model.AssistantMe
 	if payload == "" {
 		payload = "{}"
 	}
-	var id int64
-	var created time.Time
-	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO assistant_messages (session_id, role, content, payload_json, aborted, secret_notice)
-		 VALUES ($1,$2,$3,$4::jsonb,$5,$6) RETURNING id, created_at`,
-		m.SessionID, m.Role, m.Content, payload, m.Aborted, m.SecretNotice).Scan(&id, &created)
+	// One transaction, because the interface promises one call — see the sqlite
+	// driver for what the count and the activity stamp are load-bearing for.
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: append assistant message: %w", err)
 	}
-	m.ID, m.PayloadJSON, m.CreatedAt = id, payload, created
-	if _, err := s.db.ExecContext(ctx,
-		`UPDATE assistant_sessions SET message_count = message_count + 1, last_active_at = NOW() WHERE id = $1`, m.SessionID); err != nil {
-		return nil, err
+	defer func() { _ = tx.Rollback() }()
+	var id int64
+	var created time.Time
+	if err := tx.QueryRowContext(ctx,
+		`INSERT INTO assistant_messages (session_id, role, content, payload_json, aborted, secret_notice)
+		 VALUES ($1,$2,$3,$4::jsonb,$5,$6) RETURNING id, created_at`,
+		m.SessionID, m.Role, m.Content, payload, m.Aborted, m.SecretNotice).Scan(&id, &created); err != nil {
+		return nil, fmt.Errorf("postgres: append assistant message: %w", err)
 	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE assistant_sessions SET message_count = message_count + 1, last_active_at = NOW() WHERE id = $1`, m.SessionID); err != nil {
+		return nil, fmt.Errorf("postgres: append assistant message: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("postgres: append assistant message: %w", err)
+	}
+	// Written back only once it is durable: a caller that got an error must not
+	// be holding a message that claims an id.
+	m.ID, m.PayloadJSON, m.CreatedAt = id, payload, created
 	return m, nil
 }
 
@@ -2963,6 +2993,20 @@ func (s *Store) ListAssistantPlans(ctx context.Context, sessionID int64) ([]*mod
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+// ClaimAssistantPlan takes a pending, unclaimed plan for execution — see the
+// note on the interface for why the claim, and not the closing update, is what
+// makes a plan run once.
+func (s *Store) ClaimAssistantPlan(ctx context.Context, id int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE assistant_plans SET decided_at=NOW() WHERE id=$1 AND status=$2 AND decided_at IS NULL`,
+		id, model.PlanPending)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // FinishAssistantPlan closes a plan, and only from `pending` — see the note on
@@ -3149,9 +3193,12 @@ func (s *Store) ListTrashed(ctx context.Context, storageID *int64, topLevelOnly 
 	args = append(args, limit, offset)
 	limPlace := fmt.Sprintf("$%d", len(args)-1)
 	offPlace := fmt.Sprintf("$%d", len(args))
+	// id DESC is the tie-break — see the sqlite driver: a bulk delete stamps one
+	// deleted_at across every row it touches, and without a unique second key
+	// paging through it duplicates some rows and loses others.
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+nodeColumns()+` FROM nodes `+where+
-			` ORDER BY deleted_at DESC LIMIT `+limPlace+` OFFSET `+offPlace, args...)
+			` ORDER BY deleted_at DESC, id DESC LIMIT `+limPlace+` OFFSET `+offPlace, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -3326,6 +3373,38 @@ func (s *Store) ListNodesByUserMeta(ctx context.Context, userID int64, key strin
 			return nil, err
 		}
 		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// UserNodeMetaTimes returns updated_at per node for one (user, key) — the very
+// column ListNodesByUserMeta orders by, so a caller can hand the date out with
+// the row instead of leaving the client to guess it from the file's mtime.
+func (s *Store) UserNodeMetaTimes(ctx context.Context, userID int64, key string, nodeIDs []int64) (map[int64]time.Time, error) {
+	out := map[int64]time.Time{}
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	args := []any{userID, key}
+	marks := make([]string, len(nodeIDs))
+	for i, id := range nodeIDs {
+		args = append(args, id)
+		marks[i] = "$" + strconv.Itoa(len(args))
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT node_id, updated_at FROM user_node_meta
+		 WHERE user_id=$1 AND key=$2 AND node_id IN (`+strings.Join(marks, ",")+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: user node meta times: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var at time.Time
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		out[id] = at.UTC()
 	}
 	return out, rows.Err()
 }
@@ -4140,7 +4219,7 @@ func (s *Store) CreateNodeComment(ctx context.Context, c *model.NodeComment) (*m
 func (s *Store) GetNodeComment(ctx context.Context, id int64) (*model.NodeComment, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT c.id, c.node_id, c.user_id, c.body, c.created_at, c.updated_at,
-		        COALESCE(NULLIF(u.display_name, ''), u.email)
+		        COALESCE(u.display_name, '')
 		 FROM node_comments c
 		 LEFT JOIN users u ON u.id = c.user_id
 		 WHERE c.id=$1 AND c.deleted_at IS NULL`, id)
@@ -4148,12 +4227,18 @@ func (s *Store) GetNodeComment(ctx context.Context, id int64) (*model.NodeCommen
 }
 
 // ListNodeComments returns the live comments of one node in chronological
-// order (oldest first), each carrying the author's display name (falling
-// back to the author's email).
+// order (oldest first), each carrying the author's display name.
+//
+// ⚠ The display name ONLY, never the e-mail behind it. A comment thread is
+// drawn for anybody who may open the file, so falling back to the address
+// published the e-mail of every colleague who had written on it. An account
+// that has set no display name comes back with an empty name and the client
+// prints who it is in the reader's language — the same rule the version
+// authors, the activity actors and the owner column already follow.
 func (s *Store) ListNodeComments(ctx context.Context, nodeID int64) ([]*model.NodeComment, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT c.id, c.node_id, c.user_id, c.body, c.created_at, c.updated_at,
-		        COALESCE(NULLIF(u.display_name, ''), u.email)
+		        COALESCE(u.display_name, '')
 		 FROM node_comments c
 		 LEFT JOIN users u ON u.id = c.user_id
 		 WHERE c.node_id=$1 AND c.deleted_at IS NULL

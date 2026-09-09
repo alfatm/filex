@@ -49,7 +49,7 @@ const mismatch = ref<number | null>(null);
         <!-- A failure outranks the count: "3 of 3" over a row that never arrived would be a lie. -->
         <template v-if="uploads.failedCount">{{ t('upload.failed', uploads.failedCount) }}</template>
         <template v-else-if="uploads.interruptedCount">{{ t('upload.interrupted', uploads.interruptedCount) }}</template>
-        <template v-else-if="uploads.doneCount === uploads.items.length">{{ t('upload.done', uploads.items.length) }}</template>
+        <template v-else-if="!uploads.pendingCount">{{ t('upload.done', uploads.doneCount) }}</template>
         <template v-else>{{ t('upload.title', { done: uploads.doneCount, total: uploads.items.length }) }}</template>
       </span>
       <IconButton :label="t('upload.close')" :size="36" class="text-text-3" @click="uploads.clear()"><X :size="18" /></IconButton>
@@ -68,12 +68,22 @@ const mismatch = ref<number | null>(null);
             <button type="button" class="ml-2 text-primary hover:underline" @click="askForFile(item.id)">{{ t('upload.resume') }}</button>
             <button type="button" class="ml-2 text-text-3 hover:underline" @click="uploads.discard(item.id)">{{ t('upload.discard') }}</button>
           </p>
+          <!-- "Ask me what to do" lands HERE, beside the row it is about, rather than in a modal that would stop
+               the rest of the batch: the other transfers carry on while this one waits for an answer. -->
+          <p v-if="item.state === 'conflict'" class="mt-1 text-13 leading-none text-text-3">
+            {{ t('upload.conflictAsk', { name: item.name }) }}
+            <button type="button" class="ml-2 text-primary hover:underline" @click="uploads.decide(item.id, 'replace')">{{ t('upload.replace') }}</button>
+            <button type="button" class="ml-2 text-primary hover:underline" @click="uploads.decide(item.id, 'keepBoth')">{{ t('upload.keepBoth') }}</button>
+            <button type="button" class="ml-2 text-text-3 hover:underline" @click="uploads.decide(item.id, 'skip')">{{ t('upload.skip') }}</button>
+          </p>
+          <p v-else-if="item.state === 'skipped'" class="mt-1 text-13 leading-none text-text-3">{{ t('upload.skipped') }}</p>
+          <p v-else-if="item.state === 'queued'" class="mt-1 text-13 leading-none text-text-3">{{ t('upload.waiting') }}</p>
           <p v-if="mismatch === item.id" class="mt-1 text-13 leading-none text-danger">{{ t('upload.wrongFile') }}</p>
           <p v-else-if="item.state === 'cancelled'" class="mt-1 text-13 leading-none text-text-3">{{ t('upload.cancelled') }}</p>
         </div>
         <!-- Stopping one transfer leaves the others alone, so the control is per row. -->
         <IconButton
-          v-if="item.state === 'running'"
+          v-if="item.state === 'running' || item.state === 'queued'"
           :label="t('upload.cancelItem', { name: item.name })"
           :size="24"
           class="ml-3 shrink-0 text-text-3"

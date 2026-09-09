@@ -10,6 +10,7 @@ const StarredPage = () => import('./pages/StarredPage.vue');
 const TrashPage = () => import('./pages/TrashPage.vue');
 const ConnectPage = () => import('./pages/ConnectPage.vue');
 const ApiKeysPage = () => import('./pages/ApiKeysPage.vue');
+const NotFoundPage = () => import('./pages/NotFoundPage.vue');
 
 export const routes = [
   { path: '/', alias: '/home', name: 'home', component: HomePage },
@@ -26,6 +27,9 @@ export const routes = [
   // only links them when there is one (see `Capabilities.connections`).
   { path: '/connect', name: 'connect', component: ConnectPage },
   { path: '/api-keys', name: 'apiKeys', component: ApiKeysPage },
+  // Last, so every route above wins: an address this app has no screen for says so instead of drawing the shell
+  // around an empty column.
+  { path: '/:pathMatch(.*)*', name: 'notFound', component: NotFoundPage },
 ] as const;
 
 export default createRouter({

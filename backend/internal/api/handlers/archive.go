@@ -596,6 +596,28 @@ const zipMaxRoots = 500
 // stream. Nothing legitimate nests this deep.
 const zipMaxDepth = 32
 
+// zipRootName reserves a distinct archive name for one download root, adding a
+// ` (2)`, ` (3)`, … before the extension when the plain basename is already
+// spoken for. Deterministic: the suffix follows selection order.
+//
+// ⚠ A root is named after its basename, so a selection of `main://a/dup.txt`
+// and `main://b/dup.txt` used to write TWO members called `dup.txt`. The format
+// permits that and unpackers silently keep the last one, which turns
+// "download everything I selected" — the ordinary move out of search results or
+// the starred list, where a selection spans folders by construction — into a
+// download that loses files without saying so. Nested members cannot collide
+// (they carry the path below their root), so only the roots need this.
+func zipRootName(name string, taken map[string]bool) string {
+	candidate := name
+	ext := path.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	for n := 2; taken[candidate]; n++ {
+		candidate = fmt.Sprintf("%s (%d)%s", stem, n, ext)
+	}
+	taken[candidate] = true
+	return candidate
+}
+
 // DownloadZip streams a zip of the named paths — files, folders, or a mix.
 //
 //	GET /api/files/download/zip?path=main://Design&path=main://notes.md[&name=…]
@@ -631,10 +653,21 @@ func (a *Archive) DownloadZip(w http.ResponseWriter, r *http.Request) {
 		isDir bool
 	}
 	roots := make([]zipRoot, 0, len(paths))
+	// A root is named after its basename, and two selected paths can share one:
+	// `main://a/dup.txt` and `main://b/dup.txt`, two folders called `raw` under
+	// different parents, two drives with the same name. See zipRootName.
+	takenNames := make(map[string]bool, len(paths))
 	for _, p := range paths {
 		storageID, rel, err := a.resolveStorage(ctx, 0, p)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		// Naming an internal bucket as the download root would hand over
+		// exactly what the walk below skips, so it is refused outright rather
+		// than answered with an empty archive.
+		if model.IsReservedPath(rel) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "internal path: " + p})
 			return
 		}
 		if root, ok := confine.RootFrom(ctx); ok {
@@ -665,7 +698,11 @@ func (a *Archive) DownloadZip(w http.ResponseWriter, r *http.Request) {
 				name = st.Name
 			}
 		}
-		roots = append(roots, zipRoot{storageID: storageID, rel: rel, name: name, isDir: obj.Kind == storage.KindDirectory})
+		roots = append(roots, zipRoot{
+			storageID: storageID, rel: rel,
+			name:  zipRootName(name, takenNames),
+			isDir: obj.Kind == storage.KindDirectory,
+		})
 	}
 
 	filename := r.URL.Query().Get("name")
@@ -717,6 +754,15 @@ func (a *Archive) zipGuard(ctx context.Context, storageID int64) (*acl.Set, erro
 // A member the caller may not see is skipped rather than refused: that is what
 // the folder listing does, and half an archive is better than none.
 func (a *Archive) zipInto(ctx context.Context, zw *zip.Writer, storageID int64, rel, name string, isDir bool, guard *acl.Set, depth int) error {
+	// filex's own buckets (model.ReservedNames), dropped before the ACL check
+	// and not after: on a storage with RBAC off `Effective` is just the
+	// caller's role, so the guard alone lets any account walk into the trash
+	// and the version history. Walking the driver straight past the listing
+	// projections is how a plain zip of a storage root came to carry other
+	// people's deleted files and every snapshot ever taken.
+	if model.IsReservedPath(rel) {
+		return nil
+	}
 	if guard != nil && guard.Effective(strings.Trim(rel, "/")) < acl.LevelViewer {
 		return nil
 	}

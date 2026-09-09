@@ -139,13 +139,18 @@ rows at a time) and reports a summary (`scanned` / `deleted` / `failed` /
 
 | Method & path | Body / query | Notes |
 |---|---|---|
-| `GET /api/files/manager/trash` | `?storage_id=…&limit=…&offset=…&top_level_only=1`, plus the filter facets `ext=` (repeated or comma-separated, dot-less), `modified_after=` (epoch ms), `size_min=`, `size_max=`, `owner_id=` | Lists soft‑deleted items. `limit` defaults to 50 (max 500). Each entry shows the **original** `name`/`path` (not the internal trash key), `deleted_at`, `size`, `storage_name`, and **`ttl_days`** (days remaining before purge, floored at 0). `top_level_only=1` drops the rows a deleted folder dragged in with it, and narrows `total` to match. The facets are the same words `POST /api/files/search` takes, and they narrow inside the query — so `total` counts the filtered set and a filtered page is a page of it, not of the newest 500. One difference from search: `modified_after` here tests **`deleted_at`**, because that is the date this listing shows and orders by. |
+| `GET /api/files/manager/trash` | `?storage_id=…&limit=…&offset=…&top_level_only=1`, plus the filter facets `ext=` (repeated or comma-separated, dot-less), `modified_after=` (epoch ms), `size_min=`, `size_max=`, `owner_id=` | Lists soft‑deleted items. `limit` defaults to 50 (max 500). Each entry shows the **original** `name`/`path` (not the internal trash key), `deleted_at`, `size`, `storage_name`, **`type`** (`file` / `dir`, the same values every other node the API returns carries — without it a deleted FOLDER was indistinguishable from a file) and **`ttl_days`** (days remaining before purge, floored at 0). `top_level_only=1` drops the rows a deleted folder dragged in with it, and narrows `total` to match. The facets are the same words `POST /api/files/search` takes, and they narrow inside the query — so `total` counts the filtered set and a filtered page is a page of it, not of the newest 500. One difference from search: `modified_after` here tests **`deleted_at`**, because that is the date this listing shows and orders by. |
 | `POST /api/files/manager/restore` | `{ "node_id": 123 }` | Moves the file back to its original path and re‑attaches the row. |
+| `DELETE /api/files/manager/trash/{id}` | — | Destroys one entry of the caller's OWN trash — the same hard delete the admin route does, with the guard that makes it safe to hand to an ordinary account. A node that is not in the trash answers `404`, live rows included. |
+| `POST /api/files/manager/trash/empty` | — | Destroys everything in the trash this caller may purge; top‑level rows only, since purging a deleted folder already takes its contents. Answers `{ ok, purged, failed, skipped, more }`. An entry the caller may not purge is **skipped, not refused** — somebody else's deletion on a shared drive must not make "empty my trash" fail. ⚠ The listing is ordered by deletion time across every account, so the handler reads a page of 500, purges what it may, and steps over pages that purged nothing until one produces a result or the listing runs out; `more` says that page was full and there may be another round to ask for. Judging the first page alone answered `purged: 0, skipped: 500` on a busy install and emptied nothing. |
 
-Both are **filtered by access**: a [confined](RBAC.md) (root‑locked) caller only
-sees / can restore items whose original path is inside its root, and
+All four are **filtered by access**: a [confined](RBAC.md) (root‑locked) caller
+only sees / can act on items whose original path is inside its root, and
 [RBAC](RBAC.md) requires **≥viewer** to see an item in the list and **≥editor**
-on its original path to restore it (restore writes the file back).
+on its original path to restore it (restore writes the file back) or to purge it
+(≥editor rather than ownership, because filex has no per‑node owner and the
+level that let the caller delete the file is the honest bar for letting them
+finish the job — a viewer sees the entry and cannot destroy it).
 
 **Admin only:**
 

@@ -1,3 +1,4 @@
+import { joinPath, parentPath, splitPath } from '@/lib/address';
 import { fileTypeOf, TYPE_THUMBNAILS } from '../fileTypes';
 import type { ActivityEvent, FileType, MatchRange, Node, Quota, SearchHit, Session, Storage } from '../types';
 
@@ -11,28 +12,8 @@ import type { ActivityEvent, FileType, MatchRange, Node, Quota, SearchHit, Sessi
  * keeps the numeric ids beside it for the endpoints that insist on them.
  */
 
-/** `<adapter>://<rel>`; an empty `rel` is the storage root and stays as the bare `<adapter>://`. */
-export function joinPath(adapter: string, rel: string): string {
-  return `${adapter}://${rel.replace(/^\/+|\/+$/g, '')}`;
-}
-
-export function splitPath(id: string): { adapter: string; rel: string } {
-  const at = id.indexOf('://');
-  if (at < 0) return { adapter: '', rel: id.replace(/^\/+|\/+$/g, '') };
-  return { adapter: id.slice(0, at), rel: id.slice(at + 3).replace(/^\/+|\/+$/g, '') };
-}
-
-/** The folder holding `id`, or null when `id` is a storage root (which has no parent). */
-export function parentPath(id: string): string | null {
-  const { adapter, rel } = splitPath(id);
-  if (!rel) return null;
-  return joinPath(adapter, rel.slice(0, rel.lastIndexOf('/') + 1));
-}
-
-export function nameOf(id: string): string {
-  const { rel } = splitPath(id);
-  return rel.slice(rel.lastIndexOf('/') + 1);
-}
+// Addressing itself lives in `@/lib/address`: which drive a node is on and what holds it is domain knowledge,
+// not a property of this transport.
 
 /** `model.Node.type` and the `FileNode` projection of it. A symlink is listed as the file it stands for. */
 type WireType = 'file' | 'dir' | 'symlink';
@@ -64,6 +45,11 @@ export interface WireFileNode {
   shared?: boolean;
   /** Entries in a folder, counted the way this listing counts them. Absent when the server did not count. */
   item_count?: number;
+  /** `shared-with-me` only: when the grant was made, epoch milliseconds. */
+  shared_at?: number;
+  /** `shared-with-me` only: the account that issued the grant, and its display name when it has one. */
+  shared_by?: number;
+  shared_by_name?: string;
 }
 
 /** The `?q=index` envelope. `storages` is the caller's visible drive list, already RBAC-filtered. */
@@ -100,6 +86,8 @@ export interface WireNode {
   owner_name?: string;
   /** Thumbnail state, stamped by the handlers that list files outside a folder; only `ready` has bytes to serve. */
   thumb?: { state: 'pending' | 'ready' | 'failed' | 'skipped' };
+  /** `/manager/recent` only: when THIS caller last opened the node, RFC3339. The listing's own sort key. */
+  opened_at?: string;
 }
 
 /** One row of `/api/files/manager/trash` — `trash.TrashEntry`, a projection of its own. */
@@ -110,6 +98,8 @@ export interface WireTrashEntry {
   /** The path the node had before it was trashed. */
   path: string;
   name: string;
+  /** The node's kind, spelled as everywhere else. Absent on a server too old to send it. */
+  type?: WireType;
   size: number;
   mime?: string;
   deleted_at: string;
@@ -379,6 +369,8 @@ export function fromModelNode(wire: WireNode, adapter: string): Node {
     ...(thumbUrl === undefined ? {} : { thumbUrl }),
     shared: wire.shared ?? false,
     starred: false,
+    // Recent orders and groups by this; without it the page fell back to the mtime and "Today" meant "written today".
+    ...(wire.opened_at ? { openedAt: wire.opened_at } : {}),
     ...(wire.deleted_at ? { deletedAt: wire.deleted_at } : {}),
     // `typed` fills ownerId with SELF; a row filex could name an owner for overrides that with the real one.
     ...(wire.owner_id === undefined ? {} : { ownerId: String(wire.owner_id), ownerName: wire.owner_name }),
@@ -449,25 +441,31 @@ export function fromAssistantHit(wire: WireAssistantHit): SearchHit {
 }
 
 /**
- * A trashed node. The projection carries neither a type nor a modification date — only where the node used to be
- * and when it was deleted — so a trashed row is a file unless its old path says otherwise, and its "modified"
- * column shows the deletion instant, which is what the trash listing sorts by anyway.
+ * A trashed node. The projection carries no modification date — only where the node used to be and when it was
+ * deleted — so its "modified" column shows the deletion instant, which is what the trash listing sorts by anyway.
+ *
+ * The kind comes off the row: a deleted FOLDER used to arrive as a file, so it got an icon picked by extension and
+ * a byte count where a folder shows a dash. A server too old to send one still says "file", which is what every
+ * such row was before.
  */
 export function fromTrashEntry(wire: WireTrashEntry): Node {
   const adapter = wire.storage_name ?? '';
   const id = joinPath(adapter, wire.path);
   const parent = parentPath(id);
+  const kind = wire.type === 'dir' ? 'folder' : 'file';
   return {
     id,
     name: wire.name,
-    kind: 'file',
+    kind,
     parentId: parent,
-    size: wire.size,
+    size: kind === 'folder' ? 0 : wire.size,
     modifiedAt: wire.deleted_at,
-    ...typed(wire.name, 'file'),
+    ...typed(wire.name, kind),
     shared: false,
     starred: false,
     deletedAt: wire.deleted_at,
+    // What the banner and the purge countdown say. Absent on a server that does not count it down.
+    ...(wire.ttl_days === undefined ? {} : { ttlDays: wire.ttl_days }),
     originalPath: parent ? `/${splitPath(parent).rel}` : '/',
   };
 }
@@ -476,11 +474,8 @@ export function fromTrashEntry(wire: WireTrashEntry): Node {
  * A drive. Its id is its name — the same token that addresses every node inside it — and its root is the bare
  * `<name>://`, which is exactly what the listing endpoint reads as "the top of this storage".
  *
- * The quota is the ACCOUNT's, not the drive's: filex meters per user, so every drive reports the same figure.
- */
-/**
- * A drive's own usage, measured against the ACCOUNT's ceiling — the only ceiling filex has. Two drives therefore
- * draw two bars against the same limit, each showing the share it takes of it, which is what both numbers mean.
+ * The quota is the ACCOUNT's, not the drive's: filex meters per user, so two drives draw two bars against the
+ * same ceiling, each showing the share of it that drive takes.
  */
 export function toStorage(wire: WireStorage, limitBytes: number): Storage {
   return {

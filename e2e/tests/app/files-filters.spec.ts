@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { childrenOf, countIn, imagesIn } from '../../helpers/mockTree';
 
 /**
  * Filter chips above the listings. The store hands the filter to the repository, so every pick is a reload —
@@ -10,14 +11,15 @@ test.describe('Listing filters', () => {
   test('Type narrows the folder listing to files of that group', async ({ page }) => {
     await page.goto('files?view=list');
     const rows = page.getByRole('grid').locator('tbody tr');
-    await expect(rows).toHaveCount(17);
+    await expect(rows).toHaveCount(countIn());
 
     await chips(page, 'Type').click();
     const menu = page.getByRole('menu', { name: 'Type' });
     await expect(menu.getByRole('menuitemradio', { name: 'Any file type' })).toHaveAttribute('aria-checked', 'true');
     await menu.getByRole('menuitemradio', { name: 'Images' }).click();
 
-    await expect(rows).toHaveCount(2);
+    // Exactly the root files the app calls images — the folders and every other type are gone.
+    await expect(rows).toHaveCount(imagesIn().length);
     await expect(rows).toContainText([/mountains\.jpg/, /beach\.png/]);
     // The chip now reads the chosen value and marks itself active; folders are gone with it.
     const chip = chips(page, 'Images');
@@ -26,7 +28,7 @@ test.describe('Listing filters', () => {
 
     await chip.click();
     await page.getByRole('menu', { name: 'Type' }).getByRole('menuitemradio', { name: 'Any file type' }).click();
-    await expect(rows).toHaveCount(17);
+    await expect(rows).toHaveCount(countIn());
   });
 
   test('an empty result offers a way back', async ({ page }) => {
@@ -37,7 +39,7 @@ test.describe('Listing filters', () => {
     await expect(page.getByRole('grid')).toHaveCount(0);
     await expect(page.getByText('No matching items')).toBeVisible();
     await page.getByRole('button', { name: 'Clear filters' }).click();
-    await expect(page.getByRole('grid').locator('tbody tr')).toHaveCount(17);
+    await expect(page.getByRole('grid').locator('tbody tr')).toHaveCount(countIn());
   });
 
   test('People filters Shared with me down to one owner', async ({ page }) => {
@@ -62,8 +64,12 @@ test.describe('Listing filters', () => {
     await chips(page, 'Modified').click();
     await page.getByRole('menu', { name: 'Modified' }).getByRole('menuitemradio', { name: 'Last 7 days' }).click();
 
+    // Everything at the root is inside the window except the folders the mock pins to June / early July
+    // (`REF_OVERRIDES` in dataset.ts); anything the generator adds is dated from the drive's own date, an hour
+    // apart, so it always lands inside it.
+    const pinnedBeforeWindow = ['Design', 'Documents', 'Photos', 'example', 'Archive', 'Resources', 'Shared'];
     const rows = page.getByRole('grid').locator('tbody tr');
-    await expect(rows).toHaveCount(10);
+    await expect(rows).toHaveCount(childrenOf().filter((e) => !pinnedBeforeWindow.includes(e.path)).length);
     // Folders survive a date filter, unlike a type or size one.
     await expect(rows.filter({ hasText: 'Code' })).toHaveCount(1);
   });
@@ -77,6 +83,6 @@ test.describe('Listing filters', () => {
 
     await page.goto('files/demo/Design');
     await expect(chips(page, 'Type')).toBeVisible();
-    await expect(page.getByRole('group', { name: 'Files' }).getByRole('option')).toHaveCount(8);
+    await expect(page.getByRole('group', { name: 'Files' }).getByRole('option')).toHaveCount(countIn('Design'));
   });
 });

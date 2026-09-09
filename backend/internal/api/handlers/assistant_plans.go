@@ -146,14 +146,25 @@ func planCap(kind string) int {
 	return model.MaxPlanItems
 }
 
+// overCap is the ceiling refusal, worded once.
+//
+// ⚠ It is asked BEFORE the paths are resolved as well as after the items are
+// built. Resolving one path is a drive listing, a grants read and a node lookup;
+// a model — or an injection in a file it was allowed to read — naming a thousand
+// paths used to spend all of those queries and only then be told the plan was
+// too long to store, without a person having approved anything.
+func overCap(kind string, count int) assistant.ToolOutcome {
+	return failure("a %s plan may cover at most %d items and this one has %d; propose a narrower one", kind, planCap(kind), count)
+}
+
 // createPlan stores a proposal and returns the tool result plus the card the
 // person will decide on.
 func (t *assistantTools) createPlan(ctx context.Context, kind, summary string, items []planItem) assistant.ToolOutcome {
 	if len(items) == 0 {
 		return failure("there is nothing to do: the plan came out empty")
 	}
-	if cap := planCap(kind); len(items) > cap {
-		return failure("a %s plan may cover at most %d items and this one has %d; propose a narrower one", kind, cap, len(items))
+	if len(items) > planCap(kind) {
+		return overCap(kind, len(items))
 	}
 	raw, err := json.Marshal(items)
 	if err != nil {
@@ -219,6 +230,9 @@ func (t *assistantTools) planTags(ctx context.Context, raw string) assistant.Too
 	tags := cleanTags(args.Tags)
 	if len(tags) == 0 {
 		return failure("no tags were given")
+	}
+	if len(args.Paths) > planCap(model.PlanKindTags) {
+		return overCap(model.PlanKindTags, len(args.Paths))
 	}
 	items := make([]planItem, 0, len(args.Paths))
 	for _, path := range args.Paths {
@@ -355,6 +369,13 @@ func (t *assistantTools) planRevokeShare(ctx context.Context, raw string) assist
 		if sh.ID != args.ShareID {
 			continue
 		}
+		// The rule execution applies — your own links, unless you are an
+		// administrator — asserted here too, for the reason planCreateShare
+		// states: a plan the person cannot approve is worse than a refusal,
+		// because they have to read it to find that out.
+		if u := auth.UserFrom(ctx); u != nil && !u.IsAdmin() && (sh.CreatedBy == nil || *sh.CreatedBy != u.ID) {
+			return failure("the link with id %d on %s was created by somebody else; only its creator or an administrator can close it", args.ShareID, args.Path)
+		}
 		return t.createPlan(ctx, model.PlanKindRevokeShare, args.Summary, []planItem{{
 			Path:   args.Path,
 			NodeID: node.ID,
@@ -380,10 +401,14 @@ func (t *assistantTools) planEmptyTrash(ctx context.Context, raw string) assista
 	if t.trash == nil {
 		return failure("the trash is not available on this server")
 	}
-	entries, _, err := t.trash.List(ctx, nil, true, db.NodeFacets{}, model.MaxPlanItems+1, 0)
+	entries, _, err := t.trash.List(ctx, nil, true, db.NodeFacets{}, assistantTrashScan, 0)
 	if err != nil {
 		return failure("the trash could not be read: %v", err)
 	}
+	// ⚠ Filtered to this person's own entries BEFORE the cap is applied. The
+	// listing is the installation's, so the ceiling used to be counted over
+	// everybody's deleted files — and the plan itself would have named them.
+	entries = t.ownTrash(ctx, entries)
 	if len(entries) > model.MaxPlanItems {
 		return failure("there are more than %d items in the trash; emptying it is more than one plan can carry — the person can empty it from the Trash page in one action", model.MaxPlanItems)
 	}
@@ -424,6 +449,9 @@ func (t *assistantTools) planMove(ctx context.Context, raw string) assistant.Too
 	}
 	if err := json.Unmarshal([]byte(raw), &args); err != nil {
 		return failure("could not read the arguments: %v", err)
+	}
+	if len(args.Paths) > planCap(model.PlanKindMove) {
+		return overCap(model.PlanKindMove, len(args.Paths))
 	}
 	drive, targetRel, err := t.ops.resolveStorage(ctx, strings.TrimSpace(args.Target))
 	if err != nil {
@@ -619,28 +647,45 @@ func (h *Assistant) decidePlan(w http.ResponseWriter, r *http.Request, approve b
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "this plan was already decided", "status": plan.Status})
 		return
 	}
+	if approve && h.Tools == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "this server cannot run plans"})
+		return
+	}
+	// ⚠⚠ Claimed BEFORE anything is done, not after. The status read above is
+	// only a cheap early answer; this is the one that decides, because two
+	// approvals racing (a double click, a retried request, two tabs) both pass
+	// that read. Claiming afterwards meant both ran the work and one of them
+	// threw its own result away — for create_share, a second public link whose
+	// URL was never shown to anybody.
+	claimed, err := h.Store.ClaimAssistantPlan(r.Context(), plan.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if !claimed {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "this plan was already decided"})
+		return
+	}
+	// ⚠ From here the request's cancellation is not consulted. A client that
+	// hangs up mid-execution used to leave the row pending with part of the
+	// work already done, ready to be approved a second time; the plan is
+	// claimed now, so it has to be carried to a stored outcome whatever the
+	// connection does.
+	ctx := context.WithoutCancel(r.Context())
 	if !approve {
-		if _, err := h.Store.FinishAssistantPlan(r.Context(), plan.ID, model.PlanCancelled, "{}"); err != nil {
+		if _, err := h.Store.FinishAssistantPlan(ctx, plan.ID, model.PlanCancelled, "{}"); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": model.PlanCancelled})
 		return
 	}
-	if h.Tools == nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "this server cannot run plans"})
-		return
-	}
-	results := h.runPlan(r, plan)
+	results := h.runPlan(ctx, r, plan)
 	payload, err := json.Marshal(map[string]any{"items": results})
 	if err != nil {
 		payload = []byte("{}")
 	}
-	// ⚠ Claimed BEFORE the result is reported, and only from pending: two
-	// approvals racing leave one winner. The work itself is idempotent per
-	// item (a tag set twice is one tag, a purge of a gone node is a skip), but
-	// a restore run twice would take a version back over a version.
-	ran, err := h.Store.FinishAssistantPlan(r.Context(), plan.ID, model.PlanDone, string(payload))
+	ran, err := h.Store.FinishAssistantPlan(ctx, plan.ID, model.PlanDone, string(payload))
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -670,8 +715,10 @@ func countStates(results []planItemResult) (done, skipped, failed int) {
 	return
 }
 
-// runPlan executes each item, in order, as the person who approved it.
-func (h *Assistant) runPlan(r *http.Request, plan *model.AssistantPlan) []planItemResult {
+// runPlan executes each item, in order, as the person who approved it. The
+// context is the caller's, deliberately detached from the connection — see
+// decidePlan.
+func (h *Assistant) runPlan(ctx context.Context, r *http.Request, plan *model.AssistantPlan) []planItemResult {
 	var items []planItem
 	if err := json.Unmarshal([]byte(plan.ItemsJSON), &items); err != nil {
 		return []planItemResult{{State: itemFailed, Code: reasonBroken, Reason: "the stored plan could not be read"}}
@@ -680,7 +727,6 @@ func (h *Assistant) runPlan(r *http.Request, plan *model.AssistantPlan) []planIt
 	// The origin a minted link lives on is a property of the request, and this
 	// is the only place a plan meets one.
 	tools.origin = h.Tools.Tenants.FromRequest(r)
-	ctx := r.Context()
 	out := make([]planItemResult, 0, len(items))
 	for _, item := range items {
 		out = append(out, tools.runItem(ctx, plan.Kind, item))

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import type { Node } from '@/data/types';
+import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 
 /** Cut is a move in two steps, copy is a duplicate in two steps; the clipboard holds one or the other, never both. */
@@ -8,18 +9,33 @@ type Mode = 'cut' | 'copy';
 
 export const useClipboardStore = defineStore('clipboard', () => {
   const files = useFilesStore();
+  const capabilities = useCapabilitiesStore();
   const nodes = ref<Node[]>([]);
   const mode = ref<Mode>('cut');
 
+  /**
+   * The server verb each half of the clipboard will actually use, asked once here.
+   *
+   * Cut is a move and paste-after-copy is a server-side copy, so each needs its own flag — the menu's Paste entry
+   * was gated on `move` even for a copy, while Ctrl+X and Ctrl+C were gated on nothing at all and filled a
+   * clipboard whose paste the server was always going to refuse.
+   */
+  const canCut = computed(() => capabilities.can.move);
+  const canCopy = computed(() => capabilities.can.copy);
+
   /** Pasting needs an open folder: the flat listings (Recent, Starred, Trash) are not places. */
-  const canPaste = computed(() => nodes.value.length > 0 && files.listing?.kind === 'folder');
+  const canPaste = computed(
+    () => nodes.value.length > 0 && files.listing?.kind === 'folder' && (mode.value === 'cut' ? canCut.value : canCopy.value),
+  );
 
   function cut(list: Node[]) {
+    if (!canCut.value) return;
     mode.value = 'cut';
     nodes.value = list.filter((n) => !n.deletedAt).map((n) => ({ ...n }));
   }
 
   function copy(list: Node[]) {
+    if (!canCopy.value) return;
     mode.value = 'copy';
     nodes.value = list.filter((n) => !n.deletedAt).map((n) => ({ ...n }));
   }
@@ -48,5 +64,5 @@ export const useClipboardStore = defineStore('clipboard', () => {
     else await files.copyInto(movable, target);
   }
 
-  return { nodes, mode, canPaste, cut, copy, clear, isCut, paste };
+  return { nodes, mode, canCut, canCopy, canPaste, cut, copy, clear, isCut, paste };
 });

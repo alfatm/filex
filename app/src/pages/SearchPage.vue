@@ -18,12 +18,19 @@ const store = useSearchStore();
 const files = useFilesStore();
 const actions = useFileActions();
 
+/**
+ * `store.run()` rejects on purpose — a caller that awaits it has to be able to tell — but nothing here awaits it,
+ * and an uncaught rejection used to leave the page drawing "No results" for a server that never answered. The
+ * failure is in `store.failed`, which is what the page shows; catching keeps it from ALSO surfacing as the
+ * app-wide sink's vaguer message.
+ */
+function search() {
+  void store.run().catch(() => undefined);
+}
+
 // No folder is open here: "New" lands in the root, and the ⋮ actions (rename, trash) re-run the search.
 onMounted(() => files.leave());
-watch(
-  () => files.revision,
-  () => void store.run(),
-);
+watch(() => files.revision, search);
 
 // Spec §4 widths for the shared columns; path and match split the remaining space.
 const columns = [
@@ -54,7 +61,7 @@ watch(
   (raw) => {
     if (route.name !== 'search') return;
     store.assign(fromUrlQuery(raw));
-    void store.run();
+    search();
   },
   { immediate: true },
 );
@@ -102,7 +109,8 @@ function open(hit: SearchHit) {
           <ResultRow v-for="hit in store.hits" :key="hit.node.id" :hit="hit" @open="open" />
         </tbody>
       </table>
-      <p v-if="!store.hits.length && !store.loading" class="mt-40 text-center text-16 text-text-3">{{ t('search.noResults') }}</p>
+      <p v-if="store.failed" class="mt-40 text-center text-16 text-danger" role="alert">{{ t('search.failed') }}</p>
+      <p v-else-if="!store.hits.length && !store.loading" class="mt-40 text-center text-16 text-text-3">{{ t('search.noResults') }}</p>
     </div>
   </main>
 </template>

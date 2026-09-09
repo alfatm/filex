@@ -61,6 +61,46 @@ jobs:
       - name: Unit tests
         run: pnpm --filter='./web' --filter='./packages/*' test
 
+  # The end-user SPA. Its own job rather than a few more steps in `frontend`
+  # because it is a separate surface with its own toolchain (vue-tsc over
+  # ~42k lines, eslint, vitest) and a red one should name itself in the
+  # checks list. Nothing here builds a shippable artifact: `app/` is not in
+  # docker/Dockerfile and the Go server has no `/app` route, so this job
+  # answers "does the new code still compile, lint and pass its tests?" and
+  # nothing else.
+  app:
+    name: App (pnpm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9.12.0"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # ⚠ Required, not an optimisation. `app` imports @brftech/filex-core
+      # through that package's `exports`, which point at `dist/` — and `dist/`
+      # is git-ignored. On a fresh checkout nothing that imports core resolves
+      # until this has run, so `type-check` would fail on missing modules and
+      # report it as the app's own type errors. The same trap bit the demo
+      # stand (docker-compose.app.yml builds core for exactly this reason).
+      - name: Build @brftech/filex-core (app resolves it through dist/)
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
+        run: pnpm --filter='@brftech/filex-core' build
+      - name: Type-check
+        env:
+          # vue-tsc needs headroom on the full component bundle.
+          NODE_OPTIONS: "--max-old-space-size=4096"
+        run: pnpm --filter='./app' type-check
+      - name: Lint
+        run: pnpm --filter='./app' lint
+      - name: Unit tests
+        run: pnpm --filter='./app' test
+
   browser:
     name: Browser E2E (Cypress)
     runs-on: ubuntu-latest
@@ -117,6 +157,64 @@ jobs:
           path: |
             web/cypress/screenshots
             web/cypress/videos
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The end-user SPA against a REAL filex server — the one thing that exercises
+  # `app/src/data/http/` and its contract with the Go handlers. The suite in
+  # `e2e/tests/app/` does NOT: it drives an in-memory mock, needs no backend,
+  # and would pass against a server that answered nothing.
+  #
+  # Same shape as the Cypress job above and for the same reason: one command
+  # that builds this tree, starts it on a free port against a throwaway data
+  # dir, runs the specs and tears it all down. No secrets, no live host.
+  app-e2e:
+    name: App E2E (Playwright, real backend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9.12.0"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: backend/go.sum
+
+      # Chromium is a download of its own, outside node_modules, keyed by the
+      # Playwright version — the same reasoning as the Cypress cache above.
+      - name: Cache the Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('e2e/package.json') }}
+
+      - run: pnpm install --frozen-lockfile
+      - name: Ensure Chromium is present
+        run: pnpm --filter='./e2e' install:browsers
+
+      # Builds packages + admin UI + embed assets + the Go binary, then core and
+      # the app bundle with VITE_FILEX_API set, seeds one drive, serves the
+      # BUILD over `vite preview` (never the dev server — its screenshot hooks
+      # can forge answers the server never gave) and runs the specs against it.
+      - name: Run the app suite against a throwaway instance
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
+        run: node e2e/run.mjs app --build
+
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-e2e-report
+          path: |
+            e2e/playwright-report/app-live
+            e2e/test-results/app-live
           if-no-files-found: ignore
           retention-days: 7
 

@@ -33,7 +33,10 @@ const failed = ref(false);
 
     <div v-else-if="kind === 'beach'" class="h-full w-full" style="background: linear-gradient(180deg, #7dd3fc 0%, #38bdf8 46%, #0ea5e9 62%, #fde68a 64%, #fcd34d 100%)" />
 
-    <div v-else-if="kind === 'code'" class="h-full w-full bg-[#1e293b] px-4 py-4 font-mono text-[11px] leading-[20px]">
+    <!-- The only placeholder made of real text. Hidden from assistive technology like every other one here: the
+         thumbnail comes before the name in the card, so this decorative source line was being read out as the
+         start of the card's accessible name, ahead of the file it stands for. -->
+    <div v-else-if="kind === 'code'" aria-hidden="true" class="h-full w-full bg-[#1e293b] px-4 py-4 font-mono text-[11px] leading-[20px]">
       <div><span class="text-[#c084fc]">import</span> <span class="text-[#e2e8f0]">{ ref }</span> <span class="text-[#c084fc]">from</span> <span class="text-[#86efac]">'vue'</span></div>
       <div><span class="text-[#93c5fd]">const</span> <span class="text-[#e2e8f0]">count</span> <span class="text-[#94a3b8]">=</span> <span class="text-[#fcd34d]">ref</span><span class="text-[#e2e8f0]">(</span><span class="text-[#fb923c]">0</span><span class="text-[#e2e8f0]">)</span></div>
       <div><span class="text-[#93c5fd]">export</span> <span class="text-[#93c5fd]">default</span> <span class="text-[#e2e8f0]">{ count }</span></div>

@@ -4,11 +4,11 @@ import { useI18n } from 'vue-i18n';
 import { Check, Pencil, Trash2, X } from 'lucide-vue-next';
 import { useFormat } from '@/composables/useFormat';
 import { IconButton, Input } from '@/ui';
-import { MAX_ASSISTANT_SESSIONS, useAssistantStore } from './assistantStore';
+import { useAssistantStore } from './assistantStore';
 
 /**
- * The account's conversations. Searching happens here rather than on the server: the history is capped at a hundred
- * rows, so the whole list is already loaded and a round trip would only make the filter slower.
+ * The account's conversations. Searching happens here rather than on the server: the server caps the history and
+ * hands over the whole of it, so the list is already loaded and a round trip would only make the filter slower.
  */
 const emit = defineEmits<{ open: [id: string] }>();
 
@@ -52,7 +52,7 @@ onMounted(() => void assistant.loadSessions());
   <div class="mt-4 flex min-h-0 flex-1 flex-col">
     <Input v-model="query" :height="40" :placeholder="t('assistant.searchSessions')" :label="t('assistant.searchSessions')" />
     <p class="mt-2 shrink-0 text-13 leading-normal text-text-3">
-      {{ t('assistant.capacity', { count: assistant.sessions.length, max: MAX_ASSISTANT_SESSIONS }) }}
+      {{ t('assistant.capacity', { count: assistant.sessions.length, max: assistant.sessionMax }) }}
     </p>
 
     <ul v-if="shown.length" class="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto" :aria-label="t('assistant.sessions')">

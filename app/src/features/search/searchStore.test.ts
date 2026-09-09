@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import { repository } from '@/data';
-import type { SearchResult } from '@/data/types';
+import type { SearchHit, SearchResult } from '@/data/types';
 import { emptyQuery, fromUrlQuery, hitFolderLabel, toUrlQuery, useSearchStore } from './searchStore';
 
 describe('search URL mapping', () => {
@@ -126,6 +126,26 @@ describe('search store', () => {
       vi.spyOn(repository, 'search').mockRejectedValue(new Error('offline'));
       await expect(store.run()).rejects.toThrow('offline');
       expect(store.loading).toBe(false);
+    });
+
+    // Nothing caught that rejection, so the results page drew "No results" — a claim about the drive — for a
+    // server that had not answered at all.
+    it('records the failure and keeps no stale results', async () => {
+      setActivePinia(createPinia());
+      const store = useSearchStore();
+      const spy = vi.spyOn(repository, 'search').mockResolvedValue({ hits: [{ node: { id: 'a' } } as SearchHit], total: 1, capped: false });
+      await store.run();
+      expect(store.failed).toBe(false);
+
+      spy.mockRejectedValue(new Error('offline'));
+      await expect(store.run()).rejects.toThrow('offline');
+      expect(store.failed).toBe(true);
+      expect(store.hits).toEqual([]);
+      expect(store.total).toBe(0);
+
+      spy.mockResolvedValue({ hits: [], total: 0, capped: false });
+      await store.run();
+      expect(store.failed).toBe(false);
     });
   });
 });

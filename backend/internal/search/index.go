@@ -359,15 +359,35 @@ const (
 	ScopeAll     Scope = "all"     // names + content, name hits ranked first
 	ScopeName    Scope = "name"    // filenames/paths only (legacy behavior)
 	ScopeContent Scope = "content" // extracted file content only
+	// ScopeTag searches a file's TAGS and nothing else. The index cannot
+	// serve it — tags live in node_meta and change without the node being
+	// re-indexed, which is the same reason `tag:` is a database-resolved
+	// filter (see Filter) — so it is answered by the caller, and a search
+	// asked for it here returns nothing rather than quietly widening.
+	ScopeTag Scope = "tag"
 )
 
 // ParseScope maps a request string onto a Scope (default: all).
+//
+// The plural spellings are the advanced-search form's, and they are aliases
+// rather than scopes of their own. Before them, "Paths" and "Tags" both fell
+// through to `all`: choosing "Paths" searched file CONTENTS too, and choosing
+// "Tags" searched every field there is — the two modes that narrow the most
+// were the two that narrowed nothing.
+//
+// "Paths" is an alias of ScopeName because that is already what the name scope
+// means: nameQuery consults `path` and `path_norm` beside `name`, so a name
+// scope matches a file by its address — every folder above it included — and
+// differs from `all` in exactly the way the chip promises, by not reading what
+// is inside the file.
 func ParseScope(s string) Scope {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case string(ScopeName):
+	case string(ScopeName), "path", "paths":
 		return ScopeName
-	case string(ScopeContent):
+	case string(ScopeContent), "contents":
 		return ScopeContent
+	case string(ScopeTag), "tags":
+		return ScopeTag
 	default:
 		return ScopeAll
 	}
@@ -474,7 +494,9 @@ func (i *Index) SearchFiltered(_ context.Context, q string, limit int, scope Sco
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	bx := i.bleve
-	if bx == nil || q == "" {
+	// ScopeTag is not a field of the document: see the constant. Answering it
+	// from here would mean answering a tag search with a filename search.
+	if bx == nil || q == "" || scope == ScopeTag {
 		return nil, nil
 	}
 	if f != nil && f.Restrict && len(f.IncludeIDs) == 0 {

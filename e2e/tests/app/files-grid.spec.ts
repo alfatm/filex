@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { countIn, imagesIn } from '../../helpers/mockTree';
 
-// The mock storage (app/src/data/mock/dataset.ts) holds 8 folders and 8 files at the root.
-const FOLDER_COUNT = 8;
-const FILE_COUNT = 9;
+// The root of the mock storage, counted from the tree the mock is generated from rather than typed out.
+const FOLDER_COUNT = countIn('', 'folder');
+const FILE_COUNT = countIn('', 'file');
 
 test.describe('My files — grid view', () => {
   test.beforeEach(async ({ page }) => {
@@ -22,7 +23,7 @@ test.describe('My files — grid view', () => {
     await expect(page.getByRole('group', { name: 'Files' }).getByRole('option')).toHaveCount(FILE_COUNT);
   });
 
-  test('opening Design lists the 8 files of the demo asset tree with real thumbnails', async ({ page }) => {
+  test('opening Design lists the files of the demo asset tree with real thumbnails', async ({ page }) => {
     await page.getByRole('group', { name: 'Folders' }).getByRole('option', { name: /^Design\b/ }).dblclick();
     await expect(page).toHaveURL(/\/app\/files\/demo\/Design$/);
     await expect(page.getByRole('heading', { name: 'Design', level: 1 })).toBeVisible();
@@ -39,9 +40,9 @@ test.describe('My files — grid view', () => {
       /^source-design\.psd/,
       /^wireframe\.png/,
     ]);
-    // The six images render the served file; the PDF and the PSD keep their placeholder / empty area.
+    // Only the images render the served file; the PDF and the PSD keep their placeholder / empty area.
     const thumbs = files.locator('img[src*="/demo-assets/Design/"]');
-    await expect(thumbs).toHaveCount(6);
+    await expect(thumbs).toHaveCount(imagesIn('Design').length);
     await expect(thumbs.first()).toHaveJSProperty('complete', true);
     expect(await thumbs.first().evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
 
@@ -73,7 +74,7 @@ test.describe('My files — grid view', () => {
     await expect(info).toHaveAttribute('aria-pressed', 'true');
     const panel = page.getByRole('complementary');
     await expect(panel.getByRole('heading', { name: 'Design' })).toBeVisible();
-    await expect(panel.getByText('Folder • 8 items')).toBeVisible();
+    await expect(panel.getByText(`Folder • ${countIn('Design')} items`)).toBeVisible();
     await expect(panel.getByRole('tab', { name: 'Details' })).toHaveAttribute('aria-selected', 'true');
 
     await panel.getByRole('button', { name: 'Close' }).click();

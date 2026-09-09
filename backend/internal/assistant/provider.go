@@ -148,11 +148,19 @@ const (
 	ErrorCodeUnavailable = "unavailable"
 )
 
-// quotaWords is how the providers spell "out of credit". OpenAI answers 429
-// with `insufficient_quota` — the same status as a rate limit, which is why
-// the body is read and not only the status — and Anthropic answers 400 with
-// "credit balance is too low".
-var quotaWords = []string{"insufficient_quota", "credit balance", "billing", "quota"}
+// quotaMarkers are the spellings that mean "out of credit" whatever the status
+// carrying them: OpenAI's error code, which arrives on 429 — the same status as
+// a rate limit, which is why the body is read and not only the status — and
+// Anthropic's message, which arrives on 400.
+var quotaMarkers = []string{"insufficient_quota", "credit balance"}
+
+// billingWords are words that mean "out of credit" only on a status that is
+// already a refusal to serve this account at all. On their own they are
+// ambiguous: "Quota exceeded for requests per minute" is how the Google- and
+// Azure-compatible gateways spell an ordinary rate limit, and telling that
+// person an administrator has to top up an account sends them to the wrong
+// place — waiting a minute is the whole fix.
+var billingWords = []string{"billing", "quota"}
 
 // ErrorCode classifies a failed turn for the person. "" is the ordinary
 // failure: a provider hiccup, a network error, a malformed stream.
@@ -165,18 +173,32 @@ func ErrorCode(err error) string {
 		return ""
 	}
 	detail := strings.ToLower(pe.Detail)
-	for _, word := range quotaWords {
-		if strings.Contains(detail, word) {
-			return ErrorCodeQuota
-		}
+	if containsAny(detail, quotaMarkers) {
+		return ErrorCodeQuota
 	}
 	switch pe.Status {
 	case http.StatusPaymentRequired:
 		return ErrorCodeQuota
-	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+	case http.StatusForbidden:
+		// A refusal that names the account's money is an account out of credit
+		// rather than a key that lost its access.
+		if containsAny(detail, billingWords) {
+			return ErrorCodeQuota
+		}
+		return ErrorCodeUnavailable
+	case http.StatusUnauthorized, http.StatusNotFound:
 		return ErrorCodeUnavailable
 	}
 	return ""
+}
+
+func containsAny(haystack string, words []string) bool {
+	for _, word := range words {
+		if strings.Contains(haystack, word) {
+			return true
+		}
+	}
+	return false
 }
 
 // scanSSE reads a server-sent event stream and calls handle for each event.
@@ -222,14 +244,55 @@ func scanSSE(r io.Reader, handle func(event, data string) error) error {
 	return flush()
 }
 
-// runStream performs the request and scans the response, mapping the two
-// endings that are not failures: the provider's own terminator (errStop) and
-// the caller's cancellation.
+// headWriter keeps the first maxErrorBody bytes written through it and drops
+// the rest. It rides along the response body so a 2xx answer that turns out not
+// to be a stream at all can still be quoted back, without ever holding a long
+// answer in memory.
+type headWriter struct{ head []byte }
+
+func (h *headWriter) Write(p []byte) (int, error) {
+	if room := maxErrorBody - len(h.head); room > 0 {
+		h.head = append(h.head, p[:min(room, len(p))]...)
+	}
+	return len(p), nil
+}
+
+// contextEnding says how a failed call ends given the caller's context, and
+// whether the context decides it at all.
+//
+// ⚠ The two ways a context dies mean opposite things here and are identical to
+// look at unless they are told apart. A CANCELLED context is the stop button —
+// the person's own decision, not a failure. An EXPIRED DEADLINE is a provider
+// that never answered, and somebody has to be told: the admin page's Test
+// button hangs its own 30-second deadline on the call and used to report a
+// hung provider as "the model replied with nothing".
+func contextEnding(ctx context.Context) (bool, error) {
+	switch {
+	case errors.Is(ctx.Err(), context.Canceled):
+		return true, nil
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return true, fmt.Errorf("assistant: the provider did not answer within the time allowed: %w", ctx.Err())
+	}
+	return false, nil
+}
+
+// notAStream is what a 2xx answer with no event in it is reported as.
+const notAStream = "the answer was not an event stream: "
+
+// runStream performs the request and scans the response, mapping the endings
+// that are not failures: the provider's own terminator (errStop) and the
+// caller's cancellation.
+//
+// ⚠ A 2xx that yielded no event is a FAILURE, not an empty answer. Gateways
+// that ignore `stream: true` reply with one JSON object, and proxies in front
+// of them answer `200 {"error":…}`; both used to end the turn with no text, no
+// stored answer and nothing in the log — an empty bubble the person could only
+// read as the model having nothing to say.
 func runStream(ctx context.Context, client *http.Client, req *http.Request, handle func(event, data string) error) error {
 	resp, err := client.Do(req)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil
+		if decided, ending := contextEnding(ctx); decided {
+			return ending
 		}
 		return fmt.Errorf("assistant: %w", err)
 	}
@@ -237,12 +300,23 @@ func runStream(ctx context.Context, client *http.Client, req *http.Request, hand
 	if err := checkStatus(resp); err != nil {
 		return err
 	}
-	err = scanSSE(resp.Body, handle)
+	var head headWriter
+	frames := 0
+	err = scanSSE(io.TeeReader(resp.Body, &head), func(event, data string) error {
+		frames++
+		return handle(event, data)
+	})
 	switch {
 	case errors.Is(err, errStop):
 		return nil
-	case ctx.Err() != nil:
+	case err == nil && frames > 0:
 		return nil
 	}
-	return err
+	if decided, ending := contextEnding(ctx); decided {
+		return ending
+	}
+	if err != nil {
+		return err
+	}
+	return &ProviderError{Status: resp.StatusCode, Detail: notAStream + strings.TrimSpace(string(head.head))}
 }

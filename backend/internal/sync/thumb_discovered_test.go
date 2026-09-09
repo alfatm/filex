@@ -159,3 +159,36 @@ func TestThumbJobIgnoresANodeThatVanished(t *testing.T) {
 	require.NoError(t, job.Handle(ctx, queue.Op{Type: queue.TypeThumb, Payload: map[string]any{"node_id": float64(424242)}}))
 	assert.Empty(t, gen.nodes)
 }
+
+// A version snapshot is not a file anyone browses: it lives under `.versions/`,
+// it is reachable only through the version history, and no listing shows it. The
+// walk still catalogues it as an ordinary file, and the enqueue used to look at
+// nothing but the node's type — so every snapshot of every image asked for a
+// render, and got a cache file, for a tile that is never drawn. On a storage
+// with any history that is thousands of ops per pass.
+//
+// The antivirus queue has refused these paths since it existed
+// (AntivirusScanner.Eligible); this asserts the thumbnail queue now agrees.
+func TestSyncAsksForNoThumbnailOfAVersionSnapshot(t *testing.T) {
+	ctx := context.Background()
+	conn, store := dbtest.NewTestDB(t)
+	st, _, root := localStorage(t, store)
+	qd := avQueue(t, conn)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".versions", "42"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ".versions", "42", "1.jpg"), []byte("an older jpeg"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "manzara.jpg"), []byte("jpeg bytes"), 0o644))
+
+	gen := &countingGenerator{}
+	job := queue.NewThumbJob(store, gen.generate)
+	syncWithThumbs(t, store, st, job, qd)
+
+	snapshot, err := store.GetNodeByPath(ctx, st.ID, pathkey.Hash(st.ID, "/.versions/42/1.jpg"))
+	require.NoError(t, err)
+	require.NotNil(t, snapshot, "precondition: the walk catalogues the snapshot — that is why the queue has to refuse it")
+	live, err := store.GetNodeByPath(ctx, st.ID, pathkey.Hash(st.ID, "/manzara.jpg"))
+	require.NoError(t, err)
+
+	assert.Equal(t, []int64{live.ID}, pendingThumbs(t, qd),
+		"the person's file is queued and the snapshot beside it is not")
+}

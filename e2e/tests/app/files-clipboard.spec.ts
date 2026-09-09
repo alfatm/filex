@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { countIn } from '../../helpers/mockTree';
 
 /** Cut and paste is a move in two steps; copy and paste is a duplicate in two steps. */
 test.describe('Cut and paste', () => {
@@ -52,7 +53,7 @@ test.describe('Cut and paste', () => {
 
     // Nothing moved and nothing threw: the clipboard is simply emptied.
     await expect(page.getByRole('heading', { name: 'Design', level: 1 })).toBeVisible();
-    await expect(page.getByRole('grid').locator('tbody tr')).toHaveCount(8);
+    await expect(page.getByRole('grid').locator('tbody tr')).toHaveCount(countIn('Design'));
   });
 
   test('Ctrl+C then Ctrl+V duplicates in place, and the copy is named after the original', async ({ page }) => {

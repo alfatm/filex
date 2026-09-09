@@ -7,7 +7,7 @@ import { useFilesStore } from '@/stores/files';
 import { useToastStore } from '@/stores/toast';
 import { useClipboardStore } from './clipboardStore';
 import { useModalsStore } from './modalsStore';
-import { downloadUrl, previewList } from './preview';
+import { previewList } from './preview';
 
 /** Maps item-menu ids (see `itemMenuEntries`) to store calls and modals; shared by menus, cards and the selection bar. */
 export function useFileActions() {
@@ -56,7 +56,7 @@ export function useFileActions() {
     const archive = single ? null : repository.archiveUrl(nodes);
     if (archive) return save(archive, nodes.length === 1 ? `${nodes[0].name}.zip` : 'files.zip');
     for (const node of nodes) {
-      const url = node.kind === 'file' ? downloadUrl(node) : null;
+      const url = node.kind === 'file' ? repository.downloadUrl(node.id) : null;
       if (url) save(url, node.name);
     }
   }

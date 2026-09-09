@@ -206,6 +206,7 @@ func (s *Service) List(ctx context.Context, storageID *int64, topLevelOnly bool,
 			ID:        n.ID,
 			StorageID: n.StorageID,
 			Name:      n.Name,
+			Type:      n.Type,
 			Size:      n.Size,
 			Mime:      n.Mime,
 		}
@@ -266,15 +267,21 @@ func (s *Service) PurgeOne(ctx context.Context, nodeID int64) error {
 // TrashEntry is the projection returned by List — flat shape the admin
 // UI consumes directly.
 type TrashEntry struct {
-	ID          int64     `json:"id"`
-	StorageID   int64     `json:"storage_id"`
-	StorageName string    `json:"storage_name,omitempty"`
-	Path        string    `json:"path"`
-	Name        string    `json:"name"`
-	Size        int64     `json:"size"`
-	Mime        string    `json:"mime,omitempty"`
-	DeletedAt   time.Time `json:"deleted_at"`
-	TTLDays     *int      `json:"ttl_days,omitempty"`
+	ID          int64  `json:"id"`
+	StorageID   int64  `json:"storage_id"`
+	StorageName string `json:"storage_name,omitempty"`
+	Path        string `json:"path"`
+	Name        string `json:"name"`
+	// Type is the node kind, under the same json name and with the same values
+	// ("file" / "dir") every other node the API returns carries. Without it the
+	// listing was the one place a deleted FOLDER arrived indistinguishable from
+	// a file: the app has nothing to go on but the name, so it picked an icon by
+	// extension and printed a byte count where a folder shows none.
+	Type      model.NodeType `json:"type"`
+	Size      int64          `json:"size"`
+	Mime      string         `json:"mime,omitempty"`
+	DeletedAt time.Time      `json:"deleted_at"`
+	TTLDays   *int           `json:"ttl_days,omitempty"`
 }
 
 // RunDailyLoop ticks PurgeExpired every interval until ctx is cancelled.

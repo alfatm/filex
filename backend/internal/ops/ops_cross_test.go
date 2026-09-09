@@ -29,6 +29,7 @@ import (
 
 	"github.com/brf-tech/filex/backend/internal/api/handlers"
 	"github.com/brf-tech/filex/backend/internal/db"
+	"github.com/brf-tech/filex/backend/internal/e2e"
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/ops"
 	"github.com/brf-tech/filex/backend/internal/storage"
@@ -268,3 +269,27 @@ func TestCross_Move_KeepsTheSourceWhenTheDestinationTruncates(t *testing.T) {
 // storage id) opsPathHash builds in ops_dbsync_test.go, reused here so the two
 // suites cannot disagree about where a node is looked up.
 func crossHash(storageID int64, p string) string { return opsPathHash(storageID, p) }
+
+// An encrypted folder is unopenable without its marker, so the marker is the
+// one name in model.ReservedNames that a cross-storage transfer must carry.
+// The bookkeeping buckets around it stay behind: they belong to the storage
+// that keeps them, not to the folder being pasted.
+func TestCross_CopyTree_CarriesTheEncryptedFolderMarkerAndLeavesTheBucketsBehind(t *testing.T) {
+	f := newCrossFixture(t, nil)
+	writeA(t, f, "kasa/"+e2e.MarkerName, `{"v":1}`)
+	writeA(t, f, "kasa/gizli.bin", "filexe2e-ciphertext")
+	writeA(t, f, "kasa/.thumbs/gizli.jpg", "thumbnail")
+	writeA(t, f, "kasa/.versions/7/1", "old revision")
+
+	op := f.run(t, ops.OpCopy, []string{"kasa"}, "/")
+	require.Equal(t, ops.StatusOK, op.Status, "copy failed: %s", op.Error)
+
+	require.Equal(t, `{"v":1}`, readB(t, f, "kasa/"+e2e.MarkerName),
+		"without the marker the destination holds ciphertext nobody can open")
+	require.Equal(t, "filexe2e-ciphertext", readB(t, f, "kasa/gizli.bin"))
+
+	for _, bucket := range []string{".thumbs", ".versions"} {
+		_, err := os.Stat(filepath.Join(f.rootB, "kasa", bucket))
+		require.True(t, os.IsNotExist(err), "%s belongs to the source storage", bucket)
+	}
+}

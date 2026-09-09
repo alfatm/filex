@@ -61,8 +61,12 @@ func (Driver) Open(_ context.Context, dsn string) (*sql.DB, error) {
 // by both engines. The few places where SQLite-only `ON CONFLICT(...) DO
 // UPDATE` syntax is used (settings, external_services, thumbnails, node_meta)
 // require MySQL's `ON DUPLICATE KEY UPDATE` instead — those are surfaced
-// here as TODO. For the V1 release we recommend running on SQLite or
-// PostgreSQL; MySQL support is verified for read-mostly use.
+// here as TODO. `DeleteOldNodeVersions` is the remaining `LIMIT -1 OFFSET ?`,
+// which MySQL rejects as well. (The assistant's two — the eviction query and
+// the read grant's `INSERT OR IGNORE` — were the ones on the path of every new
+// conversation and every "allow", and are now written dialect-neutrally.) For
+// the V1 release we recommend running on SQLite or PostgreSQL; MySQL support is
+// verified for read-mostly use.
 func (Driver) NewStore(sqlDB *sql.DB) db.Store {
 	return sqlitedrv.Driver{}.NewStore(sqlDB)
 }

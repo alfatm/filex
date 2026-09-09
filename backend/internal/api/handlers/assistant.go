@@ -17,7 +17,10 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -107,8 +110,12 @@ func (h *Assistant) CreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req createSessionReq
-	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&req)
+	// An absent body is how the panel starts an unnamed conversation, so EOF is
+	// not an error. Anything else is: the title was being dropped silently, and
+	// a request whose body could not be read still made a conversation.
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPromptBytes)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
+		return
 	}
 	session, err := h.Store.CreateAssistantSession(r.Context(), &model.AssistantSession{
 		UserID:      u.ID,
@@ -189,7 +196,7 @@ func (h *Assistant) RenameSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req renameSessionReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPromptBytes)).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
 		return
 	}
@@ -236,6 +243,14 @@ func (h *Assistant) own(w http.ResponseWriter, r *http.Request) (*model.Assistan
 		return nil, false
 	}
 	session, err := h.Store.GetAssistantSession(r.Context(), id)
+	// A database that will not answer is not the same thing as an id that is not
+	// there: both drivers report the missing row as sql.ErrNoRows and everything
+	// else as itself. Folding the two together hid every degradation from
+	// monitoring behind a 404 and told the person their conversation was gone.
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return nil, false
+	}
 	if err != nil || session == nil || session.UserID != u.ID {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return nil, false

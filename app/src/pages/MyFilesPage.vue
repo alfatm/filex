@@ -50,10 +50,12 @@ function onPageDragLeave(event: DragEvent) {
 }
 
 function onPageDrop(event: DragEvent) {
-  const dropped = event.dataTransfer?.files;
+  const dropped = event.dataTransfer;
   drag.end();
-  if (!dropped?.length) return;
+  if (!dropped?.files.length) return;
   event.preventDefault();
+  // The whole DataTransfer, not its `files`: only this knows a dropped FOLDER from a file, and the store leaves
+  // folders out rather than sending a zero-length file named after one.
   void uploads.start(dropped);
 }
 

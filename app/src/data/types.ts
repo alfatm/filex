@@ -37,6 +37,8 @@ export interface Node {
   /** Set while the node sits in the trash; `originalPath` is the folder it came from ("/demo/Design"). */
   deletedAt?: string;
   originalPath?: string;
+  /** Trash rows: days left before the automatic purge, as the server counts them down. */
+  ttlDays?: number;
   /** Shared-with-me nodes: who shared them and when. */
   sharedBy?: string;
   sharedAt?: string;
@@ -111,7 +113,13 @@ export function noCapabilities(): Capabilities {
   };
 }
 
-/** One stored revision of a file. The newest is `current`; restoring an older one adds a new current revision. */
+/**
+ * One stored revision of a file.
+ *
+ * There is no row for the LIVE contents: filex snapshots a file's bytes before it overwrites them, so every row is
+ * something the file used to be. Restoring one snapshots the live bytes first, which is why the list grows by one
+ * row rather than losing what was there.
+ */
 export interface Version {
   id: string;
   /** When this revision became the file's content. */
@@ -120,7 +128,6 @@ export interface Version {
   /** Who wrote the revision. Absent for anything filex snapshotted before it recorded an author. */
   authorId?: string;
   authorName?: string;
-  current: boolean;
 }
 
 /** What happened to a node, newest first. `detail` carries the one variable part of the sentence (a name, a folder). */
@@ -470,11 +477,14 @@ export interface AssistantConversation {
 }
 
 /**
- * Why a turn did not finish. `failed` is the ordinary case — try again; the other three say who has to act instead:
+ * Why a turn did not finish. `failed` is the ordinary case — try again; the others say who has to act instead:
  * `quota`, the provider account is out of credit (an administrator's); `unavailable`, the assistant was switched off
- * or its provider no longer answers for it; `timeout`, the server said nothing for a minute and the app gave up.
+ * or its provider no longer answers for it; `timeout`, the server said nothing for a minute and the app gave up;
+ * `answering`, this account's other tab is mid-answer; `rateLimited`, it has asked too often this minute. The
+ * server answers 429 to both and names which in the body's `code`; `busy` is the sentence that covers both, for a
+ * refusal it could not classify.
  */
-export type AssistantFailure = 'failed' | 'quota' | 'unavailable' | 'timeout';
+export type AssistantFailure = 'failed' | 'quota' | 'unavailable' | 'timeout' | 'busy' | 'answering' | 'rateLimited';
 
 /**
  * A document a tool wrote for the person — a list of files, a search's results, a written report — kept with the

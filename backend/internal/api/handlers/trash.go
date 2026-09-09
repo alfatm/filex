@@ -241,30 +241,61 @@ func (h *Trash) PurgeSelf(w http.ResponseWriter, r *http.Request) {
 // where somebody else deleted something must not make "empty my trash" fail
 // altogether. `more` says the cap was reached and there is another round to ask
 // for; a caller that keeps getting `purged: 0` has purged everything it may.
+//
+// ⚠ The listing is ordered by deletion time across EVERY account, and the
+// permission check runs on the rows it hands back — so judging only the first
+// page starves the caller on a shared instance: with `trashEmptyMax` other
+// people's deletions in front of it, every request answered `purged: 0,
+// skipped: 500` and the caller's own older entries were never reached. The app
+// stops asking as soon as a round purges nothing, so "Empty trash" quietly did
+// nothing at all. Hence the walk: pages that purged nothing are stepped over
+// until one produces a real result or the listing runs out.
+//
+// Advancing the offset is only sound because the walk stops at the first page
+// that purged something — a page that purged nothing left the listing exactly
+// as it found it, so the next offset still lines up. One page is also the cap
+// on this request's byte work, which is what `trashEmptyMax` was always for.
 func (h *Trash) EmptySelf(w http.ResponseWriter, r *http.Request) {
-	entries, _, err := h.Service.List(r.Context(), nil, true, db.NodeFacets{}, trashEmptyMax, 0)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
 	purged, failed, skipped := 0, 0, 0
-	for _, e := range entries {
-		if status, _ := h.mayPurge(r, e.ID); status != 0 {
-			skipped++
-			continue
+	more := false
+	for offset := 0; ; {
+		entries, _, err := h.Service.List(r.Context(), nil, true, db.NodeFacets{}, trashEmptyMax, offset)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
 		}
-		if err := h.Service.PurgeOne(r.Context(), e.ID); err != nil {
-			failed++
-			continue
+		if len(entries) == 0 {
+			break
 		}
-		purged++
+		before := purged + failed
+		for _, e := range entries {
+			if status, _ := h.mayPurge(r, e.ID); status != 0 {
+				skipped++
+				continue
+			}
+			if err := h.Service.PurgeOne(r.Context(), e.ID); err != nil {
+				failed++
+				continue
+			}
+			purged++
+		}
+		// A failure counts as a result too: retrying the same unpurgeable rows
+		// on the next page boundary would spin over them for nothing.
+		if purged+failed > before {
+			more = len(entries) == trashEmptyMax
+			break
+		}
+		if len(entries) < trashEmptyMax {
+			break
+		}
+		offset += len(entries)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"purged":  purged,
 		"failed":  failed,
 		"skipped": skipped,
-		"more":    len(entries) == trashEmptyMax,
+		"more":    more,
 	})
 }
 
