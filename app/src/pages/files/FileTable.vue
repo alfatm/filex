@@ -7,6 +7,7 @@ import type { Node } from '@/data/types';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
 import { useClipboardStore } from '@/features/files/clipboardStore';
 import { useNodeDrag } from '@/features/files/useNodeDrag';
+import { sharedDriveOf } from '@/features/files/owner';
 import { useSettingsStore } from '@/features/settings/settingsStore';
 import HitIcon from '@/features/search/HitIcon.vue';
 import { useFilesStore } from '@/stores/files';
@@ -87,7 +88,8 @@ function onHeaderCheckbox() {
 }
 
 function owner(node: Node): string {
-  return node.ownerId === files.user?.id ? t('panel.you') : (node.ownerName ?? node.ownerId);
+  // On a shared drive the drive is the owner; only on a drive of one's own does naming a person say anything.
+  return sharedDriveOf(node, files.storages) ?? (node.ownerId === files.user?.id ? t('panel.you') : (node.ownerName ?? node.ownerId));
 }
 
 function openMenu(node: Node, event: MouseEvent) {

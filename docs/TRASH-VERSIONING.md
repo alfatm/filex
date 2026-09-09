@@ -320,13 +320,21 @@ non‑default state is visible without reading the config.
 
 ### Versioning endpoints
 
-**User (authenticated session/token):**
+**User (authenticated session/token).** Every route below addresses a node by
+its NUMERIC id and is gated on the caller's level for that node — **≥viewer** to
+read the timeline, **≥editor** to write to it — plus the tenant confinement
+check. Before that gate existed, any authenticated account could hand in an id
+and read another person's revision history, or `POST /restore` and overwrite
+that file's live bytes with an older revision. An unknown id answers `404`
+rather than an empty timeline, because an empty timeline is itself an answer
+about whether that id names a file.
 
-| Method & path | Body / query | Notes |
-|---|---|---|
-| `GET /api/files/versions` | `?node_id=N` | Lists that node's snapshots, **newest first** (version number, size, etag, created). |
-| `POST /api/files/versions/restore` | `{ "node_id": N, "version_id": V, "snapshot_current": true }` | Copies version `V` back over the live file. `snapshot_current` (optional) snapshots the current content first so the restore can be undone. |
-| `POST /api/files/save-text` | `{ "path": "adapter://rel", "content": "…" }` | Saves text and snapshots the previous content first (see above). |
+| Method & path | Body / query | Level | Notes |
+|---|---|---|---|
+| `GET /api/files/versions` | `?node_id=N` | ≥viewer | Lists that node's snapshots, **newest first** (version number, size, etag, created). A trashed node still answers: its history is what somebody deciding whether to restore it wants to see. |
+| `POST /api/files/versions/snapshot` | `{ "node_id": N }` | ≥editor | Records the current content as a new version on demand. A write: it puts a new object into the storage, against a quota. |
+| `POST /api/files/versions/restore` | `{ "node_id": N, "version_id": V, "snapshot_current": true }` | ≥editor | Copies version `V` back over the live file. `snapshot_current` (optional) snapshots the current content first so the restore can be undone. `V` must belong to `N` — the service refuses a version from another node. |
+| `POST /api/files/save-text` | `{ "path": "adapter://rel", "content": "…" }` | ≥editor | Saves text and snapshots the previous content first (see above). |
 
 **Admin only:**
 

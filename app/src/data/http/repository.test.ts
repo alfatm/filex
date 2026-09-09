@@ -64,8 +64,8 @@ describe('HttpRepository', () => {
     const storages = await new HttpRepository().listStorages();
     // The account's own 250 is the sum, not each drive's figure — which is what every card used to show.
     expect(storages).toEqual([
-      { id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 200, totalBytes: 1000 } },
-      { id: 'archive', name: 'archive', rootId: 'archive://', quota: { usedBytes: 50, totalBytes: 1000 } },
+      { id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 200, totalBytes: 1000 }, shared: false },
+      { id: 'archive', name: 'archive', rootId: 'archive://', quota: { usedBytes: 50, totalBytes: 1000 }, shared: false },
     ]);
   });
 
@@ -899,5 +899,151 @@ describe('HttpRepository', () => {
     const query = new URLSearchParams(calls[0].url.split('?')[1]);
     expect(query.get('limit')).toBe('500');
     expect(query.get('ext')).toBeNull();
+  });
+
+  // The server wraps each matched term in « », and the search page printed
+  // those guillemets as if they were part of the file.
+  it('reads the server\'s match markers as highlights instead of printing them', async () => {
+    routes = [
+      [
+        '/api/files/search',
+        {
+          results: [
+            {
+              id: 4,
+              storage: 'main',
+              path: '/Docs/maas.md',
+              name: 'maas.md',
+              type: 'file',
+              size: 12,
+              snippet: 'the «annual» report and its «annual» summary',
+            },
+          ],
+        },
+      ],
+    ];
+    const { hits } = await new HttpRepository().search({
+      text: 'annual',
+      scope: 'content',
+      wholePhrase: false,
+      tags: [],
+      searchIn: 'all',
+      folderPath: '',
+      path: '',
+      fileType: 'any',
+      modified: 'any',
+      size: { preset: 'any', min: null, max: null, unit: 'MB' },
+      ownerId: null,
+    });
+
+    expect(hits[0].snippet?.text).toBe('the annual report and its annual summary');
+    expect(hits[0].snippet?.ranges).toEqual([
+      { start: 4, end: 10 },
+      { start: 26, end: 32 },
+    ]);
+  });
+
+  // ── who owns a row ──────────────────────────────────────────────────────────
+  //
+  // The flat listings answer with node rows, which carry `owner_id`. The client
+  // used to throw it away and stamp the CALLER onto every row, so starred,
+  // recent and search all printed "You" over files somebody else had put on a
+  // shared drive. On a shared drive that is not a harmless default: it is a
+  // false statement about who put the file there.
+
+  it('keeps the owner filex named on the flat listings instead of claiming every file', async () => {
+    const mine = { id: 2, storage_id: 1, storage: 'main', name: 'benim.md', path: '/benim.md', type: 'file', size: 5, owner_id: 1, owner_name: 'Ada' };
+    const theirs = { id: 3, storage_id: 1, storage: 'main', name: 'onun.md', path: '/onun.md', type: 'file', size: 5, owner_id: 9, owner_name: 'Grace' };
+    // No owner at all — what a storage sync found rather than a person uploading.
+    const nobody = { id: 4, storage_id: 1, storage: 'main', name: 'bulunan.md', path: '/bulunan.md', type: 'file', size: 5 };
+    routes = [
+      ['/api/auth/me', { user: { id: 1, email: 'ada@filex.test', display_name: 'Ada', role: 'user' } }],
+      ['/star/list', { nodes: [mine, theirs, nobody] }],
+    ];
+    const repo = new HttpRepository();
+    await repo.currentUser();
+    const starred = await repo.listStarred();
+
+    expect(starred.map((n) => [n.name, n.ownerId, n.ownerName])).toEqual([
+      ['benim.md', '1', 'Ada'],
+      ['onun.md', '9', 'Grace'],
+      // Unowned falls back to the caller, which is the honest answer: everything they can see, they can see.
+      ['bulunan.md', '1', undefined],
+    ]);
+  });
+
+  it('offers the People chip the owners those rows actually named', async () => {
+    routes = [
+      ['/api/auth/me', { user: { id: 1, email: 'ada@filex.test', display_name: 'Ada', role: 'user' } }],
+      [
+        '/star/list',
+        { nodes: [{ id: 3, storage_id: 1, storage: 'main', name: 'onun.md', path: '/onun.md', type: 'file', size: 5, owner_id: 9, owner_name: 'Grace' }] },
+      ],
+    ];
+    const repo = new HttpRepository();
+    await repo.currentUser();
+    await repo.listStarred();
+
+    // The caller is always an option; the point is that the OTHER owner is one too, learned from the rows.
+    expect(await repo.listFilterPeople()).toEqual([
+      { id: '9', name: 'Grace', initial: 'G', role: 'owner' },
+      { id: '1', name: 'Ada', initial: 'A', role: 'owner' },
+    ]);
+  });
+
+  // ── the destination picker's tree ───────────────────────────────────────────
+
+  it('asks for one level of folders at a time', async () => {
+    routes = [['q=subfolders', { folders: [row({ id: 7, path: 'main://Docs/Q1', basename: 'Q1' })] }]];
+    const folders = await new HttpRepository().listSubfolders('main://Docs');
+
+    expect(calls).toHaveLength(1);
+    expect(new URLSearchParams(calls[0].url.split('?')[1]).get('path')).toBe('main://Docs');
+    expect(folders.map((n) => n.id)).toEqual(['main://Docs/Q1']);
+  });
+
+  it('walks the whole tree a LEVEL per round trip, not a folder per round trip', async () => {
+    // Two folders at the root, each holding one. Done one folder at a time that is four awaited requests in a row;
+    // done a level at a time it is three, and the two second-level ones go out together.
+    const children: Record<string, unknown> = {
+      'main://': { folders: [row({ id: 1, path: 'main://A', basename: 'A' }), row({ id: 2, path: 'main://B', basename: 'B' })] },
+      'main://A': { folders: [row({ id: 3, path: 'main://A/A1', basename: 'A1' })] },
+      'main://B': { folders: [row({ id: 4, path: 'main://B/B1', basename: 'B1' })] },
+    };
+    const started: string[] = [];
+    routes = [
+      [
+        'q=subfolders',
+        (call: { url: string }) => {
+          const path = new URLSearchParams(call.url.split('?')[1]).get('path') ?? '';
+          started.push(path);
+          return children[path] ?? { folders: [] };
+        },
+      ],
+    ];
+    const folders = await new HttpRepository().listFolders('main');
+
+    expect(folders.map((n) => n.name)).toEqual(['main', 'A', 'B', 'A1', 'B1']);
+    // The order proves the shape: a level is asked for as a whole before any of its answers are read.
+    expect(started.slice(0, 3)).toEqual(['main://', 'main://A', 'main://B']);
+  });
+
+  it('asks the server for folders by name, and keeps only the drive it was asked about', async () => {
+    routes = [
+      [
+        '/api/files/search',
+        {
+          results: [
+            { id: 5, storage_id: 1, storage: 'main', name: 'Brand', path: '/Design/Brand', type: 'dir', size: 0 },
+            { id: 6, storage_id: 2, storage: 'archive', name: 'Brand', path: '/Old/Brand', type: 'dir', size: 0 },
+          ],
+        },
+      ],
+    ];
+    const folders = await new HttpRepository().searchFolders('main', 'brand');
+
+    expect(calls[0].body).toMatchObject({ query: 'brand', dirs_only: true });
+    // The drive is sieved here rather than sent: the app addresses drives by name and has no numeric id to send.
+    expect(folders.map((n) => n.id)).toEqual(['main://Design/Brand']);
   });
 });

@@ -50,6 +50,22 @@ type userStorage struct {
 	// the ACCOUNT, so a client drawing a figure per drive from it was repeating
 	// one number under every drive and calling each of them that drive's.
 	UsedBytes int64 `json:"used_bytes"`
+	// Shared reports that the caller reaches this drive through GRANTS rather
+	// than through their account role — a shared drive, in the sense
+	// `shared-with-me` already uses the word.
+	//
+	// It exists so the Owner column can say something true on such a drive. A
+	// person browsing a team drive does not care which colleague happened to
+	// upload each file; what they need to know is that the drive is not theirs.
+	// So the column names the drive there, and names people only where naming a
+	// person means something.
+	//
+	// The test is the one `shared-with-me` makes: grants are loaded only for a
+	// non-admin on an RBAC-enabled storage, so holding any is exactly the
+	// condition. An admin reaches everything by role and no drive is "shared
+	// with" them; on an RBAC-off drive a grant is inert and the files are just
+	// the account's own.
+	Shared bool `json:"shared,omitempty"`
 }
 
 // List returns the enabled storages the caller can see, in store order.
@@ -70,6 +86,7 @@ func (h *StoragesUser) List(w http.ResponseWriter, r *http.Request) {
 	}
 	root, confined := confine.RootFrom(r.Context())
 	visible := make([]*model.Storage, 0, len(storages))
+	shared := make(map[int64]bool, len(storages))
 	user := auth.UserFrom(r.Context())
 	for _, s := range storages {
 		if confined && root.Adapter != "" && root.Adapter != s.Name {
@@ -84,6 +101,7 @@ func (h *StoragesUser) List(w http.ResponseWriter, r *http.Request) {
 			if !set.StorageVisible() {
 				continue
 			}
+			shared[s.ID] = len(set.Grants()) > 0
 		}
 		visible = append(visible, s)
 	}
@@ -94,7 +112,7 @@ func (h *StoragesUser) List(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]userStorage, 0, len(visible))
 	for _, s := range visible {
-		out = append(out, userStorage{Name: s.Name, ReadOnly: s.ReadOnly, UsedBytes: usage[s.ID]})
+		out = append(out, userStorage{Name: s.Name, ReadOnly: s.ReadOnly, UsedBytes: usage[s.ID], Shared: shared[s.ID]})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"storages": out})
 }

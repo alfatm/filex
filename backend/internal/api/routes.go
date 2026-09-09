@@ -425,6 +425,7 @@ func BuildRouter(d *Deps) http.Handler {
 		Versions: d.Versions,
 		Share:    d.Share,
 		Trash:    d.Trash,
+		Tenants:  tenants,
 	})
 	assistantProviderH := handlers.NewAssistantProviderAdmin(d.Store, assistantBox, assistantAI)
 	dashH := handlers.NewDashboard(d.Store, d.Caps, d.Worker)
@@ -505,6 +506,7 @@ func BuildRouter(d *Deps) http.Handler {
 	}
 	versionsH := handlers.NewVersions(d.Store, d.Versions)
 	versionsH.AttachSearchIndex(d.Index)
+	versionsH.AttachACL(d.ACL)
 	grantsH := handlers.NewGrants(d.Store, d.ACL)
 	grantsH.AttachInvite(d.Share, d.Mailer, d.Cfg.PublicURL)
 	grantsH.AttachTenants(tenants)

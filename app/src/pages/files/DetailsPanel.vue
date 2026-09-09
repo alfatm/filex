@@ -6,6 +6,7 @@ import { repository } from '@/data';
 import type { ActivityEvent, Node, Person, User } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
 import { useFileActions } from '@/features/files/useFileActions';
+import { sharedDriveOf } from '@/features/files/owner';
 import { useFilesStore } from '@/stores/files';
 import { Avatar, Button, IconButton, SidePanel, Tabs } from '@/ui';
 import FileTypeTile from './FileTypeTile.vue';
@@ -40,6 +41,11 @@ function personName(id: string, name: string): string {
   return id === props.user?.id ? t('panel.you') : name;
 }
 
+/** The same rule the listing's Owner column applies, so the panel and the row can never disagree about who owns it. */
+const ownerLabel = computed(
+  () => sharedDriveOf(props.node, files.storages) ?? personName(props.node.ownerId, props.node.ownerName ?? props.node.ownerId),
+);
+
 const rows = computed(() => [
   { key: 'type', value: typeLabel.value },
   { key: 'location', value: location.value },
@@ -47,7 +53,7 @@ const rows = computed(() => [
   { key: 'modified', value: formatDateTime(props.node.modifiedAt) },
   // A listing row carries no creation date on every backend; the row is dropped rather than shown empty.
   ...(props.node.createdAt ? [{ key: 'created', value: formatDateTime(props.node.createdAt) }] : []),
-  { key: 'owner', value: personName(props.node.ownerId, props.node.ownerName ?? props.node.ownerId) },
+  { key: 'owner', value: ownerLabel.value },
 ]);
 
 // The feed is per node and reloads whenever the node or the store's revision changes, so an action the user just

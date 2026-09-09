@@ -94,6 +94,7 @@ type CardItem struct {
 const (
 	ActionTag            = "tag"
 	ActionRestoreVersion = "restore_version"
+	ActionCreateShare    = "create_share"
 	ActionRevokeShare    = "revoke_share"
 	ActionPurge          = "purge"
 )

@@ -12,7 +12,8 @@ export const ROOT_ID = 'demo';
 export const user: User = { id: 'demo', name: 'demo', initial: 'D', email: 'demo@filex.local', role: 'owner', fullName: 'demo' };
 
 export const storages: Storage[] = [
-  { id: 'demo', name: 'demo', rootId: ROOT_ID, quota: { usedBytes: 12.4 * GB, totalBytes: 100 * GB } },
+  // The demo account owns its one drive; nothing here is a team drive, so the Owner column says "You".
+  { id: 'demo', name: 'demo', rootId: ROOT_ID, quota: { usedBytes: 12.4 * GB, totalBytes: 100 * GB }, shared: false },
 ];
 
 /** One entry of tree.json, the snapshot `scripts/gen-demo-tree.mjs` takes of the demo asset directory. */

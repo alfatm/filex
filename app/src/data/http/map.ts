@@ -93,6 +93,10 @@ export interface WireNode {
   storage?: string;
   /** True while a public link to this node still opens. */
   shared?: boolean;
+  /** Who put the file there. Absent on anything a storage sync found rather than a person uploading it. */
+  owner_id?: number;
+  /** The display name behind `owner_id`, stamped per listing page — an owner column showing a number is unreadable. */
+  owner_name?: string;
 }
 
 /** One row of `/api/files/manager/trash` — `trash.TrashEntry`, a projection of its own. */
@@ -250,6 +254,8 @@ export interface WireStorage {
   read_only: boolean;
   /** What THIS drive holds. The quota endpoint beside it meters the account, which is a different number. */
   used_bytes?: number;
+  /** The caller reaches this drive through grants rather than through their role — a shared drive. */
+  shared?: boolean;
 }
 
 /** `quota.Snapshot` from `/api/files/quota/me`; `unlimited` means the account has no ceiling. */
@@ -327,6 +333,8 @@ export function fromModelNode(wire: WireNode, adapter: string): Node {
     shared: wire.shared ?? false,
     starred: false,
     ...(wire.deleted_at ? { deletedAt: wire.deleted_at } : {}),
+    // `typed` fills ownerId with SELF; a row filex could name an owner for overrides that with the real one.
+    ...(wire.owner_id === undefined ? {} : { ownerId: String(wire.owner_id), ownerName: wire.owner_name }),
   };
 }
 
@@ -433,6 +441,7 @@ export function toStorage(wire: WireStorage, limitBytes: number): Storage {
     name: wire.name,
     rootId: joinPath(wire.name, ''),
     quota: { usedBytes: wire.used_bytes ?? 0, totalBytes: limitBytes },
+    shared: wire.shared ?? false,
   };
 }
 

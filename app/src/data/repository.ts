@@ -126,8 +126,17 @@ export interface Repository {
   listShared(filter?: ListingFilter): Promise<Node[]>;
   /** Trashed nodes with `deletedAt` / `originalPath` set. */
   listTrash(filter?: ListingFilter): Promise<Node[]>;
-  /** Every live folder of the storage, root included; the Move-to picker builds its tree from `parentId`. */
+  /** Every live folder of the storage, root included. One request per folder — see `listSubfolders`. */
   listFolders(storageId: string): Promise<Node[]>;
+  /** The folders directly inside one folder, in one request. What the destination picker expands with. */
+  listSubfolders(folderId: string): Promise<Node[]>;
+  /**
+   * Folders on one drive whose name matches, wherever they sit.
+   *
+   * The destination picker's filter box. Its tree is loaded a level at a time, so a filter over what happens to be
+   * expanded would miss most of the drive; this asks the server the question instead.
+   */
+  searchFolders(storageId: string, text: string): Promise<Node[]>;
 
   // Mutations. Ids are validated; unknown ids throw. Name collisions reject with `DUPLICATE_NAME`.
   createFolder(parentId: string, name: string): Promise<Node>;

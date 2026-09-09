@@ -126,7 +126,10 @@
       "folder": "Hedef klasör",
       "crossDrive": "Depolamalar arası kopyalama henüz desteklenmiyor.",
       "moveConfirm": "Taşı",
-      "copyConfirm": "Kopyala"
+      "copyConfirm": "Kopyala",
+      "expand": "{name} içindeki klasörleri göster",
+      "collapse": "{name} içindeki klasörleri gizle",
+      "searching": "Aranıyor…"
     },
     "tags": {
       "title": "Etiketler",
@@ -485,14 +488,17 @@
       "action": {
         "tag": "{tags} etiketini ekle",
         "restore_version": "{version} numaralı sürümü geri getir (mevcut içerik önce saklanır)",
+        "create_share": "herkese açık bir bağlantı oluştur — bağlantıyı bilen herkes oturum açmadan açabilir",
         "revoke_share": "herkese açık bağlantıyı kapat — bağlantısı olan herkes erişimi kaybeder",
         "purge": "kalıcı olarak yok et — bu geri alınamaz"
       },
       "detail": {
         "deleted": "{size}, {at} tarihinde silindi",
         "taken": "{size}, {at} tarihinde alındı",
-        "link": "{at} tarihinde oluşturuldu, {downloads} indirme"
-      }
+        "link": "{at} tarihinde oluşturuldu, {downloads} indirme",
+        "alreadyShared": "zaten 1 bağlantısı var | zaten {n} bağlantısı var"
+      },
+      "copyLink": "Bağlantıyı kopyala"
     }
   },
   "settings": {

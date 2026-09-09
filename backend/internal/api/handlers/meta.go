@@ -217,6 +217,7 @@ func (h *Meta) ListStarred(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	attachShared(r.Context(), h.Store, nodes)
+	attachOwnerNames(r.Context(), h.Store, nodes)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"nodes": nonNilNodes(attachStorageNames(r.Context(), h.Store, nodes)),
 		"limit": limit,
@@ -267,6 +268,7 @@ func (h *Meta) ListRecent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	attachShared(r.Context(), h.Store, nodes)
+	attachOwnerNames(r.Context(), h.Store, nodes)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"nodes": nonNilNodes(attachStorageNames(r.Context(), h.Store, nodes)),
 		"limit": limit,

@@ -65,7 +65,7 @@ describe('search URL mapping', () => {
   });
 
   it('labels a hit with the storage name and its folder path', () => {
-    const storages = [{ id: 'demo', name: 'Demo', rootId: 'demo', quota: { usedBytes: 0, totalBytes: 1 } }];
+    const storages = [{ id: 'demo', name: 'Demo', rootId: 'demo', quota: { usedBytes: 0, totalBytes: 1 }, shared: false }];
     const node = { id: 'x' } as SearchResult['hits'][number]['node'];
     expect(hitFolderLabel({ node, storageId: 'demo', folderPath: '' }, storages)).toBe('/Demo');
     expect(hitFolderLabel({ node, storageId: 'demo', folderPath: 'Design/Assets' }, storages)).toBe('/Demo/Design/Assets');

@@ -232,4 +232,70 @@ describe('AssistantPanel', () => {
     expect(calls.at(-1)?.prompt).toBe('I approved the plan. 0 done, 1 not done.');
     expect(wrapper.findAll('button').some((b) => b.text() === 'Approve and run')).toBe(false);
   });
+
+  // A share plan is the one kind that HANDS SOMETHING BACK. The link is the
+  // whole reason the person approved it, so a result that only says "done" is
+  // a result they cannot use.
+  it('prints the link a share plan minted, and says what approving one means before they do', async () => {
+    script = [{ type: 'done' }];
+    const { wrapper, store } = await setup();
+    cleanup = () => wrapper.unmount();
+    store.sessionId = 's1';
+    store.seed([
+      { id: 'm1', role: 'user', text: 'give me a link to the report', at: '2026-07-01T10:00:00Z' },
+      {
+        id: 'm2',
+        role: 'assistant',
+        text: 'I have proposed a public link.',
+        at: '2026-07-01T10:00:01Z',
+        cards: [
+          {
+            kind: 'plan',
+            id: '9',
+            planKind: 'create_share',
+            summary: 'Create a public link to the report',
+            status: 'pending',
+            items: [{ path: 'main://Docs/report.pdf', action: 'create_share', args: { existing: '1' }, size: 12000 }],
+          },
+        ],
+      },
+    ]);
+    await nextTick();
+
+    // While it is still a proposal: what approving it means, in the reader's language and from the code — never
+    // echoed from the server — and that the file already has a link, so a second one is a decision, not an accident.
+    expect(wrapper.text()).toContain('anyone holding it can open this without signing in');
+    expect(wrapper.text()).toContain('already has 1 link');
+
+    // Once it has run, the items give way to what happened — and for this kind that includes the link itself.
+    store.seed([
+      { id: 'm1', role: 'user', text: 'give me a link to the report', at: '2026-07-01T10:00:00Z' },
+      {
+        id: 'm2',
+        role: 'assistant',
+        text: 'Here is the link.',
+        at: '2026-07-01T10:00:01Z',
+        cards: [
+          {
+            kind: 'plan',
+            id: '9',
+            planKind: 'create_share',
+            summary: 'Create a public link to the report',
+            status: 'done',
+            items: [{ path: 'main://Docs/report.pdf', action: 'create_share', args: { existing: '1' }, size: 12000 }],
+            results: [{ path: 'main://Docs/report.pdf', state: 'done', url: 'https://filex.test/s/abc123' }],
+          },
+        ],
+      },
+    ]);
+    await nextTick();
+    expect(wrapper.text()).toContain('https://filex.test/s/abc123');
+
+    const clipboard = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { clipboard: { writeText: clipboard } });
+    await wrapper.findAll('button').find((b) => b.text() === 'Copy link')!.trigger('click');
+    await flushPromises();
+    expect(clipboard).toHaveBeenCalledWith('https://filex.test/s/abc123');
+    vi.unstubAllGlobals();
+  });
 });

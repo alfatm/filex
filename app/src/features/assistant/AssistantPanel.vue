@@ -5,6 +5,7 @@ import { File, Loader2, MessagesSquare, Search, Send, Sparkles, SquarePen, Tag, 
 import { useFormat } from '@/composables/useFormat';
 import type { ApprovalCard, AssistantMode, PlanCard, PlanItem, PlanResult } from '@/data/types';
 import { useFilesStore } from '@/stores/files';
+import { useFileActions } from '@/features/files/useFileActions';
 import { Avatar, IconButton, SidePanel } from '@/ui';
 import { ASSISTANT_MODES, useAssistantStore } from './assistantStore';
 import { plainAnswer } from './answer';
@@ -18,6 +19,8 @@ const { t } = useI18n();
 const { formatDate, formatSize, formatTime } = useFormat();
 const files = useFilesStore();
 const assistant = useAssistantStore();
+// The same copy the share modal uses, so a minted link is copied and announced exactly the way any other link is.
+const { copyLink } = useFileActions();
 
 const MODE_ICONS = { filename: File, content: Search, tags: Tag } satisfies Record<AssistantMode, Component>;
 const SUGGESTIONS = ['contracts', 'tag'] as const;
@@ -100,7 +103,7 @@ function resultReason(result: PlanResult) {
 }
 
 /** What one line of a plan does, in the reader's language. An action this build has no words for shows its code. */
-const PLAN_ACTIONS = ['tag', 'restore_version', 'revoke_share', 'purge'] as const;
+const PLAN_ACTIONS = ['tag', 'restore_version', 'create_share', 'revoke_share', 'purge'] as const;
 
 function itemAction(item: PlanItem) {
   if (!(PLAN_ACTIONS as readonly string[]).includes(item.action)) return item.action;
@@ -117,6 +120,11 @@ function itemDetail(card: PlanCard, item: PlanItem) {
   if (card.planKind === 'empty_trash' && at) return t('assistant.plan.detail.deleted', { size, at });
   if (card.planKind === 'restore_version' && at) return t('assistant.plan.detail.taken', { size, at });
   if (card.planKind === 'revoke_share' && at) return t('assistant.plan.detail.link', { at, downloads: item.args?.downloads ?? '0' });
+  // A file that already has links is worth saying so before a second one is approved.
+  if (card.planKind === 'create_share') {
+    const existing = Number(item.args?.existing ?? 0);
+    return existing > 0 ? [size, t('assistant.plan.detail.alreadyShared', existing)].filter(Boolean).join(' · ') : size;
+  }
   return size;
 }
 
@@ -274,6 +282,17 @@ onBeforeUnmount(() => {
                   <ul v-if="card.results?.length" class="mt-2 space-y-1">
                     <li v-for="result in card.results" :key="result.path" class="text-12 leading-snug text-text-3">
                       <span class="break-all">{{ result.path }}</span> — {{ result.state === 'done' ? t('assistant.plan.itemDone') : resultReason(result) }}
+                      <!--
+                        The one plan that hands something back. The URL is the whole point of approving it, so it is
+                        shown in full and selectable rather than behind a "copy" button that a screen reader has to
+                        guess at. Not an anchor: it is a credential to hand on, not a place this panel should navigate.
+                      -->
+                      <span v-if="result.url" class="mt-1 flex items-start gap-2">
+                        <code class="min-w-0 flex-1 select-all break-all font-code text-12 text-text">{{ result.url }}</code>
+                        <button type="button" class="shrink-0 text-primary hover:underline" @click="copyLink(result.url)">
+                          {{ t('assistant.plan.copyLink') }}
+                        </button>
+                      </span>
                     </li>
                   </ul>
                 </template>

@@ -45,6 +45,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/model"
+	"github.com/brf-tech/filex/backend/internal/share"
 )
 
 // planItem is one unit of approved work. It carries what was resolved, not what
@@ -79,6 +80,14 @@ type planItemResult struct {
 	// for anything the code does not cover.
 	Code   string `json:"code,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// URL is set by the one kind that PRODUCES something the person needs to
+	// be handed: a share link. It is stored with the answer and redrawn when
+	// the conversation is reopened, which is deliberate — a link nobody was
+	// shown is a link nobody can use. The consequence is stated in the docs:
+	// the URL is a credential and it stays in the transcript after the link is
+	// revoked, so what is read there is a record of what was minted, not proof
+	// the link still opens.
+	URL string `json:"url,omitempty"`
 }
 
 // Why an item did not happen. A closed set: the panel renders these, and a
@@ -105,6 +114,12 @@ func (r planItemResult) fail(reason string) planItemResult {
 
 func (r planItemResult) ok() planItemResult {
 	r.State = itemDone
+	return r
+}
+
+// link records a success that produced a URL the person has to be given.
+func (r planItemResult) link(url string) planItemResult {
+	r.State, r.URL = itemDone, url
 	return r
 }
 
@@ -260,6 +275,54 @@ func (t *assistantTools) planRestoreVersion(ctx context.Context, raw string) ass
 		}})
 	}
 	return failure("%s has no version with id %d — list its versions first", args.Path, args.VersionID)
+}
+
+// planCreateShare proposes a public link.
+//
+// This is the only thing the assistant can propose that reaches OUTSIDE the
+// installation: a share URL opens without signing in, so approving it hands
+// access to whoever holds the link. Two consequences are built in here rather
+// than left to the model.
+//
+// The fingerprint is the file as it stands. If the bytes change between the
+// proposal and the approval, the link is not minted — the person approved a
+// link to what they were shown, and publishing something else under that
+// approval is exactly the mistake this whole plan mechanism exists to prevent.
+//
+// Existing links are counted into the plan item, so "share the report" on a
+// file that already has a link says so before anybody approves a second one.
+func (t *assistantTools) planCreateShare(ctx context.Context, raw string) assistant.ToolOutcome {
+	var args struct {
+		Path    string `json:"path"`
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(raw), &args); err != nil {
+		return failure("could not read the arguments: %v", err)
+	}
+	if t.share == nil {
+		return failure("sharing is not enabled on this server")
+	}
+	node, err := t.resolveNode(ctx, args.Path)
+	if err != nil {
+		return failure("%v", err)
+	}
+	// Checked here as well as at execution: a plan the person cannot approve
+	// is worse than a refusal, because they have to read it to find that out.
+	if !t.mayWriteNode(ctx, node) {
+		return failure("you do not have permission to share %s", args.Path)
+	}
+	existing, err := t.share.ListByNode(ctx, node.ID)
+	if err != nil {
+		return failure("the links on %s could not be read: %v", args.Path, err)
+	}
+	return t.createPlan(ctx, model.PlanKindCreateShare, args.Summary, []planItem{{
+		Path:        args.Path,
+		NodeID:      node.ID,
+		Action:      assistant.ActionCreateShare,
+		Args:        map[string]string{"existing": strconv.Itoa(len(existing))},
+		Size:        node.Size,
+		Fingerprint: nodeFingerprint(node),
+	}})
 }
 
 func (t *assistantTools) planRevokeShare(ctx context.Context, raw string) assistant.ToolOutcome {
@@ -492,6 +555,9 @@ func (h *Assistant) runPlan(r *http.Request, plan *model.AssistantPlan) []planIt
 		return []planItemResult{{State: itemFailed, Code: reasonBroken, Reason: "the stored plan could not be read"}}
 	}
 	tools := newAssistantTools(*h.Tools, plan.SessionID)
+	// The origin a minted link lives on is a property of the request, and this
+	// is the only place a plan meets one.
+	tools.origin = h.Tools.Tenants.FromRequest(r)
 	ctx := r.Context()
 	out := make([]planItemResult, 0, len(items))
 	for _, item := range items {
@@ -549,6 +615,36 @@ func (t *assistantTools) runItem(ctx context.Context, kind string, item planItem
 		}
 		afterVersionRestore(ctx, t.store, t.index, node.ID)
 		return result.ok()
+
+	case model.PlanKindCreateShare:
+		if t.share == nil {
+			return result.fail("sharing is not enabled on this server")
+		}
+		node, err := t.store.GetNode(ctx, item.NodeID)
+		if err != nil || node == nil || node.DeletedAt != nil {
+			return result.skip(reasonGone, "the file is no longer there")
+		}
+		if nodeFingerprint(node) != item.Fingerprint {
+			return result.skip(reasonChanged, "the file changed after the plan was made")
+		}
+		// ≥editor, the level `POST /share` requires: minting a link is an
+		// outbound grant of access, not a read.
+		if !t.mayWriteNode(ctx, node) {
+			return result.skip(reasonForbidden, "you do not have permission to share it")
+		}
+		var by *int64
+		if u := auth.UserFrom(ctx); u != nil {
+			id := u.ID
+			by = &id
+		}
+		// No expiry is passed: share.Service.Create clamps a missing one to the
+		// installation's max-TTL setting, so the link the assistant mints lives
+		// exactly as long as the operator says links may live.
+		sh, err := t.share.Create(ctx, share.CreateOpts{NodeID: node.ID, CreatedBy: by})
+		if err != nil {
+			return result.fail(err.Error())
+		}
+		return result.link(t.origin + "/s/" + sh.Token)
 
 	case model.PlanKindRevokeShare:
 		if t.share == nil {

@@ -144,6 +144,15 @@ labels at x 1342 / values at x 1440 below.
 - "General" 16/600 at y 268; rows (label `--c-text-3` 15 at x 1342, value
   `--c-text` 15 at x 1440, row h 31): Type, Location, Size ("—" for folders),
   Modified "Jul 8, 2026, 11:24 AM", Created, Owner "You".
+- **Who the Owner row and the Owner column name.** On a drive of one's own:
+  "You" for the caller's rows, the person's name for anybody else's. On a
+  SHARED drive — one the person reaches through grants rather than through their
+  role, which `GET /api/files/storages` reports as `shared` — the name is the
+  DRIVE's. Everybody in a team drive can see everybody's files, so which
+  colleague happened to upload one is noise; what the reader needs to know is
+  that the drive is not theirs. filex has no group entity and none was invented
+  for this: the drive IS the group. The rule lives in
+  `features/files/owner.ts` so the panel and the listing cannot disagree.
 - Divider 1px at y 494.
 - "People with access" 16/600; row: avatar 36 + name 15 + role 13 gray.
 - Divider. "Shared link" 16/600; row: `Link` icon in 32 circle `--c-bg-muted`,
@@ -327,7 +336,13 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
   title 20/600, inputs h 44, footer buttons h 44 radius 10.
 - **Destination picker** — one dialog behind both Move to and Copy to: storage
   select, folder filter, and the folder tree of the chosen storage, max height
-  320. A node's own subtree is never a destination. The folder the nodes already
+  320. The tree is loaded a LEVEL at a time: the root is open, a chevron opens a
+  folder and fetches what is in it. Loading the whole drive up front is one
+  request per folder, and almost none of it is ever looked at — a person opens
+  two or three and picks one. The filter box therefore asks the SERVER (folders
+  only), because a filter over the levels somebody happened to open is not a
+  filter; its hits are shown flat, each with the folder path it lives in, since
+  the indentation that used to say so is gone. A node's own subtree is never a destination. The folder the nodes already
   sit in is disabled for a move (nothing to do) and offered for a copy, which
   duplicates them in place as `<base>-copy`. Copying across storages spans two
   adapters, which the server refuses: the other storages stay in the select,

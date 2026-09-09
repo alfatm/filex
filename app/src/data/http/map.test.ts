@@ -150,7 +150,7 @@ describe('trash rows → app model', () => {
 describe('storages', () => {
   it('is addressed by its name, and its root is the bare adapter form', () => {
     const storage = toStorage({ name: 'main', read_only: false, used_bytes: 100 }, 1000);
-    expect(storage).toEqual({ id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 100, totalBytes: 1000 } });
+    expect(storage).toEqual({ id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 100, totalBytes: 1000 }, shared: false });
   });
 
   it('measures the drive’s own bytes against the account ceiling, not the account’s bytes against it', () => {

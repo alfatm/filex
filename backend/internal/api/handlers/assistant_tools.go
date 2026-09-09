@@ -42,6 +42,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/search"
 	"github.com/brf-tech/filex/backend/internal/share"
 	"github.com/brf-tech/filex/backend/internal/storage"
+	"github.com/brf-tech/filex/backend/internal/tenanturl"
 	"github.com/brf-tech/filex/backend/internal/trash"
 	"github.com/brf-tech/filex/backend/internal/versioning"
 )
@@ -71,6 +72,10 @@ type AssistantToolDeps struct {
 	Versions *versioning.Service
 	Share    *share.Service
 	Trash    *trash.Service
+	// Tenants turns a request into the origin a minted /s/ link lives on. A
+	// share link is only useful as an absolute URL, and which origin that is
+	// depends on the host the person is on.
+	Tenants tenanturl.Resolver
 }
 
 // assistantTools is one conversation's toolbox. It is built per turn, because
@@ -85,6 +90,10 @@ type assistantTools struct {
 	share     *share.Service
 	trash     *trash.Service
 	sessionID int64
+	// origin is the base a minted share URL is built on. Set only when a plan
+	// is EXECUTED, because that is the only moment a request is in hand and
+	// the only moment a link exists; empty while the model is merely proposing.
+	origin string
 }
 
 // newAssistantTools binds the file surface to one conversation.
@@ -189,6 +198,14 @@ func (t *assistantTools) Specs() []assistant.ToolSpec {
 			}, []string{"path", "version_id", "summary"}),
 		},
 		{
+			Name:        "plan_create_share",
+			Description: "PROPOSE creating a public link to a file or folder. Only when the person asked for it directly. Anyone holding the link can open it WITHOUT signing in, so this is the one action that reaches outside the installation — never propose it as a convenience or a step inside something else. This does not create anything by itself: the person approves the plan and the server does it, then shows them the link.",
+			Schema: object(map[string]any{
+				"path":    str("The file or folder to share, as `<drive>://<path>`."),
+				"summary": str("One sentence describing the plan, for the person to read."),
+			}, []string{"path", "summary"}),
+		},
+		{
 			Name:        "plan_revoke_share",
 			Description: "PROPOSE closing a public link. Only when the person asked for it directly. Anyone holding the link loses access. This does not revoke anything by itself: the person approves the plan and the server does it.",
 			Schema: object(map[string]any{
@@ -238,6 +255,8 @@ func (t *assistantTools) Run(ctx context.Context, call assistant.ToolCall) assis
 		return t.planTags(ctx, call.Args)
 	case "plan_restore_version":
 		return t.planRestoreVersion(ctx, call.Args)
+	case "plan_create_share":
+		return t.planCreateShare(ctx, call.Args)
 	case "plan_revoke_share":
 		return t.planRevokeShare(ctx, call.Args)
 	case "plan_empty_trash":

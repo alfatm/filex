@@ -7,6 +7,7 @@ import {
   fromFileNode,
   fromActivityEvent,
   fromModelNode,
+  fromSnippet,
   fromTrashEntry,
   joinPath,
   nameOf,
@@ -120,6 +121,8 @@ interface WirePlanResult {
   state: string;
   code?: string;
   reason?: string;
+  /** Only the share-link kind produces one. */
+  url?: string;
 }
 
 /** A stored card, as the messages endpoint redraws it — a plan is hydrated from the plan row, not from the message. */
@@ -137,7 +140,13 @@ interface WireCard {
 
 function fromPlanResult(wire: WirePlanResult): PlanResult {
   const state = wire.state === 'done' || wire.state === 'skipped' ? wire.state : 'failed';
-  return { path: wire.path, state, ...(wire.code ? { code: wire.code } : {}), ...(wire.reason ? { reason: wire.reason } : {}) };
+  return {
+    path: wire.path,
+    state,
+    ...(wire.code ? { code: wire.code } : {}),
+    ...(wire.reason ? { reason: wire.reason } : {}),
+    ...(wire.url ? { url: wire.url } : {}),
+  };
 }
 
 /** One stored card in the shape the panel draws. An unknown kind is dropped rather than rendered as an empty box. */
@@ -400,13 +409,24 @@ export class HttpRepository implements Repository {
   private project(rows: WireFileNode[]): Node[] {
     return rows.map((row) => {
       this.remember(row.path, row.id);
-      const node = fromFileNode(row);
-      if (row.owner_id === undefined) return { ...node, ownerId: this.owner() };
-      if (!this.people.has(node.ownerId)) {
-        this.people.set(node.ownerId, { id: node.ownerId, name: node.ownerName ?? node.ownerId, initial: initialOf(node.ownerName ?? '?'), role: 'owner' });
-      }
-      return node;
+      return this.owned(fromFileNode(row), row.owner_id !== undefined);
     });
+  }
+
+  /**
+   * A row's owner, kept or fallen back on — and learned, for the People chip.
+   *
+   * `named` is whether filex actually said who owns it. When it did not (anything a storage sync found rather than
+   * a person uploading it) the caller is the honest answer, because everything they can see, they can see. When it
+   * DID, overwriting it with the caller is a false statement about who put the file there — which is what the flat
+   * listings used to do, so starred, recent and search all said "You" over somebody else's file on a shared drive.
+   */
+  private owned(node: Node, named: boolean): Node {
+    if (!named) return { ...node, ownerId: this.owner() };
+    if (!this.people.has(node.ownerId)) {
+      this.people.set(node.ownerId, { id: node.ownerId, name: node.ownerName ?? node.ownerId, initial: initialOf(node.ownerName ?? '?'), role: 'owner' });
+    }
+    return node;
   }
 
   /**
@@ -434,7 +454,7 @@ export class HttpRepository implements Repository {
       if (!row.storage) continue;
       const node = fromModelNode(row, row.storage);
       this.remember(node.id, row.id);
-      out.push({ ...node, ownerId: this.owner() });
+      out.push(this.owned(node, row.owner_id !== undefined));
     }
     return out;
   }
@@ -648,16 +668,56 @@ export class HttpRepository implements Repository {
     return chain;
   }
 
+  /**
+   * The whole tree, breadth-first — but a LEVEL per round trip rather than a folder per round trip.
+   *
+   * The walk itself is unavoidable: filex answers "what is inside this folder" and nothing wider. What was
+   * avoidable is doing it one folder at a time, awaited in sequence, which on a real drive is hundreds of
+   * round trips in a row. A level's folders are independent, so they are asked for together and the cost
+   * becomes the tree's DEPTH.
+   *
+   * The destination picker no longer calls this — it expands a level at a time (`listSubfolders`) and searches
+   * the rest (`searchFolders`). What is left is the settings modal's folder select, which really does want them all.
+   */
   async listFolders(storageId: string): Promise<Node[]> {
     const root = joinPath(storageId, '');
     const out: Node[] = [this.folderStub(root)];
-    const queue = [root];
-    while (queue.length) {
-      const { folders } = await request<{ folders: WireFileNode[] }>(MANAGER, { query: { q: 'subfolders', path: queue.shift()! } });
-      for (const node of this.project(folders)) {
-        out.push(node);
-        queue.push(node.id);
+    let level = [root];
+    while (level.length) {
+      const next: string[] = [];
+      for (const nodes of await Promise.all(level.map((id) => this.listSubfolders(id)))) {
+        for (const node of nodes) {
+          out.push(node);
+          next.push(node.id);
+        }
       }
+      level = next;
+    }
+    return out;
+  }
+
+  async listSubfolders(folderId: string): Promise<Node[]> {
+    const { folders } = await request<{ folders: WireFileNode[] }>(MANAGER, { query: { q: 'subfolders', path: folderId } });
+    return this.project(folders);
+  }
+
+  /**
+   * `dirs_only`, so the index answers with folders and the picker does not have to sieve files out of a page it
+   * asked for. No `storage_id`: the app addresses drives by name and has none to send, so the server answers for
+   * every drive the caller can see and the one asked for is kept here — exact, because the sieve is over the whole
+   * answer rather than over a window of it.
+   */
+  async searchFolders(storageId: string, text: string): Promise<Node[]> {
+    const { results } = await request<{ results: WireNode[] }>('/api/files/search', {
+      method: 'POST',
+      body: { query: text, limit: SEARCH_LIMIT, dirs_only: true },
+    });
+    const out: Node[] = [];
+    for (const row of results) {
+      if (row.storage !== storageId) continue;
+      const node = this.owned(fromModelNode(row, row.storage), row.owner_id !== undefined);
+      this.remember(node.id, row.id);
+      out.push(node);
     }
     return out;
   }
@@ -1063,7 +1123,7 @@ export class HttpRepository implements Repository {
     const hits: SearchHit[] = [];
     for (const row of results) {
       if (!row.storage) continue;
-      const node = { ...fromModelNode(row, row.storage), ownerId: this.owner() };
+      const node = this.owned(fromModelNode(row, row.storage), row.owner_id !== undefined);
       this.remember(node.id, row.id);
       // Only what the server could not express: a hand-typed size range.
       if (query.size.preset === 'custom' && !withinCustomSize(node, query.size)) continue;
@@ -1072,7 +1132,8 @@ export class HttpRepository implements Repository {
         node,
         storageId: row.storage,
         folderPath: parent ? splitPath(parent).rel : '',
-        ...(row.snippet ? { snippet: { text: row.snippet, ranges: [] } } : {}),
+        // `«»` are the server's match markers, not text: unsplit, the snippet printed them literally.
+        ...(row.snippet ? { snippet: fromSnippet(row.snippet) } : {}),
       });
     }
     return { hits, total: hits.length };

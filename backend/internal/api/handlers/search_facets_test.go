@@ -155,3 +155,28 @@ func TestSearchFacets_AFilterThatMatchesNothingAnswersNothing(t *testing.T) {
 	// resolving to an empty set would mean if it were treated as absent.
 	require.Empty(t, f.search(t, map[string]any{"query": "rapor", "ext": []string{"xlsx"}}))
 }
+
+// The destination picker's filter box. Its tree loads one level at a time, so
+// without a way to ask "which FOLDERS on this drive are called that", the box
+// could only search the levels somebody had already opened — which is the same
+// as not having one.
+func TestSearchFacets_DirsOnlyAnswersFoldersAndTheContradictionAnswersNothing(t *testing.T) {
+	f := newFacetFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// A folder and a file whose names both match, so only the facet separates them.
+	dir, err := f.store.CreateNode(context.Background(), &model.Node{
+		StorageID: f.st.ID, Name: "Belgeler", Path: "/Belgeler", PathHash: pathkey.Hash(f.st.ID, "/Belgeler"),
+		Type: model.NodeTypeDirectory, BackendMtime: &now,
+	})
+	require.NoError(t, err)
+	require.NotZero(t, dir.ID)
+	f.seed(t, "Belgeler.pdf", 10, now, nil)
+
+	require.Equal(t, []string{"Belgeler"}, f.search(t, map[string]any{"query": "Belgeler", "dirs_only": true}))
+	// Both, when nothing asks for one or the other.
+	require.ElementsMatch(t, []string{"Belgeler", "Belgeler.pdf"}, f.search(t, map[string]any{"query": "Belgeler"}))
+	// A folder with an extension is a contradiction. Answering it with nothing
+	// is more honest than quietly picking whichever half came last.
+	require.Empty(t, f.search(t, map[string]any{"query": "Belgeler", "dirs_only": true, "ext": []string{"pdf"}}))
+}

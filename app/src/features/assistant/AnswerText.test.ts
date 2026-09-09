@@ -28,7 +28,7 @@ async function setup(text: string) {
   setActivePinia(createPinia());
   i18n.global.locale.value = 'en';
   const files = useFilesStore();
-  files.storages = [{ id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 0, totalBytes: 0 } }];
+  files.storages = [{ id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 0, totalBytes: 0 }, shared: false }];
   await router.push('/files');
   const wrapper = mount(AnswerText, { props: { text }, global: { plugins: [router, i18n] } });
   return wrapper;

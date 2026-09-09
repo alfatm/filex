@@ -211,6 +211,9 @@ func matchesFacets(n *model.Node, f db.NodeFacets) bool {
 	if f.FilesOnly && n.Type != model.NodeTypeFile {
 		return false
 	}
+	if f.DirsOnly && n.Type != model.NodeTypeDirectory {
+		return false
+	}
 	if f.PathPrefix != "" && f.PathPrefix != "/" && n.Path != f.PathPrefix && !strings.HasPrefix(n.Path, f.PathPrefix+"/") {
 		return false
 	}
@@ -304,6 +307,12 @@ type searchRequest struct {
 	// the field be omitted.
 	SizeMax int64 `json:"size_max,omitempty"`
 	OwnerID int64 `json:"owner_id,omitempty"`
+	// DirsOnly asks for FOLDERS and nothing else. The destination picker needs
+	// it: its tree loads one level at a time, so without a way to ask the server
+	// "which folders on this drive are called that", its filter box could only
+	// search the levels somebody had already expanded — which is the same as
+	// not having one.
+	DirsOnly bool `json:"dirs_only,omitempty"`
 }
 
 // facets turns the request's filter fields into the store's query shape.
@@ -312,6 +321,12 @@ func (req searchRequest) facets() db.NodeFacets {
 	// A filter on extension or size is a filter for files: a folder has no
 	// extension and its size is a rollup. A date or an owner keeps folders.
 	f.FilesOnly = len(req.Exts) > 0 || req.SizeMin > 0 || req.SizeMax > 0
+	// An explicit "folders only" wins over the implication: asking for folders
+	// AND for an extension is a contradiction, and answering it with nothing is
+	// more honest than picking one half.
+	if req.DirsOnly {
+		f.DirsOnly, f.FilesOnly = true, false
+	}
 	if req.ModifiedAfter > 0 {
 		t := time.UnixMilli(req.ModifiedAfter).UTC()
 		f.ModifiedAfter = &t
@@ -523,6 +538,10 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 		nodes[i] = results[i].Node
 	}
 	attachStorageNames(r.Context(), h.Store, nodes)
+	// And the owner's NAME, for the same reason: a hit carries owner_id and
+	// nothing to print it as, so the results list named the caller as the owner
+	// of every file it found, on a shared drive included.
+	attachOwnerNames(r.Context(), h.Store, nodes)
 	out := map[string]any{"results": results}
 	if facetTruncated {
 		// Said out loud rather than absorbed: past the ceiling the facet set is

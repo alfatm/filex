@@ -263,9 +263,13 @@ each one narrows, none widens.
 | `modified_after` | Epoch milliseconds. |
 | `size_min` / `size_max` | Bytes. `size_max: 0` means no ceiling. |
 | `owner_id` | filex's numeric user id. |
+| `dirs_only` | Answer with **folders** and nothing else. The destination picker's filter box: its tree loads a level at a time, so without this the box could only search the levels somebody had already opened — which is the same as not having one. |
 
 `ext`, `size_min` and `size_max` imply files only — a folder has no extension
-and its size is a rollup. A date or an owner keeps folders.
+and its size is a rollup. A date or an owner keeps folders. `dirs_only` is the
+mirror of that implication and overrides it: asking for folders *and* for an
+extension is a contradiction, and it is answered with nothing rather than by
+quietly keeping one half.
 
 **Why they are not applied to the answer.** The full-text index knows a
 document's name, path, mime and type and nothing else, so a filtered search used

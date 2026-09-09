@@ -383,6 +383,16 @@ export const mockRepository: Repository = {
     const inStorage = (n: Node): boolean => n.id === storage.rootId || (n.parentId !== null && inStorage(byId(n.parentId)));
     return copy(nodes.filter((n) => n.kind === 'folder' && live(n) && inStorage(n)));
   },
+  async listSubfolders(folderId) {
+    return copy(nodes.filter((n) => n.kind === 'folder' && live(n) && n.parentId === folderId));
+  },
+  async searchFolders(storageId, text) {
+    const needle = text.trim().toLowerCase();
+    if (!needle) return [];
+    const all = await this.listFolders(storageId);
+    // The root is not a search result: its name is the drive's, and it is already the tree's first row.
+    return all.filter((n) => n.parentId !== null && n.name.toLowerCase().includes(needle));
+  },
 
   async createFolder(parentId, name) {
     const parent = byId(parentId);

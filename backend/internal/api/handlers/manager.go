@@ -1260,6 +1260,46 @@ func attachOwners(ctx context.Context, store db.Store, files []map[string]any) {
 	}
 }
 
+// attachOwnerNames is attachOwners for the handlers that answer with node rows
+// rather than projected maps — starred, recently opened, search.
+//
+// It exists because those three said "You" for every row. The rows already
+// carried `owner_id` (it is a column on model.Node), but no name, so the client
+// had a number and nothing to print — and fell back to naming the person
+// looking at the list as the owner of everything in it. On a shared drive that
+// is not a cosmetic default, it is a false statement about who put the file
+// there. One query per page, the same as attachOwners.
+func attachOwnerNames(ctx context.Context, store db.Store, nodes []*model.Node) {
+	if store == nil || len(nodes) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(nodes))
+	for _, n := range nodes {
+		if n != nil && n.OwnerID != nil {
+			ids = append(ids, n.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	owners, err := store.NodeOwners(ctx, ids)
+	if err != nil {
+		return
+	}
+	byNode := make(map[int64]db.NodeOwner, len(owners))
+	for _, o := range owners {
+		byNode[o.NodeID] = o
+	}
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		if o, found := byNode[n.ID]; found {
+			n.OwnerName = o.Name
+		}
+	}
+}
+
 // attachShared stamps Shared onto the nodes a public link currently points at.
 //
 // One query per listing page, like attachOwners. Without it every row reported

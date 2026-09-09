@@ -126,7 +126,10 @@
       "folder": "Destination folder",
       "crossDrive": "Copying between storages is not supported yet.",
       "moveConfirm": "Move",
-      "copyConfirm": "Copy"
+      "copyConfirm": "Copy",
+      "expand": "Show folders inside {name}",
+      "collapse": "Hide folders inside {name}",
+      "searching": "Searching…"
     },
     "tags": {
       "title": "Tags",
@@ -485,14 +488,17 @@
       "action": {
         "tag": "tag as {tags}",
         "restore_version": "put version {version} back (the current contents are saved first)",
+        "create_share": "create a public link — anyone holding it can open this without signing in",
         "revoke_share": "close the public link — anyone holding it loses access",
         "purge": "destroy permanently — this cannot be undone"
       },
       "detail": {
         "deleted": "{size}, deleted {at}",
         "taken": "{size}, taken {at}",
-        "link": "created {at}, {downloads} downloads"
-      }
+        "link": "created {at}, {downloads} downloads",
+        "alreadyShared": "already has 1 link | already has {n} links"
+      },
+      "copyLink": "Copy link"
     }
   },
   "settings": {

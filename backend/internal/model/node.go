@@ -62,6 +62,12 @@ type Node struct {
 	// multi-storage mode cannot build the `name://path` it needs to open one —
 	// so the recently-opened tray listed files that did nothing when clicked.
 	Storage string `json:"storage,omitempty"`
+	// OwnerName is the display name behind OwnerID, filled per listing page by
+	// the handlers that return nodes outside a folder listing. The id alone is
+	// not enough: an owner column that renders a number is a column nobody
+	// reads, and without this the client had nothing to print and fell back to
+	// naming the CALLER as the owner of every row.
+	OwnerName string `json:"owner_name,omitempty"`
 	// Shared reports that a public link to this node exists and still opens.
 	// Filled per listing page, because a share lives in its own table and a
 	// node row cannot know about it.

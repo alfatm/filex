@@ -188,6 +188,14 @@ export interface Storage {
   name: string;
   rootId: string;
   quota: Quota;
+  /**
+   * A drive the person reaches through grants rather than through their own role — a team drive.
+   *
+   * It changes who the Owner column names. On a drive of one's own, naming a person is useful: it is either you or
+   * whoever put the file there. On a shared drive it is noise — what matters is that the drive is not yours — so
+   * the column names the DRIVE, the way Drive names a shared drive.
+   */
+  shared: boolean;
 }
 
 export interface Person {
@@ -361,6 +369,12 @@ export interface PlanResult {
   code?: string;
   /** The same thing in English, shown only when the code is one this build does not know. */
   reason?: string;
+  /**
+   * The link a `create_share` plan minted. Stored with the answer and redrawn when the conversation is reopened,
+   * because a link nobody was shown is a link nobody can use — which also means it stays in the transcript after
+   * the link is revoked. What it records is what was minted, not that the link still opens.
+   */
+  url?: string;
 }
 
 /**

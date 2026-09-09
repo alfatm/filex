@@ -185,12 +185,13 @@ plan executor declines to inherit.
 
 ### What a plan may contain
 
-Four kinds exist, and there is no fifth:
+Five kinds exist, and there is no sixth:
 
 | Kind | What approving it does | Reversible? |
 |---|---|---|
 | `tags` | adds tags (never replaces them) | yes — remove the tag |
 | `restore_version` | puts an older revision back; the current contents are snapshotted as a new revision **first** | yes, by design |
+| `create_share` | mints a public link; anyone holding it can open the file **without an account** | revoke it — but not un-see it |
 | `revoke_share` | closes a public link; anyone holding it loses access | re-share, with a new link |
 | `empty_trash` | destroys everything in the trash, item by item, named in the card | ⚠⚠ **no** |
 
@@ -199,10 +200,36 @@ destroys nothing. The structural ceiling is what a person can actually read
 through before approving; a plan longer than that is not a plan, it is a
 rubber stamp.
 
-The two irreversible-ish kinds are additionally gated in the prompt on a
-**direct request**: the assistant may propose emptying the trash only when asked
-for exactly that, never as a tidy-up step inside something else, and may propose
-restoring a version only when the person asked for that restore.
+The kinds that are not plainly reversible are additionally gated in the prompt
+on a **direct request**: the assistant may propose emptying the trash only when
+asked for exactly that, never as a tidy-up step inside something else, may
+propose restoring a version only when the person asked for that restore, and may
+propose a public link only when the person asked for a link.
+
+`create_share` is the only kind that reaches OUTSIDE the installation, and it is
+the only kind that HANDS SOMETHING BACK, so three things about it are worth
+stating on their own:
+
+- **The link is the result.** The item's outcome carries a `url`, and the panel
+  prints it in full with a copy button. A result that only said "done" would be
+  useless: nobody can use a link they were never shown.
+- **It is stored with the answer, and it is a credential.** Reopening the
+  conversation redraws it, which is the point — and it means the URL stays in
+  the transcript after the link is revoked. What the transcript records is what
+  was minted, not that the link still opens. Conversation contents are treated
+  as secret for exactly this class of reason.
+- **The fingerprint decides.** If the file changes between the proposal and the
+  approval, no link is minted and the item comes back `skipped / changed`. The
+  person approved a link to the file they were shown; publishing whatever
+  replaced it under that approval is the mistake the plan mechanism exists to
+  prevent.
+
+Executing it needs **≥editor** on the node — the level `POST /share` requires,
+because minting a link grants access outward rather than reading. The expiry is
+not the model's to choose: `share.Service.Create` clamps a missing one to the
+installation's max-TTL setting, so an assistant-minted link lives exactly as
+long as the operator says links may live. No PIN is set; a password-protected
+link is still made from the share modal.
 
 ### What it cannot do at all
 
@@ -210,7 +237,6 @@ Not gated — **absent**. There is no tool and no plan kind that:
 
 - writes, moves, renames or deletes a live file
 - uploads anything
-- creates a share link (it may only revoke one, on a direct request)
 - changes anyone's permissions, roles or storage grants
 - touches another account's anything
 
@@ -330,7 +356,7 @@ question and not replayed, so the chip belongs to the turn it was set on. An
 unknown value is ignored rather than refused.
 
 ⚠ Cards on the wire carry **codes**, not sentences: an item's `action` is
-`tag` / `restore_version` / `revoke_share` / `purge`, with `args`, a raw `size`
+`tag` / `restore_version` / `create_share` / `revoke_share` / `purge`, with `args`, a raw `size`
 and a raw `at` beside it. The interface says it in the reader's language and
 formats the sizes and dates itself. Composing that text on the server puts
 English inside a Russian conversation, which is exactly what the first version
@@ -343,6 +369,10 @@ Approving a plan answers with what actually happened:
  "items": [{"path": "main://Reports/q1.pdf", "state": "done"},
            {"path": "main://Reports/q2.pdf", "state": "skipped",
             "code": "changed", "reason": "the file changed after the plan was made"}]}
+
+A `create_share` item adds `url` to its result — the minted link, absolute, on
+the origin the approving request arrived on. It is the only field a plan
+outcome ever produces rather than reports.
 ```
 
 ## See also

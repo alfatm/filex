@@ -24,6 +24,10 @@ const (
 	// PlanKindRestoreVersion puts an older revision back. Only on a direct
 	// request, and it snapshots the current bytes first, so it is reversible.
 	PlanKindRestoreVersion = "restore_version"
+	// PlanKindCreateShare mints a public link. Only on a direct request: it
+	// puts a file within reach of anyone holding the URL, which is the one
+	// thing on this list that reaches OUTSIDE the installation.
+	PlanKindCreateShare = "create_share"
 	// PlanKindRevokeShare closes a public link. Only on a direct request.
 	PlanKindRevokeShare = "revoke_share"
 	// PlanKindEmptyTrash destroys files for good. Only on a direct request,

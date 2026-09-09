@@ -629,12 +629,17 @@ type NodeFacets struct {
 	// FilesOnly drops directories. Type and size are properties of files, so a
 	// filter on either is a filter for files; a date or an owner is not.
 	FilesOnly bool
+	// DirsOnly is its mirror, and exists for one caller: the destination picker,
+	// which needs to find a folder anywhere on a drive without first walking the
+	// whole drive to have something to filter. Setting both is a contradiction
+	// and the caller that builds the facets refuses it rather than resolving it.
+	DirsOnly bool
 }
 
 // Any reports whether the facets narrow anything at all.
 func (f NodeFacets) Any() bool {
 	return f.PathPrefix != "" || len(f.Exts) > 0 || f.ModifiedAfter != nil ||
-		f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.FilesOnly
+		f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.FilesOnly || f.DirsOnly
 }
 
 // Where renders the facets as SQL predicates, to be ANDed into whatever the
@@ -653,6 +658,9 @@ func (f NodeFacets) Where(alias, modified string, bind func(any) string) []strin
 	var where []string
 	if f.FilesOnly {
 		where = append(where, alias+"type = "+bind(string(model.NodeTypeFile)))
+	}
+	if f.DirsOnly {
+		where = append(where, alias+"type = "+bind(string(model.NodeTypeDirectory)))
 	}
 	if f.PathPrefix != "" && f.PathPrefix != "/" {
 		// The subtree, and the folder itself.

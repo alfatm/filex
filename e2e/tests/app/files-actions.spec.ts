@@ -83,6 +83,31 @@ test.describe('File actions', () => {
     await expect(row(page, 'Archive')).toHaveCount(0);
   });
 
+  // The tree loads a level at a time. Opening the whole drive up front is one request per folder — fine on this
+  // demo tree, a stall on a real one — and almost all of it is never looked at.
+  test('Move: the tree opens a folder at a time, and the filter still reaches what is closed', async ({ page }) => {
+    await page.goto('files?view=list');
+    await pickMenu(page, 'data.csv', 'Move to');
+    const dialog = page.getByRole('dialog');
+    const list = dialog.getByRole('listbox', { name: 'Destination folder' });
+
+    // The root is open; its folders are there and what is inside them is not.
+    await expect(list.getByRole('option', { name: /^Shared/ })).toBeVisible();
+    await expect(list.getByRole('option', { name: /^Brand assets/ })).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: 'Show folders inside Shared' }).click();
+    await expect(list.getByRole('option', { name: /^Brand assets/ })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Hide folders inside Shared' }).click();
+    await expect(list.getByRole('option', { name: /^Brand assets/ })).toHaveCount(0);
+
+    // And the filter finds it with Shared shut again, which a filter over the loaded tree could not.
+    await dialog.getByRole('searchbox', { name: 'Filter folders' }).fill('brand');
+    const hit = list.getByRole('option', { name: /^Brand assets/ });
+    await expect(hit).toBeVisible();
+    // The hit says where it lives, because the tree indentation that used to say it is gone.
+    await expect(hit).toContainText('/Shared');
+  });
+
   test('Move to trash offers Undo; Undo restores the item', async ({ page }) => {
     await page.goto('files?view=list');
     await pickMenu(page, 'Archive', 'Move to trash');

@@ -339,6 +339,18 @@ func (h *Trash) List(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	// Confinement and RBAC run over the PAGE, because neither is expressible in
+	// the query: a confinement root and a set of path-prefix grants are not
+	// columns. Two consequences, and both used to be got wrong.
+	//
+	// `total` counts the query's matches. Each pass may drop rows from this
+	// page, so it is reduced by what this page dropped — it used to be
+	// OVERWRITTEN with the surviving row count, which capped it at the page
+	// size: the admin trash screen asks for 50 and printed "50 items in the
+	// trash" over a trash holding thousands, and no pager could work off it.
+	// Rows dropped on the pages nobody asked for are not known, so on a paged
+	// listing the number is an upper bound rather than a count.
+	dropped := 0
 	// Confinement: only surface trashed nodes whose original path is inside
 	// the caller's root, so a tenant never sees another tenant's deleted files.
 	if root, ok := confine.RootFrom(r.Context()); ok {
@@ -348,8 +360,8 @@ func (h *Trash) List(w http.ResponseWriter, r *http.Request) {
 				kept = append(kept, e)
 			}
 		}
+		dropped += len(entries) - len(kept)
 		entries = kept
-		total = len(kept)
 	}
 	// RBAC: only surface trashed nodes the caller may see.
 	if h.ACL != nil {
@@ -359,8 +371,16 @@ func (h *Trash) List(w http.ResponseWriter, r *http.Request) {
 				kept = append(kept, e)
 			}
 		}
+		dropped += len(entries) - len(kept)
 		entries = kept
-		total = len(kept)
+	}
+	// The other consequence is still open and is NOT fixed here: because the
+	// passes run after LIMIT, a page whose rows are mostly invisible comes back
+	// short rather than reaching further down for visible ones. Closing that
+	// needs the grants inside the query, which is a change to how ACL is
+	// resolved, not to this handler.
+	if total -= dropped; total < len(entries) {
+		total = len(entries)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"entries": entries,

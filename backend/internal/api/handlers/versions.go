@@ -2,9 +2,24 @@
 //
 // Endpoints under /api/files/versions.
 //
-//	GET    /api/files/versions?node_id=…             (auth)  list snapshots
-//	POST   /api/files/versions/restore               (auth)  restore one
-//	DELETE /api/files/versions/{id}                  (admin) hard delete
+//	GET    /api/files/versions?node_id=…             (≥viewer) list snapshots
+//	POST   /api/files/versions/snapshot              (≥editor) take one now
+//	POST   /api/files/versions/restore               (≥editor) restore one
+//	DELETE /api/files/versions/{id}                  (admin)   hard delete
+//
+// ACL: these routes address a node by its NUMERIC id, and for a long time that
+// was all they asked for. Any authenticated caller could hand one in and read
+// another person's revision history — sizes, dates and the names of everyone
+// who ever wrote to the file — or, worse, POST /restore and overwrite that
+// file's live bytes with an older revision. Restoring is a destructive write
+// performed on somebody else's data, so the gate is the same one the rest of
+// the API uses: ≥viewer to read the timeline, ≥editor to write to it, plus the
+// tenant confinement check every node-addressed endpoint owes.
+//
+// `internal/api/handlers/assistant_plans.go` used to compensate for this by
+// checking ≥editor itself before restoring through the service. That check is
+// still right — the assistant reaches the service directly, not through these
+// handlers — but it is no longer the only one.
 package handlers
 
 import (
@@ -17,6 +32,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/brf-tech/filex/backend/internal/acl"
+	"github.com/brf-tech/filex/backend/internal/confine"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/protocolsync"
@@ -31,6 +48,45 @@ type Versions struct {
 	Service *versioning.Service
 	// Index keeps the restored content searchable. Optional; nil skips it.
 	Index *search.Index
+	// ACL gates every node-addressed route. Nil means RBAC is unwired (tests,
+	// and installs with no storage using it) and allows — the same convention
+	// every other file handler follows.
+	ACL *acl.Resolver
+}
+
+// AttachACL wires the RBAC resolver.
+func (h *Versions) AttachACL(r *acl.Resolver) { h.ACL = r }
+
+// guardedNode resolves node_id to the node it names and refuses unless the
+// caller holds `need` on it. Returns nil after writing the error response.
+//
+// A trashed node is deliberately NOT refused: its history is exactly what
+// somebody deciding whether to restore it wants to see, and the level check
+// already says whether they may look. What is refused is a node that does not
+// exist — previously an unknown id reached the service and came back as an
+// empty timeline, which is an answer about whether that id is a file.
+func (h *Versions) guardedNode(w http.ResponseWriter, r *http.Request, nodeID int64, need acl.Level) *model.Node {
+	if nodeID <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad node_id"})
+		return nil
+	}
+	node, err := h.Store.GetNode(r.Context(), nodeID)
+	if err != nil || node == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+		return nil
+	}
+	if root, ok := confine.RootFrom(r.Context()); ok {
+		st, serr := h.Store.GetStorage(r.Context(), node.StorageID)
+		if serr != nil || st == nil || !root.Within(st.Name, node.Path) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "path outside confined root"})
+			return nil
+		}
+	}
+	if !aclAllowID(r.Context(), h.ACL, h.Store, node.StorageID, node.Path, need) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "insufficient permission"})
+		return nil
+	}
+	return node
 }
 
 // AttachSearchIndex wires the search index. ⚠ Restoring a version rewrites the
@@ -47,10 +103,14 @@ func NewVersions(store db.Store, svc *versioning.Service) *Versions {
 }
 
 // List returns the version timeline for a node.
+//
+// ≥viewer: the timeline names everyone who ever wrote to the file and how big
+// each revision was, so it is exactly as readable as the file itself. A caller
+// who cannot see the file gets 403 rather than an empty list — an empty list
+// would be an answer about whether that node is a file with a history.
 func (h *Versions) List(w http.ResponseWriter, r *http.Request) {
-	nodeID, err := strconv.ParseInt(r.URL.Query().Get("node_id"), 10, 64)
-	if err != nil || nodeID <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad node_id"})
+	nodeID, _ := strconv.ParseInt(r.URL.Query().Get("node_id"), 10, 64)
+	if h.guardedNode(w, r, nodeID, acl.LevelViewer) == nil {
 		return
 	}
 	versions, err := h.Service.List(r.Context(), nodeID)
@@ -85,8 +145,9 @@ func (h *Versions) Snapshot(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
 		return
 	}
-	if req.NodeID <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing fields"})
+	// ≥editor: a snapshot writes a new row and a new object into the storage,
+	// against somebody's quota. It is a write like any other.
+	if h.guardedNode(w, r, req.NodeID, acl.LevelEditor) == nil {
 		return
 	}
 	v, err := h.Service.Snapshot(r.Context(), req.NodeID)
@@ -104,8 +165,13 @@ func (h *Versions) Restore(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
 		return
 	}
-	if req.NodeID <= 0 || req.VersionID <= 0 {
+	if req.VersionID <= 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing fields"})
+		return
+	}
+	// ≥editor: this replaces the file's live bytes. It is the most destructive
+	// thing in this file and was the least guarded.
+	if h.guardedNode(w, r, req.NodeID, acl.LevelEditor) == nil {
 		return
 	}
 	if err := h.Service.Restore(r.Context(), req.NodeID, req.VersionID, req.SnapshotCurrent); err != nil {
