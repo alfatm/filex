@@ -32,8 +32,10 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +47,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/model"
+	"github.com/brf-tech/filex/backend/internal/pathkey"
 	"github.com/brf-tech/filex/backend/internal/share"
 )
 
@@ -68,6 +71,8 @@ type planItem struct {
 	Tags      []string `json:"tags,omitempty"`
 	VersionID int64    `json:"version_id,omitempty"`
 	ShareID   int64    `json:"share_id,omitempty"`
+	// Target is the folder a move item goes into, as an address.
+	Target string `json:"target,omitempty"`
 }
 
 // planItemResult is what happened to one item.
@@ -98,6 +103,7 @@ const (
 	reasonForbidden = "forbidden" // the person may not do this to it
 	reasonMissing   = "missing"   // the thing being acted on is already gone
 	reasonBroken    = "broken"    // something failed outright
+	reasonTaken     = "taken"     // the destination name is already in use
 )
 
 // skip / fail record an outcome with both halves: the code the interface reads
@@ -397,6 +403,122 @@ func (t *assistantTools) planEmptyTrash(ctx context.Context, raw string) assista
 	return t.createPlan(ctx, model.PlanKindEmptyTrash, args.Summary, items)
 }
 
+// planMove proposes moving files and folders into one folder, creating the
+// folder first when it is not there yet.
+//
+// Moving is the one verb here that touches a live file, and it is allowed
+// because it is reversible by the person (move it back) and because the plan
+// names every source and the destination in full — the "moved somewhere nobody
+// can find" the prompt warns about is a move nobody read. What it will not do
+// is overwrite: a name already taken in the destination is refused here and
+// skipped again at execution, and a move into itself is refused outright.
+//
+// ⚠ A path that does not resolve fails the WHOLE proposal, unlike plan_tags.
+// A list the person reads and approves must be the list they asked for; a plan
+// that quietly lacks one of the files they named is worse than no plan.
+func (t *assistantTools) planMove(ctx context.Context, raw string) assistant.ToolOutcome {
+	var args struct {
+		Paths   []string `json:"paths"`
+		Target  string   `json:"target"`
+		Summary string   `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(raw), &args); err != nil {
+		return failure("could not read the arguments: %v", err)
+	}
+	drive, targetRel, err := t.ops.resolveStorage(ctx, strings.TrimSpace(args.Target))
+	if err != nil {
+		return failure("%v", err)
+	}
+	target := joinAdapterPath(drive.Name, targetRel)
+	if drive.ReadOnly {
+		return failure("%s is read-only", drive.Name)
+	}
+	if !t.ops.allow(ctx, drive, targetRel, acl.LevelEditor) {
+		return failure("you do not have permission to put anything into %s", target)
+	}
+	var items []planItem
+	if targetRel != "" {
+		existing := t.liveNode(ctx, drive.ID, targetRel)
+		switch {
+		case existing != nil && existing.Type != model.NodeTypeDirectory:
+			return failure("%s is a file, not a folder", target)
+		case existing == nil:
+			// One new folder per plan, under a folder that exists: a chain of
+			// new folders is a plan nobody can check against anything.
+			if parent := path.Dir(targetRel); parent != "." {
+				if above := t.liveNode(ctx, drive.ID, parent); above == nil || above.Type != model.NodeTypeDirectory {
+					return failure("the folder above %s does not exist; create one level at a time, or pick an existing folder", target)
+				}
+			}
+			items = append(items, planItem{Path: target, Action: assistant.ActionMkdir})
+		}
+	}
+	creating := len(items) == 1
+	seen := map[int64]bool{}
+	for _, p := range args.Paths {
+		node, err := t.resolveNode(ctx, p)
+		if err != nil {
+			return failure("%v", err)
+		}
+		if node.StorageID != drive.ID {
+			return failure("%s is on another drive; moving between drives is not something this assistant proposes", p)
+		}
+		srcRel := strings.Trim(node.Path, "/")
+		address := joinAdapterPath(drive.Name, srcRel)
+		if srcRel == targetRel || strings.HasPrefix(targetRel, srcRel+"/") {
+			return failure("%s cannot be moved into itself", address)
+		}
+		if parent := path.Dir(srcRel); parent == targetRel || (parent == "." && targetRel == "") {
+			return failure("%s is already in %s", address, target)
+		}
+		if !t.mayWriteNode(ctx, node) {
+			return failure("you do not have permission to move %s", address)
+		}
+		if !creating && t.occupied(ctx, drive.ID, path.Join(targetRel, node.Name)) {
+			return failure("%s already holds something named %s; nothing is overwritten — ask the person how they want that resolved", target, node.Name)
+		}
+		if seen[node.ID] {
+			continue
+		}
+		seen[node.ID] = true
+		items = append(items, planItem{
+			Path:        address,
+			NodeID:      node.ID,
+			Action:      assistant.ActionMove,
+			Args:        map[string]string{"target": target},
+			Size:        node.Size,
+			Fingerprint: nodeFingerprint(node),
+			Target:      target,
+		})
+	}
+	if len(seen) == 0 {
+		return failure("there is nothing to move: no paths were given")
+	}
+	return t.createPlan(ctx, model.PlanKindMove, args.Summary, items)
+}
+
+// liveNode is the cached row at rel, or nil when there is none or it is in the
+// trash.
+func (t *assistantTools) liveNode(ctx context.Context, storageID int64, rel string) *model.Node {
+	node, err := t.store.GetNodeByPath(ctx, storageID, pathkey.Hash(storageID, rel))
+	if err != nil || node == nil || node.DeletedAt != nil {
+		return nil
+	}
+	return node
+}
+
+// occupied asks the DRIVER whether anything sits at rel. The cache is what a
+// listing shows; the disk is what a move would overwrite, and a file written
+// by another protocol may be on the second before it is in the first.
+func (t *assistantTools) occupied(ctx context.Context, storageID int64, rel string) bool {
+	drv, err := t.ops.resolver(storageID)
+	if err != nil {
+		return false
+	}
+	_, err = drv.Stat(ctx, rel)
+	return err == nil
+}
+
 // resolvedOnly drops the items that never resolved to a node.
 func resolvedOnly(items []planItem) []planItem {
 	out := items[:0]
@@ -673,6 +795,9 @@ func (t *assistantTools) runItem(ctx context.Context, kind string, item planItem
 		}
 		return result.skip(reasonMissing, "the link is already gone")
 
+	case model.PlanKindMove:
+		return t.runMoveItem(ctx, item)
+
 	case model.PlanKindEmptyTrash:
 		if t.trash == nil {
 			return result.fail("the trash is not available on this server")
@@ -695,6 +820,73 @@ func (t *assistantTools) runItem(ctx context.Context, kind string, item planItem
 		return result.ok()
 	}
 	return result.fail("unknown plan kind: " + kind)
+}
+
+// runMoveItem is one line of a move plan: the folder to create, or one item
+// to put into it.
+//
+// The move itself goes through aiOps.Move — the same ACL-checked, cache-aware,
+// event-emitting path the MCP surface uses — so this is not a second
+// implementation of moving. What this adds is the plan's own promises: the
+// item is still the one the person approved (fingerprint AND address, since a
+// file moved elsewhere keeps its bytes), the destination exists, and nothing
+// already there is written over.
+func (t *assistantTools) runMoveItem(ctx context.Context, item planItem) planItemResult {
+	result := planItemResult{Path: item.Path}
+	if item.Action == assistant.ActionMkdir {
+		drive, rel, err := t.ops.resolveStorage(ctx, item.Path)
+		if err != nil {
+			return result.skip(reasonForbidden, err.Error())
+		}
+		// Made by hand in the meantime: the folder the plan wanted is there.
+		if existing := t.liveNode(ctx, drive.ID, rel); existing != nil && existing.Type == model.NodeTypeDirectory {
+			return result.ok()
+		}
+		if _, err := t.ops.Mkdir(ctx, item.Path); err != nil {
+			if errors.Is(err, errAIForbidden) {
+				return result.skip(reasonForbidden, "you do not have permission to create it")
+			}
+			return result.fail(err.Error())
+		}
+		return result.ok()
+	}
+
+	node, err := t.store.GetNode(ctx, item.NodeID)
+	if err != nil || node == nil || node.DeletedAt != nil {
+		return result.skip(reasonGone, "the item is no longer there")
+	}
+	if nodeFingerprint(node) != item.Fingerprint {
+		return result.skip(reasonChanged, "the item changed after the plan was made")
+	}
+	drive, targetRel, err := t.ops.resolveStorage(ctx, item.Target)
+	if err != nil {
+		return result.skip(reasonForbidden, err.Error())
+	}
+	if joinAdapterPath(drive.Name, strings.Trim(node.Path, "/")) != item.Path {
+		return result.skip(reasonChanged, "the item moved after the plan was made")
+	}
+	if !t.mayWriteNode(ctx, node) {
+		return result.skip(reasonForbidden, "you do not have permission to move it")
+	}
+	// The destination is the folder the plan named — created by the item
+	// before this one, or already there. Nothing is moved into a folder that
+	// is not there, whatever a driver would make of that.
+	if targetRel != "" {
+		if folder := t.liveNode(ctx, drive.ID, targetRel); folder == nil || folder.Type != model.NodeTypeDirectory {
+			return result.skip(reasonMissing, "the destination folder does not exist")
+		}
+	}
+	dstRel := path.Join(targetRel, node.Name)
+	if t.occupied(ctx, drive.ID, dstRel) {
+		return result.skip(reasonTaken, "something with that name is already in the destination")
+	}
+	if _, err := t.ops.Move(ctx, item.Path, joinAdapterPath(drive.Name, dstRel)); err != nil {
+		if errors.Is(err, errAIForbidden) {
+			return result.skip(reasonForbidden, "you do not have permission to move it")
+		}
+		return result.fail(err.Error())
+	}
+	return result.ok()
 }
 
 // mergeTags adds without removing. Order is stable so a file's tags do not

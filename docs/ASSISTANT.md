@@ -20,7 +20,12 @@ seeded from the environment on a first boot —
 
 ⚠ Two things that screen cannot do, because there is no route behind either:
 show the stored key (it is written and never read back), and open a
-conversation ([below](#privacy-of-conversations)).
+conversation ([below](#privacy-of-conversations)). One thing it refuses: moving
+the base URL or the protocol while a key is stored, unless the key is entered
+again in the same save (or removed). The key is bound to the address it was
+entered for, so the page cannot be used to send the stored key somewhere else
+and read it off the wire. The generic `/api/admin/settings` surface neither
+shows nor writes the `assistant.*` rows for the same reason.
 
 - [The problem this page is really about](#the-problem-this-page-is-really-about)
 - [What it can see](#what-it-can-see)
@@ -113,8 +118,8 @@ question and the click the model has re-read its context — including whatever
 was in that file.
 
 filex does not have that tool. **The model holds no tool that tags, restores,
-revokes or deletes anything.** What it holds are four `plan_*` tools, and all
-they do is write down what should happen.
+revokes, moves or deletes anything.** What it holds are six `plan_*` tools, and
+all they do is write down what should happen.
 
 ### The plan is a row, not a message
 
@@ -185,11 +190,12 @@ plan executor declines to inherit.
 
 ### What a plan may contain
 
-Five kinds exist, and there is no sixth:
+Six kinds exist, and there is no seventh:
 
 | Kind | What approving it does | Reversible? |
 |---|---|---|
 | `tags` | adds tags (never replaces them) | yes — remove the tag |
+| `move` | puts files and folders into one folder on the same drive, creating that folder first when it is not there (its own line in the card, `mkdir`); **never overwrites** — a name already taken in the destination is skipped as `taken` | yes — move them back |
 | `restore_version` | puts an older revision back; the current contents are snapshotted as a new revision **first** | yes, by design |
 | `create_share` | mints a public link; anyone holding it can open the file **without an account** | revoke it — but not un-see it |
 | `revoke_share` | closes a public link; anyone holding it loses access | re-share, with a new link |
@@ -235,7 +241,8 @@ link is still made from the share modal.
 
 Not gated — **absent**. There is no tool and no plan kind that:
 
-- writes, moves, renames or deletes a live file
+- writes, renames or deletes a live file (moving is a plan kind — and it moves
+  into a folder under the item's own name, never over anything)
 - uploads anything
 - changes anyone's permissions, roles or storage grants
 - touches another account's anything
@@ -322,7 +329,7 @@ Everything is under `/api/assistant`, cookie-authenticated as the person.
 | `GET /api/assistant/status` | whether an assistant exists here, and which model |
 | `POST /api/assistant/sessions` · `GET` · `PATCH /{id}` · `DELETE /{id}` | conversations |
 | `GET /api/assistant/sessions/{id}` | its messages — owner only |
-| `POST /api/assistant/sessions/{id}/turn` | ask; answers as SSE |
+| `POST /api/assistant/sessions/{id}/turn` | ask; answers as SSE. The body is `{"prompt", "mode", "context"}` — `mode` is the panel's scope chip, `context` what the person has on screen (`page`, the open `folder`, the `selected` addresses, the search page's `search`). Both are appended to that one question as hints for the model; neither is stored or replayed |
 | `POST /api/assistant/sessions/{id}/approvals` | `{"path":"drive://…"}` — permission to read that one file |
 | `POST /api/assistant/sessions/{id}/plans/{planID}/approve` \| `/cancel` | decide a plan |
 | `GET`/`PUT /api/admin/assistant/provider`, `POST …/test` | operator: provider, model, key (write-only), limits |
@@ -356,8 +363,9 @@ question and not replayed, so the chip belongs to the turn it was set on. An
 unknown value is ignored rather than refused.
 
 ⚠ Cards on the wire carry **codes**, not sentences: an item's `action` is
-`tag` / `restore_version` / `create_share` / `revoke_share` / `purge`, with `args`, a raw `size`
-and a raw `at` beside it. The interface says it in the reader's language and
+`tag` / `move` / `mkdir` / `restore_version` / `create_share` / `revoke_share` / `purge`, with
+`args`, a raw `size` and a raw `at` beside it; a skipped item's `code` is `gone` / `changed` /
+`forbidden` / `missing` / `taken` / `broken`. The interface says it in the reader's language and
 formats the sizes and dates itself. Composing that text on the server puts
 English inside a Russian conversation, which is exactly what the first version
 did.

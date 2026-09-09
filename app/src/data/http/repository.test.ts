@@ -332,6 +332,7 @@ describe('HttpRepository', () => {
     // One thing selected names the file it lands in.
     expect(repo.archiveUrl([node('main://Design', 'Design')])).toBe('/api/files/download/zip?path=main%3A%2F%2FDesign&name=Design.zip');
     expect(repo.archiveUrl([])).toBeNull();
+    expect(repo.previewUrl('main://Photos/a b.webp')).toBe('/api/files/manager?q=preview&path=main%3A%2F%2FPhotos%2Fa%20b.webp');
   });
 
   it('uploads through the staged path: one session, chunks on the grid, then the commit’s op', async () => {
@@ -646,11 +647,12 @@ describe('HttpRepository', () => {
     });
 
     const events = [];
-    for await (const event of new HttpRepository().assistantAsk('how are my files?', 'filename', '7', new AbortController().signal)) {
+    const context = { page: 'folder' as const, folder: 'main://Docs', selected: ['main://Docs/a.pdf'] };
+    for await (const event of new HttpRepository().assistantAsk('how are my files?', 'filename', '7', new AbortController().signal, context)) {
       events.push(event);
     }
-    // The chip travels with the question: the server turns it into a scope hint for this turn.
-    expect(asked).toMatchObject({ url: '/api/assistant/sessions/7/turn', body: { prompt: 'how are my files?', mode: 'filename' } });
+    // The chip and the screen travel with the question: the server turns both into hints for this turn.
+    expect(asked).toMatchObject({ url: '/api/assistant/sessions/7/turn', body: { prompt: 'how are my files?', mode: 'filename', context } });
     expect(events).toEqual([
       { type: 'meta', conversationId: '7' },
       { type: 'text', delta: 'Your ' },

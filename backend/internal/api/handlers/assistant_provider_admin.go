@@ -45,6 +45,14 @@ const testTimeout = 30 * time.Second
 // testAnswerLimit is how much of the reply is quoted back to the operator.
 const testAnswerLimit = 200
 
+// keyMustBeReentered is the refusal when a request moves the endpoint while a
+// key is stored. The key is bound to the address it was entered for: a request
+// that changes the provider or base URL has to bring the key it wants sent
+// there, or remove the stored one. Without this rule, whoever holds this page
+// could point base_url at a server of their own, press Test, and read the key
+// off the Authorization header — the one thing GET never returns.
+const keyMustBeReentered = "the provider or base URL is changing while an API key is stored: re-enter the key in the same request, or remove it first, so the stored key is never sent to an address it was not entered for"
+
 // AssistantProviderAdmin handles the model configuration.
 type AssistantProviderAdmin struct {
 	Store db.Store
@@ -101,16 +109,16 @@ func (h *AssistantProviderAdmin) Put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// Validate the two fields that decide WHERE the key is sent before writing
+	// anything, so the re-enter rule below sees the values that would land.
+	var provider, baseURL *string
 	if req.Provider != nil {
 		value, err := assistant.ProviderSetting.Canonical(*req.Provider)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := h.Store.UpsertSetting(ctx, assistant.ProviderSetting.Key, value); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-			return
-		}
+		provider = &value
 	}
 	if req.BaseURL != nil {
 		value, err := assistant.BaseURLSetting.Canonical(*req.BaseURL)
@@ -118,7 +126,23 @@ func (h *AssistantProviderAdmin) Put(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		if err := h.Store.UpsertSetting(ctx, assistant.BaseURLSetting.Key, value); err != nil {
+		baseURL = &value
+	}
+	cur := assistant.Load(ctx, h.Store, h.Box)
+	moved := (provider != nil && *provider != cur.Provider) || (baseURL != nil && *baseURL != cur.BaseURL)
+	keptKey := req.APIKey == nil || *req.APIKey == redactedSecret
+	if moved && keptKey && assistant.HasKey(ctx, h.Store) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": keyMustBeReentered})
+		return
+	}
+	if provider != nil {
+		if err := h.Store.UpsertSetting(ctx, assistant.ProviderSetting.Key, *provider); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	if baseURL != nil {
+		if err := h.Store.UpsertSetting(ctx, assistant.BaseURLSetting.Key, *baseURL); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}

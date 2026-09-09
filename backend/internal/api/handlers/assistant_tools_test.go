@@ -465,3 +465,66 @@ func TestAssistantTools_AMissingFolderIsAnAnswer(t *testing.T) {
 	assert.Equal(t, "There is no folder called nowhere.", answerText(events))
 	assert.Contains(t, provider.sent(), "error", "the failure was handed to the model to react to")
 }
+
+// What the person has on screen reaches the model with the question and is
+// not stored with it: the next question is asked from wherever they are then.
+func TestAssistantTurn_ScreenContextIsSentButNotStored(t *testing.T) {
+	provider := newScriptedProvider(t, textFrame("Those two."), textFrame("Fine."))
+	srv, client, _ := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+
+	ask := func(body map[string]any) {
+		raw, _ := json.Marshal(body)
+		resp, err := client.Post(srv.URL+"/api/assistant/sessions/"+session+"/turn", "application/json", strings.NewReader(string(raw)))
+		require.NoError(t, err)
+		_, _ = io.ReadAll(resp.Body)
+		resp.Body.Close()
+	}
+	ask(map[string]any{"prompt": "what are these?", "context": map[string]any{
+		"page": "folder", "folder": "main://notes",
+		"selected": []string{"main://notes/hello.txt", "main://notes/pay.csv"}, "selectedTotal": 7,
+	}})
+	sent := provider.sent()
+	assert.Contains(t, sent, "what are these?")
+	assert.Contains(t, sent, "Open folder: main://notes")
+	assert.Contains(t, sent, "Selected (7): main://notes/hello.txt, main://notes/pay.csv … and 5 more")
+
+	// A page the assistant has no words for carries nothing.
+	ask(map[string]any{"prompt": "and now?", "context": map[string]any{"page": "settings", "selected": []string{"main://notes/pay.csv"}}})
+	last := provider.sent()[len(sent):]
+	assert.Contains(t, last, "and now?")
+	assert.NotContains(t, last, "on screen right now")
+
+	st, raw := doReq(t, client, http.MethodGet, srv.URL+"/api/assistant/sessions/"+session, nil)
+	require.Equal(t, http.StatusOK, st)
+	var stored struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &stored))
+	assert.Equal(t, "what are these?", stored.Messages[0].Content, "what the person typed is what is kept")
+}
+
+// The search page: the query, the settings, the count and the first hits.
+func TestAssistantTurn_SearchPageContextNamesTheSearch(t *testing.T) {
+	provider := newScriptedProvider(t, textFrame("Both invoices."))
+	srv, client, _ := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+
+	raw, _ := json.Marshal(map[string]any{"prompt": "which is newer?", "context": map[string]any{
+		"page": "search",
+		"search": map[string]any{
+			"query": "invoice", "filters": []string{"type: documents", "modified: week"},
+			"total": 120, "capped": true, "hits": []string{"main://notes/hello.txt", "main://notes/pay.csv"},
+		},
+	}})
+	resp, err := client.Post(srv.URL+"/api/assistant/sessions/"+session+"/turn", "application/json", strings.NewReader(string(raw)))
+	require.NoError(t, err)
+	_, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	sent := provider.sent()
+	assert.Contains(t, sent, `Search: query \"invoice\"; settings: type: documents; modified: week; more than 120 results; the first results shown: main://notes/hello.txt, main://notes/pay.csv`)
+}

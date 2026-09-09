@@ -215,6 +215,15 @@ func (t *assistantTools) Specs() []assistant.ToolSpec {
 			}, []string{"path", "share_id", "summary"}),
 		},
 		{
+			Name:        "plan_move",
+			Description: "PROPOSE moving files and folders into one folder. Only when the person asked to move, sort or organise those items. The destination is created first if it does not exist yet (the folder above it must). Nothing is renamed and nothing is overwritten: a name already taken in the destination is skipped. This does not move anything by itself: the person approves the plan and the server does it. Say what you propose in one sentence and then wait.",
+			Schema: object(map[string]any{
+				"paths":   arr("The files and folders to move, each as `<drive>://<path>`, on the same drive as the destination.", str("")),
+				"target":  str("The folder to move them into, as `<drive>://<path>`; `<drive>://` for the drive's root."),
+				"summary": str("One sentence describing the plan, for the person to read."),
+			}, []string{"paths", "target", "summary"}),
+		},
+		{
 			Name:        "plan_empty_trash",
 			Description: "PROPOSE destroying everything in the trash. ONLY when the person asked for exactly this, never as a tidy-up step inside anything else. It cannot be undone and there is no version history behind it. The plan lists every item that would be destroyed; the person approves it and the server does it.",
 			Schema: object(map[string]any{
@@ -261,6 +270,8 @@ func (t *assistantTools) Run(ctx context.Context, call assistant.ToolCall) assis
 		return t.planRevokeShare(ctx, call.Args)
 	case "plan_empty_trash":
 		return t.planEmptyTrash(ctx, call.Args)
+	case "plan_move":
+		return t.planMove(ctx, call.Args)
 	}
 	return failure("there is no tool called %q", call.Name)
 }

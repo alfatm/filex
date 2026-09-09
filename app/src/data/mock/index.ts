@@ -238,6 +238,9 @@ export const mockRepository: Repository = {
     return { ...user };
   },
   /** No credential to check against; the demo account accepts any change but still enforces the length rule. */
+  previewUrl(id: string) {
+    return nodes.find((n) => n.id === id)?.assetUrl;
+  },
   archiveUrl() {
     // Zipping is the server's work, and the demo has no server; the capability says so and the UI stays honest.
     return null;

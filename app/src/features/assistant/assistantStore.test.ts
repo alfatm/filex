@@ -1,9 +1,10 @@
 import { createPinia, setActivePinia } from 'pinia';
+import { nextTick } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ApprovalCard, AssistantEvent, AssistantMode, AssistantSession, PlanCard, SearchHit } from '@/data/types';
+import type { ApprovalCard, AssistantContext, AssistantEvent, AssistantMode, AssistantSession, PlanCard, SearchHit } from '@/data/types';
 import { useAssistantStore } from './assistantStore';
 
-const calls: { prompt: string; mode: AssistantMode; conversationId: string | null; signal: AbortSignal }[] = [];
+const calls: { prompt: string; mode: AssistantMode; conversationId: string | null; signal: AbortSignal; context?: AssistantContext }[] = [];
 const approvals: { id: string; path: string }[] = [];
 const decisions: { id: string; planId: string; approve: boolean }[] = [];
 let script: AssistantEvent[] = [];
@@ -13,14 +14,29 @@ let failWith: Error | null = null;
 let release: (() => void) | null = null;
 /** What `listAssistantSessions` answers, for the reload path a brand-new conversation takes. */
 let sessionRows: AssistantSession[] = [];
+/** When set, `assistantMessages` rejects with it: the stored conversation is gone. */
+let messagesFailWith: Error | null = null;
 const gate = () => new Promise<void>((resolve) => (release = resolve));
+
+// happy-dom exposes no localStorage here; the store only needs getItem/setItem/removeItem.
+const backing = new Map<string, string>();
+vi.stubGlobal('localStorage', {
+  getItem: (key: string) => backing.get(key) ?? null,
+  setItem: (key: string, value: string) => backing.set(key, value),
+  removeItem: (key: string) => backing.delete(key),
+});
+const SESSION_KEY = 'filex.app.assistant.session';
 
 vi.mock('@/data', () => ({
   repository: {
     // A turn is written into a stored conversation, so one is opened on the first question.
     createAssistantSession: async () => ({ id: 's1', title: '', titleManual: false, messageCount: 0, lastActiveAt: '', createdAt: '' }),
     listAssistantSessions: async () => sessionRows.map((s) => ({ ...s })),
-    assistantMessages: async () => ({ messages: [{ id: 'm1', role: 'assistant', text: 'earlier', at: '', cards: [{ kind: 'approval', path: 'main://pay.csv' }] }], granted: ['main://pay.csv'] }),
+    deleteAssistantSession: async () => {},
+    assistantMessages: async () => {
+      if (messagesFailWith) throw messagesFailWith;
+      return { messages: [{ id: 'm1', role: 'assistant', text: 'earlier', at: '', cards: [{ kind: 'approval', path: 'main://pay.csv' }] }], granted: ['main://pay.csv'] };
+    },
     approveAssistantRead: async (id: string, path: string) => {
       approvals.push({ id, path });
     },
@@ -30,8 +46,8 @@ vi.mock('@/data', () => ({
         ? { status: 'done' as const, results: [{ path: 'main://Docs/a.pdf', state: 'done' as const }], done: 1, skipped: 0, failed: 0 }
         : { status: 'cancelled' as const, results: [], done: 0, skipped: 0, failed: 0 };
     },
-    async *assistantAsk(prompt: string, mode: AssistantMode, conversationId: string | null, signal: AbortSignal) {
-      calls.push({ prompt, mode, conversationId, signal });
+    async *assistantAsk(prompt: string, mode: AssistantMode, conversationId: string | null, signal: AbortSignal, context?: AssistantContext) {
+      calls.push({ prompt, mode, conversationId, signal, context });
       for (const event of script) {
         await gate();
         yield event;
@@ -65,7 +81,47 @@ describe('assistant store', () => {
     decisions.length = 0;
     release = null;
     failWith = null;
+    messagesFailWith = null;
     sessionRows = [];
+    backing.clear();
+  });
+
+  it('remembers the conversation on screen and forgets it when it is removed', async () => {
+    const store = useAssistantStore();
+    await store.openSession('s9');
+    await nextTick();
+    expect(backing.get(SESSION_KEY)).toBe('s9');
+    await store.removeSession('s9');
+    await nextTick();
+    expect(backing.has(SESSION_KEY)).toBe(false);
+  });
+
+  it('restores the remembered conversation once, never over one already on screen', async () => {
+    backing.set(SESSION_KEY, 's9');
+    const store = useAssistantStore();
+    await store.restore();
+    expect([store.sessionId, store.messages[0]?.text, store.granted]).toEqual(['s9', 'earlier', ['main://pay.csv']]);
+
+    store.sessionId = 's1';
+    store.messages = [];
+    await store.restore();
+    expect([store.sessionId, store.messages]).toEqual(['s1', []]);
+  });
+
+  it('does nothing without a remembered conversation', async () => {
+    const store = useAssistantStore();
+    await store.restore();
+    expect([store.sessionId, store.messages]).toEqual([null, []]);
+  });
+
+  it('forgets a remembered conversation that can no longer be opened', async () => {
+    backing.set(SESSION_KEY, 's9');
+    messagesFailWith = new Error('not found');
+    const store = useAssistantStore();
+    await store.restore();
+    await nextTick();
+    expect([store.sessionId, store.messages, store.granted]).toEqual([null, [], []]);
+    expect(backing.has(SESSION_KEY)).toBe(false);
   });
 
   it('streams text into one assistant message, attaches hits, and starts a new message after done', async () => {
@@ -97,6 +153,16 @@ describe('assistant store', () => {
     await turn;
     expect(store.streaming).toBe(false);
     expect(calls[0].prompt).toBe('hello');
+  });
+
+  it('hands what is on screen to the repository with the question', async () => {
+    script = [{ type: 'done' }];
+    const store = useAssistantStore();
+    const context: AssistantContext = { page: 'folder', folder: 'main://Docs', selected: ['main://Docs/a.pdf'] };
+    const turn = store.send('what is this?', context);
+    await step();
+    await turn;
+    expect(calls[0]).toMatchObject({ prompt: 'what is this?', context });
   });
 
   it('appends a second hits event to the cards already attached', async () => {

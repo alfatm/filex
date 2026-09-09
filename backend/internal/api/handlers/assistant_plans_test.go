@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -228,4 +230,118 @@ func nodeAt(t *testing.T, store db.Store, address string) *model.Node {
 	require.NoError(t, err, "no node row for %s — index the folder first", address)
 	require.NotNil(t, node)
 	return node
+}
+
+// A move is a plan like any other: the folder is created and the file moved
+// only once the person approves, and the card names both steps in full.
+func TestAssistantPlan_MoveCreatesTheFolderAndMovesOnlyAfterApproval(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "plan_move", map[string]any{
+			"paths": []string{"main://notes/hello.txt"}, "target": "main://sorted",
+			"summary": "Create sorted and move hello.txt into it",
+		}),
+		textFrame("I have proposed the move."),
+	)
+	srv, client, store := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+
+	events := turnStream(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", "put hello.txt into a folder called sorted")
+	card := planCard(t, events)
+	assert.Equal(t, model.PlanKindMove, card["plan_kind"])
+	items, _ := card["items"].([]any)
+	require.Len(t, items, 2, "the new folder is a line of the plan, not a side effect")
+	first, _ := items[0].(map[string]any)
+	assert.Equal(t, "mkdir", first["action"])
+	assert.Equal(t, "main://sorted", first["path"])
+	second, _ := items[1].(map[string]any)
+	assert.Equal(t, "move", second["action"])
+	assert.Equal(t, "main://notes/hello.txt", second["path"])
+	assert.Equal(t, map[string]any{"target": "main://sorted"}, second["args"])
+
+	// Nothing has moved: the plan is a proposal.
+	before := nodeAt(t, store, "main://notes/hello.txt")
+	storages, err := store.ListEnabledStorages(context.Background())
+	require.NoError(t, err)
+	// GetNodeByPath answers a missing row with sql.ErrNoRows, so only the node is read.
+	gone, _ := store.GetNodeByPath(context.Background(), storages[0].ID, pathkey.Hash(storages[0].ID, "sorted"))
+	assert.Nil(t, gone, "no folder before the approval")
+
+	planID, _ := card["plan_id"].(string)
+	st, raw := doReq(t, client, http.MethodPost, srv.URL+"/api/assistant/sessions/"+session+"/plans/"+planID+"/approve", map[string]any{})
+	require.Equal(t, http.StatusOK, st, "approve: %s", raw)
+	var outcome struct {
+		Done   int `json:"done"`
+		Failed int `json:"failed"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &outcome))
+	assert.Equal(t, 2, outcome.Done, "approve: %s", raw)
+	assert.Equal(t, 0, outcome.Failed)
+
+	moved := nodeAt(t, store, "main://sorted/hello.txt")
+	assert.Equal(t, before.Size, moved.Size)
+	old, _ := store.GetNodeByPath(context.Background(), storages[0].ID, pathkey.Hash(storages[0].ID, "notes/hello.txt"))
+	assert.Nil(t, old, "the row followed the file")
+}
+
+// ⚠ Nothing is overwritten. A file that appeared under the destination name
+// between the proposal and the approval — by another protocol, so the cache
+// has not seen it — is left alone and the item reported as skipped.
+func TestAssistantPlan_MoveNeverOverwrites(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "plan_move", map[string]any{
+			"paths": []string{"main://notes/hello.txt"}, "target": "main://archive", "summary": "Archive hello.txt",
+		}),
+		textFrame("Proposed."),
+	)
+	srv, client, store := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+	events := turnStream(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", "archive hello.txt")
+	planID, _ := planCard(t, events)["plan_id"].(string)
+
+	// Somebody writes archive/hello.txt straight to disk meanwhile.
+	storages, err := store.ListEnabledStorages(context.Background())
+	require.NoError(t, err)
+	var cfg struct {
+		Root string `json:"root"`
+	}
+	require.NoError(t, json.Unmarshal(storages[0].ConfigJSON, &cfg))
+	require.NoError(t, os.MkdirAll(filepath.Join(cfg.Root, "archive"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(cfg.Root, "archive", "hello.txt"), []byte("theirs"), 0o644))
+
+	st, raw := doReq(t, client, http.MethodPost, srv.URL+"/api/assistant/sessions/"+session+"/plans/"+planID+"/approve", map[string]any{})
+	require.Equal(t, http.StatusOK, st, "approve: %s", raw)
+	var outcome struct {
+		Items []struct {
+			Path  string `json:"path"`
+			State string `json:"state"`
+			Code  string `json:"code"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &outcome))
+	require.Len(t, outcome.Items, 2)
+	assert.Equal(t, "done", outcome.Items[0].State, "the folder itself is fine to have")
+	assert.Equal(t, "skipped", outcome.Items[1].State)
+	assert.Equal(t, "taken", outcome.Items[1].Code)
+
+	theirs, err := os.ReadFile(filepath.Join(cfg.Root, "archive", "hello.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "theirs", string(theirs))
+	nodeAt(t, store, "main://notes/hello.txt")
+}
+
+// A folder cannot be moved into itself, and the whole proposal is refused
+// rather than trimmed: the person must never approve a list that lacks
+// something they named.
+func TestAssistantPlan_MoveIntoItselfIsRefused(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "plan_move", map[string]any{
+			"paths": []string{"main://notes"}, "target": "main://notes/inner", "summary": "Nest notes",
+		}),
+		textFrame("That cannot be done."),
+	)
+	srv, client, _ := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+	events := turnStream(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", "move notes into notes/inner")
+	assert.Empty(t, eventsOfType(events, "card"))
+	assert.Contains(t, provider.sent(), "cannot be moved into itself")
 }

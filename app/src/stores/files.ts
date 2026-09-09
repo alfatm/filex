@@ -242,6 +242,15 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   /**
+   * Something outside this store changed the files — an approved assistant plan runs on the server. The same
+   * two steps `mutate` takes: the pages that keep their own data reload on the revision, the listing is re-read.
+   */
+  async function reload() {
+    revision.value++;
+    await refresh();
+  }
+
+  /**
    * The drive list, the account and the people filter — everything a page needs before it can ask for anything.
    *
    * A failure here is the server being unreachable, and it MUST land in `error`: without this the rejection went
@@ -450,6 +459,7 @@ export const useFilesStore = defineStore('files', () => {
     openListing,
     leave,
     refresh,
+    reload,
     retry,
     setFilter,
     clearFilter,

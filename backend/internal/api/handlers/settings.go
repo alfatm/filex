@@ -12,6 +12,17 @@ import (
 	"github.com/brf-tech/filex/backend/internal/mailer"
 )
 
+// assistantSettingsPrefix marks the rows /api/admin/assistant/provider owns.
+// They are kept off the generic surface in BOTH directions. A write here would
+// move the assistant's API key to a new address past that handler's
+// supertenant gate and its re-enter-the-key rule (see keyMustBeReentered); and
+// the sealed key has no business in a settings dump every admin can read —
+// ciphertext is half of what a thief needs, FILEX_SECRET_KEY being the other.
+const assistantSettingsPrefix = "assistant."
+
+// assistantSettingsElsewhere is the refusal a generic write gets.
+const assistantSettingsElsewhere = "assistant settings are managed at /api/admin/assistant/provider"
+
 // Settings handles /api/admin/settings.
 type Settings struct {
 	Store  db.Store
@@ -72,6 +83,7 @@ func (h *Settings) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redactSecretSettings(m)
+	hideAssistantSettings(m)
 	overlayTenantBrandingSettings(r.Context(), m) /* wiring:e1 — tenant branding overlay */
 	writeJSON(w, http.StatusOK, m)
 }
@@ -83,6 +95,10 @@ func (h *Settings) Set(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
 	if key == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing key"})
+		return
+	}
+	if strings.HasPrefix(key, assistantSettingsPrefix) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": assistantSettingsElsewhere})
 		return
 	}
 	var req struct {
@@ -121,6 +137,12 @@ func (h *Settings) Update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
 		return
 	}
+	for k := range raw {
+		if strings.HasPrefix(k, assistantSettingsPrefix) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": assistantSettingsElsewhere})
+			return
+		}
+	}
 	for k, v := range raw {
 		if k == "" || v == nil {
 			continue
@@ -150,8 +172,19 @@ func (h *Settings) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redactSecretSettings(m)
+	hideAssistantSettings(m)
 	overlayTenantBrandingSettings(r.Context(), m) /* wiring:e1 — tenant branding overlay */
 	writeJSON(w, http.StatusOK, m)
+}
+
+// hideAssistantSettings drops the assistant's rows from a settings map — see
+// assistantSettingsPrefix for why they are not merely redacted.
+func hideAssistantSettings(m map[string]string) {
+	for k := range m {
+		if strings.HasPrefix(k, assistantSettingsPrefix) {
+			delete(m, k)
+		}
+	}
 }
 
 // redactSecretSettings masks secret-bearing values in a settings map so admin

@@ -12,17 +12,37 @@ const STORAGE_KEY = 'filex.app.view';
 const VIEW_MODES: ViewMode[] = ['grid', 'list'];
 export const SORT_KEYS: readonly SortKey[] = ['name', 'modified', 'size'];
 const SORT_DIRS: SortDir[] = ['asc', 'desc'];
+/** Spec §6 draws the assistant at 432; the drag handle keeps it between a readable minimum and half a laptop screen. */
+export const ASSISTANT_WIDTH = { min: 320, default: 432, max: 720 } as const;
 
-/** The right panels are session-only: a reload (or a `?panel=` screenshot link) must not restore them. */
+/**
+ * The details panel is session-only: a reload (or a `?panel=` screenshot link) must not restore it. The assistant
+ * is a conversation the person comes back to, so its open state is remembered along with the last session it showed.
+ */
 interface Persisted {
   mode: ViewMode;
   sortKey: SortKey;
   sortDir: SortDir;
   /** The sidebar's rail mode: a layout choice, so it outlives the session unlike the right panels. */
   sidebarCollapsed: boolean;
+  /** Assistant panel width in px: a layout choice like the rail. */
+  assistantWidth: number;
+  assistantOpen: boolean;
 }
 
-const DEFAULTS: Persisted = { mode: 'grid', sortKey: 'modified', sortDir: 'desc', sidebarCollapsed: false };
+const DEFAULTS: Persisted = {
+  mode: 'grid',
+  sortKey: 'modified',
+  sortDir: 'desc',
+  sidebarCollapsed: false,
+  assistantWidth: ASSISTANT_WIDTH.default,
+  assistantOpen: false,
+};
+
+function clampAssistantWidth(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return ASSISTANT_WIDTH.default;
+  return Math.round(Math.min(ASSISTANT_WIDTH.max, Math.max(ASSISTANT_WIDTH.min, value)));
+}
 
 function pick<T>(value: unknown, allowed: readonly T[], fallback: T): T {
   return allowed.includes(value as T) ? (value as T) : fallback;
@@ -42,6 +62,8 @@ function load(): Persisted {
     sortKey: pick(saved.sortKey, SORT_KEYS, DEFAULTS.sortKey),
     sortDir: pick(saved.sortDir, SORT_DIRS, DEFAULTS.sortDir),
     sidebarCollapsed: typeof saved.sidebarCollapsed === 'boolean' ? saved.sidebarCollapsed : DEFAULTS.sidebarCollapsed,
+    assistantWidth: clampAssistantWidth(saved.assistantWidth),
+    assistantOpen: typeof saved.assistantOpen === 'boolean' ? saved.assistantOpen : DEFAULTS.assistantOpen,
   };
 }
 
@@ -51,11 +73,19 @@ export const useViewStore = defineStore('view', () => {
   const sortKey = ref<SortKey>(saved.sortKey);
   const sortDir = ref<SortDir>(saved.sortDir);
   const sidebarCollapsed = ref(saved.sidebarCollapsed);
+  const assistantWidth = ref(saved.assistantWidth);
   const detailsOpen = ref(true);
-  const assistantOpen = ref(false);
+  const assistantOpen = ref(saved.assistantOpen);
 
-  watch([mode, sortKey, sortDir, sidebarCollapsed], () => {
-    const data: Persisted = { mode: mode.value, sortKey: sortKey.value, sortDir: sortDir.value, sidebarCollapsed: sidebarCollapsed.value };
+  watch([mode, sortKey, sortDir, sidebarCollapsed, assistantWidth, assistantOpen], () => {
+    const data: Persisted = {
+      mode: mode.value,
+      sortKey: sortKey.value,
+      sortDir: sortDir.value,
+      sidebarCollapsed: sidebarCollapsed.value,
+      assistantWidth: assistantWidth.value,
+      assistantOpen: assistantOpen.value,
+    };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch {
@@ -76,10 +106,27 @@ export const useViewStore = defineStore('view', () => {
     }
   }
 
+  /** The drag handle reports raw pointer math; the limits live here so the stored value is always sane. */
+  function setAssistantWidth(px: number) {
+    assistantWidth.value = clampAssistantWidth(px);
+  }
+
   function togglePanel(panel: RightPanel) {
     const target = panel === 'details' ? detailsOpen : assistantOpen;
     target.value = !target.value;
   }
 
-  return { mode, sortKey, sortDir, sidebarCollapsed, detailsOpen, assistantOpen, toggleSortDir, setSortKey, togglePanel };
+  return {
+    mode,
+    sortKey,
+    sortDir,
+    sidebarCollapsed,
+    assistantWidth,
+    detailsOpen,
+    assistantOpen,
+    toggleSortDir,
+    setSortKey,
+    setAssistantWidth,
+    togglePanel,
+  };
 });

@@ -4,6 +4,7 @@ import type {
   AssistantConversation,
   PlanOutcome,
   AssistantSession,
+  AssistantContext,
   AssistantEvent,
   AuthMethods,
   AssistantMode,
@@ -75,6 +76,12 @@ export interface Repository {
    * and the disk write instead of the page holding the whole archive in memory.
    */
   archiveUrl(nodes: Node[]): string | null;
+  /**
+   * Where the browser can fetch a file's bytes for an inline picture, or undefined when it has none. A URL builder
+   * for the same reason as `archiveUrl`: a plan lists files by address alone, and a thumbnail per line must not cost
+   * a request per line.
+   */
+  previewUrl(id: string): string | undefined;
 
   /** How this account signs in, and what it may change here: the Security card asks before it offers anything. */
   authMethods(): Promise<AuthMethods>;
@@ -97,7 +104,7 @@ export interface Repository {
    * conversation this turn belongs to — against a live server that is the stored session, which is where the
    * question and the answer are both written, so a turn without one has nowhere to go.
    */
-  assistantAsk(prompt: string, mode: AssistantMode, conversationId: string | null, signal: AbortSignal): AsyncIterable<AssistantEvent>;
+  assistantAsk(prompt: string, mode: AssistantMode, conversationId: string | null, signal: AbortSignal, context?: AssistantContext): AsyncIterable<AssistantEvent>;
 
   // The assistant's history. Private to the account: the server has no route that hands one person's conversation
   // to anybody else, an administrator included.

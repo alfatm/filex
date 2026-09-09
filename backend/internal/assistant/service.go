@@ -22,6 +22,7 @@ package assistant
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -70,10 +71,27 @@ func New(store dbsetting.Store, box *secretbox.Box) *Service {
 	return &Service{
 		store:  store,
 		box:    box,
-		client: &http.Client{Timeout: requestTimeout},
+		client: &http.Client{Timeout: requestTimeout, CheckRedirect: refuseOffHostRedirect},
 		active: map[int64]bool{},
 		starts: map[int64][]time.Time{},
 	}
+}
+
+// maxRedirects is the same ceiling net/http applies by default.
+const maxRedirects = 10
+
+// refuseOffHostRedirect keeps the key on the host it was configured for. Go
+// drops Authorization when a redirect leaves the host, but not x-api-key, so
+// following one would hand the Anthropic header to whatever the provider
+// points at. A provider that moves announces it; it does not redirect.
+func refuseOffHostRedirect(req *http.Request, via []*http.Request) error {
+	if req.URL.Host != via[0].URL.Host {
+		return fmt.Errorf("assistant: provider redirected to %s; not following a redirect off the configured host", req.URL.Host)
+	}
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("assistant: stopped after %d redirects", maxRedirects)
+	}
+	return nil
 }
 
 // Config reads the configuration in force. Cheap enough to call per request —

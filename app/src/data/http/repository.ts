@@ -1,7 +1,7 @@
 import { DUPLICATE_NAME, OPERATION_PENDING, WRONG_PASSWORD, type Repository } from '../repository';
 import { matchesFilter, MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
-import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantConversation, type AssistantMode, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type Branding, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
+import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantContext, type AssistantConversation, type AssistantMode, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type Branding, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
 import { HttpError, putChunk, request, streamJSON } from './client';
 import {
   fromFileNode,
@@ -34,6 +34,7 @@ import {
   type WireUploadStatus,
   fromAssistantHit,
   type WireAssistantHit,
+  previewUrl,
 } from './map';
 
 /**
@@ -549,6 +550,10 @@ export class HttpRepository implements Repository {
   }
 
   /** filex checks the old password itself and answers 401 when it is wrong; every other status is a real failure. */
+  previewUrl(id: string): string | undefined {
+    return previewUrl(id);
+  }
+
   archiveUrl(nodes: Node[]): string | null {
     if (!nodes.length) return null;
     const query = new URLSearchParams(nodes.map((node) => ['path', node.id]));
@@ -1190,9 +1195,9 @@ export class HttpRepository implements Repository {
    * `hits` arrives whenever the assistant ran a search: the same rows the model reads as JSON, for the panel to draw
    * as cards. They are stored with the answer, so reopening the conversation redraws them.
    */
-  async *assistantAsk(prompt: string, mode: AssistantMode, conversationId: string | null, signal: AbortSignal): AsyncIterable<AssistantEvent> {
+  async *assistantAsk(prompt: string, mode: AssistantMode, conversationId: string | null, signal: AbortSignal, context?: AssistantContext): AsyncIterable<AssistantEvent> {
     if (!conversationId) throw new Error('assistant: a conversation has to exist before a turn can be stored in it');
-    const stream = streamJSON<WireAssistantEvent>(`${ASSISTANT_SESSIONS}/${conversationId}/turn`, { prompt, mode }, signal);
+    const stream = streamJSON<WireAssistantEvent>(`${ASSISTANT_SESSIONS}/${conversationId}/turn`, { prompt, mode, context }, signal);
     for await (const event of stream) {
       if (event.type === 'meta') yield { type: 'meta', conversationId: event.conversation_id ?? conversationId };
       else if (event.type === 'text') yield { type: 'text', delta: event.delta ?? '' };

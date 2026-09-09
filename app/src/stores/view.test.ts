@@ -30,14 +30,27 @@ describe('view store persistence', () => {
     expect([view.mode, view.sortKey, view.sortDir, view.detailsOpen, view.assistantOpen]).toEqual(['grid', 'size', 'desc', true, false]);
   });
 
-  it('never restores or writes the right panels, including legacy payloads', async () => {
+  it('restores the assistant panel but never the details panel, including legacy payloads', async () => {
     localStorage.setItem(KEY, JSON.stringify({ mode: 'list', rightPanel: 'assistant', detailsOpen: false, assistantOpen: true }));
     const view = useViewStore();
-    expect([view.mode, view.detailsOpen, view.assistantOpen]).toEqual(['list', true, false]);
+    expect([view.mode, view.detailsOpen, view.assistantOpen]).toEqual(['list', true, true]);
     view.togglePanel('assistant');
+    view.togglePanel('details');
     view.toggleSortDir();
     await nextTick();
-    expect(JSON.parse(backing.get(KEY) ?? '{}')).toEqual({ mode: 'list', sortKey: 'modified', sortDir: 'asc', sidebarCollapsed: false });
+    expect(JSON.parse(backing.get(KEY) ?? '{}')).toEqual({
+      mode: 'list',
+      sortKey: 'modified',
+      sortDir: 'asc',
+      sidebarCollapsed: false,
+      assistantWidth: 432,
+      assistantOpen: false,
+    });
+  });
+
+  it('keeps the assistant closed when the stored flag is not a boolean', () => {
+    localStorage.setItem(KEY, JSON.stringify({ assistantOpen: 'yes' }));
+    expect(useViewStore().assistantOpen).toBe(false);
   });
 
   it('ignores non-object payloads', () => {
@@ -57,6 +70,20 @@ describe('view store persistence', () => {
   it('keeps the sidebar expanded when the stored flag is not a boolean', () => {
     localStorage.setItem(KEY, JSON.stringify({ sidebarCollapsed: 'yes' }));
     expect(useViewStore().sidebarCollapsed).toBe(false);
+  });
+
+  it('clamps the assistant width on load and on set, and persists it', async () => {
+    localStorage.setItem(KEY, JSON.stringify({ assistantWidth: 9000 }));
+    expect(useViewStore().assistantWidth).toBe(720);
+    setActivePinia(createPinia());
+    localStorage.setItem(KEY, JSON.stringify({ assistantWidth: 'wide' }));
+    const view = useViewStore();
+    expect(view.assistantWidth).toBe(432);
+    view.setAssistantWidth(100);
+    expect(view.assistantWidth).toBe(320);
+    view.setAssistantWidth(500.4);
+    await nextTick();
+    expect(JSON.parse(backing.get(KEY) ?? '{}').assistantWidth).toBe(500);
   });
 
   it('toggles the two right panels independently', () => {

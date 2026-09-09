@@ -53,18 +53,20 @@ test.describe('AI assistant', () => {
     await expect(panel(page).getByRole('radio', { name: 'Filename' })).toHaveAttribute('aria-checked', 'true');
   });
 
-  test('a suggestion sends a prompt and the answer streams in with result cards', async ({ page }) => {
-    const suggestion = panel(page).getByRole('button', { name: 'Search by tag: design' });
-    await suggestion.click();
+  test('a prompt is sent and the answer streams in with result cards', async ({ page }) => {
+    const box = panel(page).getByRole('textbox', { name: 'Ask to find files…' });
+    const sendButton = panel(page).getByRole('button', { name: 'Send' });
+    await box.fill('Search by tag: design');
+    await box.press('Enter');
 
     await expect(panel(page).getByText('Search by tag: design').last()).toBeVisible();
     // Sending is locked while the turn streams (the textarea stays editable), then released.
-    await expect(suggestion).toBeDisabled();
+    await expect(sendButton).toBeDisabled();
     const card = panel(page).locator('article').first();
     await expect(card).toBeVisible({ timeout: 10_000 });
     await expect(panel(page).getByRole('log').getByText(/^I found \d+ matching files?\.$/)).toBeVisible();
-    await expect(suggestion).toBeEnabled({ timeout: 10_000 });
-    await expect(panel(page).getByRole('textbox', { name: 'Ask to find files…' })).toBeEnabled();
+    await expect(sendButton).toBeEnabled({ timeout: 10_000 });
+    await expect(box).toBeEnabled();
     await expect(card).toContainText('/demo');
   });
 

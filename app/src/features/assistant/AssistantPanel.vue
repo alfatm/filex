@@ -1,29 +1,37 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { File, Loader2, MessagesSquare, Search, Send, Sparkles, SquarePen, Tag, X } from 'lucide-vue-next';
+import { useRoute } from 'vue-router';
+import { Copy, File, Loader2, Maximize2, MessagesSquare, Play, Search, Send, Sparkles, SquarePen, Tag, X } from 'lucide-vue-next';
 import { useFormat } from '@/composables/useFormat';
-import type { ApprovalCard, AssistantMode, PlanCard, PlanItem, PlanResult } from '@/data/types';
+import type { ApprovalCard, AssistantMode, PlanCard } from '@/data/types';
 import { useFilesStore } from '@/stores/files';
-import { useFileActions } from '@/features/files/useFileActions';
-import { Avatar, IconButton, SidePanel } from '@/ui';
+import { useViewStore } from '@/stores/view';
+import { useSearchStore } from '@/features/search/searchStore';
+import { useToastStore } from '@/stores/toast';
+import { Avatar, Button, IconButton, SidePanel } from '@/ui';
+import Modal from '@/ui/Modal.vue';
 import { ASSISTANT_MODES, useAssistantStore } from './assistantStore';
 import { plainAnswer } from './answer';
+import { pageContext } from './context';
+import { planText } from './plan';
 import AnswerText from './AnswerText.vue';
+import PlanDetails from './PlanDetails.vue';
 import ResultCard from './ResultCard.vue';
 import SessionList from './SessionList.vue';
 
 const emit = defineEmits<{ close: [] }>();
 
 const { t } = useI18n();
-const { formatDate, formatSize, formatTime } = useFormat();
+const { formatTime } = useFormat();
+const route = useRoute();
 const files = useFilesStore();
+const view = useViewStore();
+const search = useSearchStore();
 const assistant = useAssistantStore();
-// The same copy the share modal uses, so a minted link is copied and announced exactly the way any other link is.
-const { copyLink } = useFileActions();
+const toast = useToastStore();
 
 const MODE_ICONS = { filename: File, content: Search, tags: Tag } satisfies Record<AssistantMode, Component>;
-const SUGGESTIONS = ['contracts', 'tag'] as const;
 /** Auto-scroll follows the stream only while the reader is this close to the end. */
 const NEAR_BOTTOM_PX = 40;
 
@@ -91,51 +99,33 @@ function refuseRead(card: ApprovalCard) {
 async function decidePlan(card: PlanCard, approve: boolean) {
   const outcome = await assistant.decidePlan(card, approve);
   if (!outcome) return;
+  if (expanded.value === card) expanded.value = null;
+  // The server moved, tagged or removed something behind the listing on screen; it is re-read, not left stale.
+  if (outcome.done > 0) void files.reload();
   send(approve ? t('assistant.plan.approvedPrompt', { done: outcome.done, skipped: outcome.skipped + outcome.failed }) : t('assistant.plan.refusedPrompt'));
 }
 
-/** A skip or a failure, in the reader's language; an unknown code falls back to the server's English sentence. */
-const RESULT_CODES = ['gone', 'changed', 'forbidden', 'missing', 'broken'] as const;
-
-function resultReason(result: PlanResult) {
-  if (result.code && (RESULT_CODES as readonly string[]).includes(result.code)) return t(`assistant.plan.reason.${result.code}`);
-  return result.reason ?? '';
-}
-
-/** What one line of a plan does, in the reader's language. An action this build has no words for shows its code. */
-const PLAN_ACTIONS = ['tag', 'restore_version', 'create_share', 'revoke_share', 'purge'] as const;
-
-function itemAction(item: PlanItem) {
-  if (!(PLAN_ACTIONS as readonly string[]).includes(item.action)) return item.action;
-  return t(`assistant.plan.action.${item.action}`, item.args ?? {});
+/** The plan as text, addresses and all: to paste into a ticket or a message before, or instead of, approving it. */
+async function copyPlan(card: PlanCard) {
+  await navigator.clipboard.writeText(planText(card, t));
+  toast.push(t('assistant.plan.copied'));
 }
 
 /**
- * The second line: the item as it stands. Which numbers matter depends on the plan — a version has a size and when
- * it was taken, a trashed file has a size and when it was deleted, a link has a date and a download count.
+ * A plan opened in full. The card caps its list and scrolls it — a plan may carry fifty lines, a thousand for tags —
+ * and the modal is the same list with the width and height to actually read it. Approving there is the same call.
  */
-function itemDetail(card: PlanCard, item: PlanItem) {
-  const size = item.size ? formatSize(item.size) : '';
-  const at = item.at ? formatDate(item.at) : '';
-  if (card.planKind === 'empty_trash' && at) return t('assistant.plan.detail.deleted', { size, at });
-  if (card.planKind === 'restore_version' && at) return t('assistant.plan.detail.taken', { size, at });
-  if (card.planKind === 'revoke_share' && at) return t('assistant.plan.detail.link', { at, downloads: item.args?.downloads ?? '0' });
-  // A file that already has links is worth saying so before a second one is approved.
-  if (card.planKind === 'create_share') {
-    const existing = Number(item.args?.existing ?? 0);
-    return existing > 0 ? [size, t('assistant.plan.detail.alreadyShared', existing)].filter(Boolean).join(' · ') : size;
-  }
-  return size;
-}
+const expanded = ref<PlanCard | null>(null);
 
 async function startNewChat() {
   await assistant.newSession();
   showSessions.value = false;
 }
 
+/** Every question travels with what is on screen — the open folder, the selection, the search — so "these files" means something. */
 function send(text: string) {
   if (!canSend.value) return;
-  void assistant.send(text);
+  void assistant.send(text, pageContext(route.name, files, search));
   draft.value = '';
 }
 
@@ -179,6 +169,8 @@ onMounted(() => {
   window.addEventListener('keydown', onWindowKeydown);
   scrollToEnd();
   textarea.value?.focus();
+  // The last conversation comes back with the panel; the auto-scroll watcher takes it to the end once it lands.
+  void assistant.restore();
 });
 onBeforeUnmount(() => {
   window.removeEventListener('online', setOnline);
@@ -189,7 +181,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <SidePanel :width="432" :aria-label="t('assistant.title')">
+  <SidePanel :width="view.assistantWidth" :resize-label="t('assistant.resize')" :aria-label="t('assistant.title')" @resize="view.setAssistantWidth">
     <!-- Spec §6: the icon sits at x 1290, 28px in from the panel's content edge. -->
     <div class="flex shrink-0 items-center pl-7">
       <Sparkles :size="26" class="shrink-0 text-primary" />
@@ -249,53 +241,38 @@ onBeforeUnmount(() => {
             <!-- Spec §6: permission is asked for one file at a time, and the card says which file and why. -->
             <template v-for="(card, at) in message.cards" :key="at">
               <!-- A plan: everything it would do, listed, before anything is done. -->
-              <div v-if="assistant.isPlan(card)" class="rounded-xl border border-border p-4">
-                <p class="text-14 font-medium leading-snug">{{ card.summary || t('assistant.plan.title') }}</p>
-                <ul class="mt-2 space-y-1.5">
-                  <li v-for="item in card.items" :key="item.path" class="text-13 leading-snug">
-                    <span class="break-all text-text">{{ item.path }}</span>
-                    <span class="text-text-3"> — {{ itemAction(item) }}</span>
-                    <span v-if="itemDetail(card, item)" class="block text-12 text-text-3">{{ itemDetail(card, item) }}</span>
-                  </li>
-                </ul>
+              <div v-if="assistant.isPlan(card)" class="rounded-2xl border border-border-soft bg-bg-muted p-4">
+                <div class="flex items-start gap-3">
+                  <Sparkles :size="22" class="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
+                  <p class="min-w-0 flex-1 text-15 font-medium leading-snug">{{ card.summary || t('assistant.plan.title') }}</p>
+                  <IconButton :label="t('assistant.plan.copy')" :size="28" class="-mt-1 shrink-0 text-text-2" @click="copyPlan(card)">
+                    <Copy :size="16" />
+                  </IconButton>
+                  <IconButton :label="t('assistant.plan.expand')" :size="28" class="-mr-1 -mt-1 shrink-0 text-text-2" @click="expanded = card">
+                    <Maximize2 :size="16" />
+                  </IconButton>
+                </div>
+                <PlanDetails :card="card" list-class="max-h-[400px]" />
                 <div v-if="card.status === 'pending'" class="mt-3 flex flex-wrap gap-[10px]">
                   <button
                     type="button"
                     :disabled="!canSend"
-                    class="inline-flex h-9 items-center rounded-full bg-primary px-4 text-14 leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                    class="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-14 font-medium leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
                     @click="decidePlan(card, true)"
                   >
+                    <Play :size="16" fill="currentColor" :stroke-width="0" aria-hidden="true" />
                     {{ t('assistant.plan.approve') }}
                   </button>
                   <button
                     type="button"
                     :disabled="!canSend"
-                    class="inline-flex h-9 items-center rounded-full border border-border px-4 text-14 leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                    class="inline-flex h-10 items-center rounded-full border border-border bg-bg px-5 text-14 font-medium leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
                     @click="decidePlan(card, false)"
                   >
                     {{ t('assistant.plan.refuse') }}
                   </button>
                 </div>
                 <p v-else-if="card.status === 'cancelled'" class="mt-3 text-13 leading-none text-text-3">{{ t('assistant.plan.cancelled') }}</p>
-                <template v-else>
-                  <p class="mt-3 text-13 leading-none text-success">{{ t('assistant.plan.ran') }}</p>
-                  <ul v-if="card.results?.length" class="mt-2 space-y-1">
-                    <li v-for="result in card.results" :key="result.path" class="text-12 leading-snug text-text-3">
-                      <span class="break-all">{{ result.path }}</span> — {{ result.state === 'done' ? t('assistant.plan.itemDone') : resultReason(result) }}
-                      <!--
-                        The one plan that hands something back. The URL is the whole point of approving it, so it is
-                        shown in full and selectable rather than behind a "copy" button that a screen reader has to
-                        guess at. Not an anchor: it is a credential to hand on, not a place this panel should navigate.
-                      -->
-                      <span v-if="result.url" class="mt-1 flex items-start gap-2">
-                        <code class="min-w-0 flex-1 select-all break-all font-code text-12 text-text">{{ result.url }}</code>
-                        <button type="button" class="shrink-0 text-primary hover:underline" @click="copyLink(result.url)">
-                          {{ t('assistant.plan.copyLink') }}
-                        </button>
-                      </span>
-                    </li>
-                  </ul>
-                </template>
               </div>
 
               <div v-else class="rounded-xl border border-border p-4">
@@ -351,19 +328,6 @@ onBeforeUnmount(() => {
           </button>
         </div>
 
-        <div class="mt-3 flex flex-wrap gap-[10px]">
-          <button
-            v-for="id in SUGGESTIONS"
-            :key="id"
-            type="button"
-            :disabled="!canSend"
-            class="inline-flex h-9 items-center rounded-full border border-border px-4 text-14 leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
-            @click="send(t(`assistant.suggestions.${id}`))"
-          >
-            {{ t(`assistant.suggestions.${id}`) }}
-          </button>
-        </div>
-
         <form class="mt-4 flex items-start gap-[10px]" @submit.prevent="send(draft)">
           <!-- Typing the next question while the answer streams is fine; only sending waits. -->
           <textarea
@@ -388,4 +352,20 @@ onBeforeUnmount(() => {
       </div>
     </template>
   </SidePanel>
+
+  <!-- The plan in full: the same list as the card, with room to read it, and the same decision buttons. -->
+  <Modal
+    v-if="expanded"
+    :title="expanded.summary || t('assistant.plan.title')"
+    :close-label="t('modal.close')"
+    :width="720"
+    @close="expanded = null"
+  >
+    <PlanDetails :card="expanded" list-class="max-h-[60vh]" />
+    <p v-if="expanded.status === 'cancelled'" class="mt-3 text-13 leading-none text-text-3">{{ t('assistant.plan.cancelled') }}</p>
+    <template v-if="expanded.status === 'pending'" #footer>
+      <Button variant="outline" :disabled="!canSend" @click="decidePlan(expanded, false)">{{ t('assistant.plan.refuse') }}</Button>
+      <Button :disabled="!canSend" class="disabled:opacity-60" @click="decidePlan(expanded, true)">{{ t('assistant.plan.approve') }}</Button>
+    </template>
+  </Modal>
 </template>

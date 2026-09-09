@@ -97,6 +97,8 @@ const (
 	ActionCreateShare    = "create_share"
 	ActionRevokeShare    = "revoke_share"
 	ActionPurge          = "purge"
+	ActionMove           = "move"
+	ActionMkdir          = "mkdir"
 )
 
 // The kinds of card.

@@ -33,6 +33,11 @@ const (
 	// PlanKindEmptyTrash destroys files for good. Only on a direct request,
 	// never as a tidy-up step inside another plan.
 	PlanKindEmptyTrash = "empty_trash"
+	// PlanKindMove puts files and folders into one folder, creating it first
+	// when it is not there yet. Reversible by moving them back, and every
+	// address is in the plan — a move nobody can trace is a move nobody read.
+	// It never overwrites: a name already taken in the destination is skipped.
+	PlanKindMove = "move"
 )
 
 // A plan's life: proposed, then either run once or dropped.

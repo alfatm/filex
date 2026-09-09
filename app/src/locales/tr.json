@@ -426,6 +426,7 @@
     "online": "Çevrimiçi",
     "offline": "Çevrimdışı",
     "close": "Kapat",
+    "resize": "Panel genişliğini değiştir",
     "openPath": "filex'te aç",
     "intro": "Dosyaları içeriğe, dosya adına veya etiketlere göre bulun. Ayrıca dosyaları özetleyebilir, soruları yanıtlayabilir ve işinizi düzenlemenize yardımcı olabilirim.",
     "mode": {
@@ -434,10 +435,6 @@
       "tags": "Etiketler"
     },
     "modeLabel": "Arama modu",
-    "suggestions": {
-      "contracts": "Temmuz sözleşmelerini bul",
-      "tag": "Etikete göre ara: design"
-    },
     "placeholder": "Dosya bulmamı isteyin…",
     "send": "Gönder",
     "error": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
@@ -478,7 +475,7 @@
       "approve": "Onayla ve uygula",
       "refuse": "Yapma",
       "cancelled": "Bu planı reddettiniz",
-      "ran": "Tamamlandı — sonuç:",
+      "ran": "Bitti — her satırda ona ne olduğu görünüyor",
       "itemDone": "yapıldı",
       "approvedPrompt": "Planı onayladım. {done} yapıldı, {skipped} yapılmadı.",
       "refusedPrompt": "Bu planı onaylamıyorum.",
@@ -487,14 +484,17 @@
         "changed": "plan yapıldıktan sonra değişmişti",
         "forbidden": "buna izniniz yok",
         "missing": "zaten yoktu",
-        "broken": "başarısız oldu"
+        "broken": "başarısız oldu",
+        "taken": "orada bu ad zaten kullanılıyordu"
       },
       "action": {
         "tag": "{tags} etiketini ekle",
         "restore_version": "{version} numaralı sürümü geri getir (mevcut içerik önce saklanır)",
         "create_share": "herkese açık bir bağlantı oluştur — bağlantıyı bilen herkes oturum açmadan açabilir",
         "revoke_share": "herkese açık bağlantıyı kapat — bağlantısı olan herkes erişimi kaybeder",
-        "purge": "kalıcı olarak yok et — bu geri alınamaz"
+        "purge": "kalıcı olarak yok et — bu geri alınamaz",
+        "move": "{target} klasörüne taşı",
+        "mkdir": "bu klasörü oluştur"
       },
       "detail": {
         "deleted": "{size}, {at} tarihinde silindi",
@@ -502,7 +502,10 @@
         "link": "{at} tarihinde oluşturuldu, {downloads} indirme",
         "alreadyShared": "zaten 1 bağlantısı var | zaten {n} bağlantısı var"
       },
-      "copyLink": "Bağlantıyı kopyala"
+      "copyLink": "Bağlantıyı kopyala",
+      "expand": "Planı tam boyutta aç",
+      "copy": "Planı kopyala",
+      "copied": "Plan kopyalandı"
     }
   },
   "settings": {

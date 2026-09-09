@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The plan card is redrawn after the new mockup:** a tinted card with the
+  assistant's mark, a 40px picture per line (the image itself where the file is
+  one), the name in front with size, folder and action under it, a check that
+  turns green as each item is done, and a Play on "Approve and run". The plan
+  can also be copied as text, one `address — action` line per item.
+
+### Removed
+
+- The two canned prompts under the assistant's mode chips ("Find contracts
+  from July", "Search by tag: design"): they fit no real drive.
+
+### Added
+
+- **The assistant panel can be resized, and it comes back the way it was
+  left.** Drag its left edge (or focus the handle and use ←/→) between 320 and
+  720 px. Width, open/closed state and the conversation on screen are
+  remembered in the browser, so a reload or a new tab returns to the same chat;
+  a remembered chat that was deleted or evicted is forgotten and the panel
+  opens empty.
+- **The assistant sees what is on screen.** The app sends the page, the open
+  folder, the selected rows and — on the search page — the query, its settings,
+  the count and the first hits with every question (`context` on the turn), so
+  "these files" and "this folder" mean what the person is looking at. Appended
+  to that one question only, like the mode chip; never stored or replayed.
+- **`plan_move`: the assistant can propose moving files and folders into one
+  folder**, creating the folder first as its own line of the plan. Same-drive
+  only, never overwrites (a name already taken in the destination is skipped as
+  `taken`, checked against the driver rather than the cache), and like every
+  plan it runs only after the person approves it in the panel. The listing on
+  screen is re-read once a plan has done something, so a move shows without a
+  reload. A long plan scrolls inside its card, and a button on the card opens
+  it in a modal with the room to read it and the same Approve / Don't buttons.
+- **The assistant proposes a plan on the first ask.** The standing instructions
+  used to describe a "write the plan, wait for a yes, then act" protocol, which
+  the model followed literally — the plan came out as prose, the person had to
+  say yes in the chat, and only then was the card offered; between the two it
+  could claim the work was done. The instructions now say what is true: the
+  plan tool call IS the plan, the card IS the approval, and nothing may be
+  reported as done until the interface says what happened.
+
 ## [0.34.0] - 2026-09-06
 
 ### Upgrade notes

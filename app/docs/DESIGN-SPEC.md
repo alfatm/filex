@@ -272,6 +272,14 @@ white, shadow-modal, padding 26 26 22.
 Panel w 432 right, white, border-left 1px, padding 20 22; opens independently
 of the details panel (both may be visible, details sits between the listing
 and the assistant); search box shrinks. Ref 4 shows it with details closed.
+- Width is the person's: a 4px handle over the left border (`col-resize`,
+  primary on hover/focus; a focusable `separator`, ←/→ step 16) drags it
+  between 320 and 720, remembered with the other layout choices. 432 is the
+  default and what every screenshot shows. **Not in the reference.**
+- Whether the panel is open and which conversation it shows are remembered
+  too: a reload or a new tab comes back to the same chat. A remembered chat
+  that no longer exists is forgotten, and the panel opens empty. The details
+  panel is not remembered (`?panel=` links stay honest).
 - Header: `Sparkles` 26 primary at x 1290; "AI assistant" 20/600; "● Online"
   13 with 8px `--c-success` dot; then three 36px icon buttons at the right —
   `SquarePen` 20 (new chat), `MessagesSquare` 20 (chats, pressed while the list
@@ -294,7 +302,11 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
   stored with the question and not replayed, so the chip belongs to the turn it
   was set on, exactly as it looks on screen. They were inert until the
   assistant had search tools; sending a field the server ignored would only
-  have looked like it worked.
+  have looked like it worked. What is on screen travels the same way, as
+  `context`: the page, the open folder, the selected rows' addresses and, on
+  the search page, the query, the non-default settings, the count and the
+  first hits — so "these files" and "this folder" are answerable. Nothing is
+  drawn for it; it is the question's context, not a control.
 - Permission card (below the answer that raised it, full width, border 1px
   radius 12 padding 16): "May I open this file?" 14/500, the full address 14
   gray (breaks anywhere — an address is longer than the panel), the assistant's
@@ -303,15 +315,29 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
   line. **Not in the reference**, which was drawn before the assistant could
   open anything. One card per file, always: there is no button anywhere in this
   flow that approves more than the one file it names.
-- Plan card (same box as the permission card): the assistant's one-line summary
-  14/500, then EVERY item on its own line — the full address, an em dash, what
-  will happen to it, and a second 12 gray line with its size and date. Two pill
-  buttons, primary "Approve and run" and outlined "Don't do this"; after the
-  decision they are replaced by the refusal line, or by "Done" and a per-item
-  outcome list. Also not in the reference.
+- Plan card (ref: the "Move 9 .webp files" mockup): radius 16, `--c-bg-muted`,
+  border 1px `--c-border-soft`, padding 16. Header: `Sparkles` 22 primary, the
+  assistant's summary 15/500, then two 28px icon buttons — `Copy` 16 (the plan
+  as text: summary, then one `address — action` line per item) and `Maximize2`
+  16 (below). Then EVERY item as a 40px-picture row (the image itself, or the
+  type tile; a `mkdir` line gets the folder glyph), hairline `--c-border-soft`
+  between rows: the name 14/500 on one line, and under it 13 gray everything
+  that makes the line readable alone — size (and date where it matters), the
+  folder, what will happen — joined with " · ". The reference drops the folder
+  and the action; both stay, because two files may share a name and a plan is
+  approved by reading it. At the right a 20px `CircleCheck`, gray while the
+  plan is pending, green once that item is done, `CircleAlert` red with the
+  reason appended to the gray line for a skip or a failure. Two 40px pill
+  buttons — primary "Approve and run" with a filled `Play` 16, outlined "Don't
+  do this"; after the decision they are replaced by the refusal line, or by
+  "Done" under the list (the per-item outcome is on the rows).
   **The whole list is always drawn, never a count.** A card reading "12 changes"
   with an Approve button is a button with nothing behind it — the plan is
-  approved by reading it.
+  approved by reading it. The list is capped at 400px and scrolls inside the
+  card, and a `Maximize2` 28px icon button at the card's top right opens the
+  same plan in a 720px modal (list capped at 60vh, the same Approve / Don't
+  buttons in its footer) — a fifty-line move, or a thousand-line tagging, is
+  read there rather than in a 432px column.
   ⚠ The item wording and the numbers come from the SERVER as a code plus raw
   values (`tag`, `purge`, a byte count, an ISO date), and the panel renders them
   through i18n and its own formatters. The first version had the server compose
@@ -355,8 +381,9 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
 - Follow-up line 15 + timestamp 12.
 - Mode chips h 38 pill: "Filename" active primary bg white text with `File`
   16; "Content" (`Search`), "Tags" (`Tag`) bordered; gap 10.
-- Suggestion chips h 36 pill bordered 14: "Find contracts from July",
-  "Search by tag: design".
+- No suggestion chips under the mode chips. The reference draws two ("Find
+  contracts from July", "Search by tag: design"); they were canned prompts
+  that fit no real drive, and were dropped.
 - Input row bottom: textarea h 56 radius 12 border 2px primary (focused) /
   1px `--c-border` (idle), placeholder "Ask to find files…" 15; send button
   56×56 radius 12 primary with `Send` 22 white; gap 10. Hint below 13 gray:

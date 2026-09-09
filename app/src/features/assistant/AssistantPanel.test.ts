@@ -14,8 +14,20 @@ const decisions: { id: string; planId: string; approve: boolean }[] = [];
 let script: AssistantEvent[] = [];
 let release: (() => void) | null = null;
 
+// happy-dom exposes no localStorage here; the stores only need getItem/setItem/removeItem.
+const backing = new Map<string, string>();
+vi.stubGlobal('localStorage', {
+  getItem: (key: string) => backing.get(key) ?? null,
+  setItem: (key: string, value: string) => backing.set(key, value),
+  removeItem: (key: string) => backing.delete(key),
+});
+
 vi.mock('@/data', () => ({
   repository: {
+    previewUrl: () => undefined,
+    async assistantMessages() {
+      return { messages: [{ id: 'm1', role: 'assistant', text: 'We spoke earlier.', at: '2026-07-10T10:24:00' }], granted: [] };
+    },
     async listStorages() {
       return [];
     },
@@ -62,6 +74,7 @@ describe('AssistantPanel', () => {
     cleanup?.();
     calls.length = 0;
     release = null;
+    backing.clear();
     Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
   });
 
@@ -76,6 +89,15 @@ describe('AssistantPanel', () => {
     handled.preventDefault();
     window.dispatchEvent(handled);
     expect(wrapper.emitted('close')).toHaveLength(1);
+  });
+
+  it('comes back to the conversation the last panel showed', async () => {
+    backing.set('filex.app.assistant.session', 's9');
+    const { wrapper, store } = await setup();
+    cleanup = () => wrapper.unmount();
+    await flushPromises();
+    expect(store.sessionId).toBe('s9');
+    expect(wrapper.text()).toContain('We spoke earlier.');
   });
 
   it('sends the draft on Enter, clears it, and keeps typing possible while the answer streams', async () => {
@@ -214,13 +236,22 @@ describe('AssistantPanel', () => {
     ]);
     await nextTick();
 
-    // Every item is on screen: a plan is approved by reading it.
+    // Every item is on screen, name and folder: a plan is approved by reading it.
     expect(wrapper.text()).toContain('Tag two invoices');
-    expect(wrapper.text()).toContain('main://Docs/a.pdf');
-    expect(wrapper.text()).toContain('main://Docs/b.pdf');
+    expect(wrapper.text()).toContain('a.pdf');
+    expect(wrapper.text()).toContain('b.pdf');
+    expect(wrapper.text()).toContain('main://Docs');
     // The action is written in the reader's language from a code, not echoed from the server.
     expect(wrapper.text()).toContain('tag as invoices');
     expect(decisions).toHaveLength(0);
+
+    // The same plan as text, with full addresses, for wherever it is pasted.
+    const clipboard = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal('navigator', { onLine: true, clipboard: { writeText: clipboard } });
+    await wrapper.find('button[aria-label="Copy the plan"]').trigger('click');
+    await flushPromises();
+    expect(clipboard).toHaveBeenCalledWith('Tag two invoices\nmain://Docs/a.pdf — tag as invoices\nmain://Docs/b.pdf — tag as invoices');
+    vi.unstubAllGlobals();
 
     await wrapper.findAll('button').find((b) => b.text() === 'Approve and run')!.trigger('click');
     await flushPromises();
@@ -297,5 +328,46 @@ describe('AssistantPanel', () => {
     await flushPromises();
     expect(clipboard).toHaveBeenCalledWith('https://filex.test/s/abc123');
     vi.unstubAllGlobals();
+  });
+  it('opens the plan in a modal with the same list and decides it from there', async () => {
+    script = [{ type: 'done' }];
+    decisions.length = 0;
+    const { wrapper, store } = await setup();
+    cleanup = () => wrapper.unmount();
+    store.sessionId = 's1';
+    store.seed([
+      {
+        id: 'm1',
+        role: 'assistant',
+        text: 'Proposed.',
+        at: '2026-07-01T10:00:00Z',
+        cards: [
+          {
+            kind: 'plan',
+            id: '7',
+            planKind: 'move',
+            summary: 'Move the photos',
+            status: 'pending',
+            items: Array.from({ length: 40 }, (_, i) => ({ path: `main://Photos/p${i}.webp`, action: 'move', args: { target: 'main://webp' } })),
+          },
+        ],
+      },
+    ]);
+    await nextTick();
+
+    await wrapper.find('button[aria-label="Open the plan in full"]').trigger('click');
+    await nextTick();
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog?.textContent).toContain('Move the photos');
+    expect(dialog?.textContent).toContain('p39.webp');
+    expect(dialog?.textContent).toContain('main://Photos');
+    expect(dialog?.textContent).toContain('move to main://webp');
+
+    const approve = [...document.querySelectorAll('[role="dialog"] button')].find((b) => b.textContent?.trim() === 'Approve and run') as HTMLButtonElement;
+    approve.click();
+    await flushPromises();
+    await nextTick();
+    expect(decisions).toEqual([{ id: 's1', planId: '7', approve: true }]);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 });

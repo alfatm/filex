@@ -1,12 +1,23 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { repository } from '@/data';
-import type { ApprovalCard, AssistantCard, AssistantMessage, AssistantMode, AssistantSession, PlanCard, PlanOutcome } from '@/data/types';
+import type { ApprovalCard, AssistantCard, AssistantContext, AssistantMessage, AssistantMode, AssistantSession, PlanCard, PlanOutcome } from '@/data/types';
 
 export const ASSISTANT_MODES: AssistantMode[] = ['filename', 'content', 'tags'];
 
 /** Mirrors `model.MaxAssistantSessions`: shown in the list so the eviction rule is stated, not discovered. */
 export const MAX_ASSISTANT_SESSIONS = 100;
+
+/** The last conversation on screen, so a reload or a new tab comes back to it rather than to an empty chat. */
+const STORAGE_KEY = 'filex.app.assistant.session';
+
+function storedSessionId(): string | null {
+  try {
+    return localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
 
 export const useAssistantStore = defineStore('assistant', () => {
   const messages = ref<AssistantMessage[]>([]);
@@ -23,6 +34,15 @@ export const useAssistantStore = defineStore('assistant', () => {
   let controller: AbortController | null = null;
   let seq = 0;
 
+  watch(sessionId, (id) => {
+    try {
+      if (id) localStorage.setItem(STORAGE_KEY, id);
+      else localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // storage unavailable — the conversation is simply not remembered across reloads
+    }
+  });
+
   function push(role: AssistantMessage['role'], text: string): AssistantMessage {
     const message: AssistantMessage = { id: `m${++seq}`, role, text, at: new Date().toISOString() };
     messages.value.push(message);
@@ -30,12 +50,13 @@ export const useAssistantStore = defineStore('assistant', () => {
   }
 
   /**
-   * Sends `text` and streams the reply into the message list; one turn at a time.
+   * Sends `text` and streams the reply into the message list; one turn at a time. `context` is what the person has
+   * on screen as they ask — it travels with this question only, the way the mode chip does.
    *
    * A conversation is opened first if there is none: the question and the answer are both stored server-side, and a
    * turn with nowhere to be written is a turn that vanishes when the panel closes.
    */
-  async function send(text: string) {
+  async function send(text: string, context?: AssistantContext) {
     const prompt = text.trim();
     if (!prompt || streaming.value) return;
     // The question goes on screen before anything is awaited: it is already typed, and watching it hang in the box
@@ -49,7 +70,7 @@ export const useAssistantStore = defineStore('assistant', () => {
     try {
       // Created inline rather than through newSession(), which clears the log — the question just pushed is in it.
       if (!sessionId.value) sessionId.value = (await repository.createAssistantSession()).id;
-      for await (const event of repository.assistantAsk(prompt, mode.value, sessionId.value, own.signal)) {
+      for await (const event of repository.assistantAsk(prompt, mode.value, sessionId.value, own.signal, context)) {
         if (own.signal.aborted) break;
         // `meta` names the conversation the server wrote the turn into; it is the session already on screen.
         if (event.type === 'meta') continue;
@@ -138,6 +159,23 @@ export const useAssistantStore = defineStore('assistant', () => {
     seq = messages.value.length;
   }
 
+  /**
+   * Reopens the conversation the last panel showed, once per page: a panel that already has one keeps it. A
+   * conversation that cannot be opened — deleted from another tab, evicted by the cap — is forgotten rather than
+   * retried on every mount.
+   */
+  async function restore() {
+    const id = storedSessionId();
+    if (sessionId.value || !id) return;
+    try {
+      await openSession(id);
+    } catch {
+      sessionId.value = null;
+      messages.value = [];
+      granted.value = [];
+    }
+  }
+
   async function renameSession(id: string, title: string) {
     const updated = await repository.renameAssistantSession(id, title);
     const at = sessions.value.findIndex((s) => s.id === id);
@@ -215,6 +253,7 @@ export const useAssistantStore = defineStore('assistant', () => {
     loadSessions,
     newSession,
     openSession,
+    restore,
     renameSession,
     removeSession,
   };

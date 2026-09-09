@@ -350,6 +350,25 @@ export interface SearchResult {
 
 export type AssistantMode = 'filename' | 'content' | 'tags';
 
+/** The pages the assistant has words for; a question asked anywhere else travels without a context. */
+export type AssistantPage = 'folder' | 'search' | 'recent' | 'starred' | 'shared' | 'trash' | 'home';
+
+/**
+ * What the person is looking at when they ask, so "these files" and "this folder" mean something to the model.
+ * Sent with the turn and appended to that question only — like the mode chip, it is not stored and not replayed.
+ */
+export interface AssistantContext {
+  page: AssistantPage;
+  /** The open folder's address on the folder page. */
+  folder?: string;
+  /** Addresses of the selected rows, in listing order; the first `MAX_CONTEXT_SELECTED` of them. */
+  selected?: string[];
+  /** How many rows are selected, when more than `selected` carries. */
+  selectedTotal?: number;
+  /** The search page's state: the query, the non-default settings as `name: value`, the count and the first hits. */
+  search?: { query: string; filters: string[]; total: number; capped: boolean; hits: string[] };
+}
+
 /**
  * One conversation with the assistant. Carries no message text: the list is drawn from these, and the messages of a
  * session are fetched only when it is opened — which is also how the server keeps them out of the operator's reach.
