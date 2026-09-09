@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS plugins (
     id           BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
     name         VARCHAR(64) NOT NULL UNIQUE,
     kind         VARCHAR(16) NOT NULL DEFAULT 'binary',
-    binary       VARCHAR(255) NOT NULL DEFAULT '',
+    `binary`     VARCHAR(255) NOT NULL DEFAULT '',
     sha256       VARCHAR(64) NOT NULL DEFAULT '',
     address      TEXT NOT NULL,
     token_sealed TEXT NOT NULL,

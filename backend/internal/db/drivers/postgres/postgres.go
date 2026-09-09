@@ -4301,7 +4301,7 @@ func pgScanNodeComment(rs interface {
 
 // ─────────────────── Storage plugins (migration 00029) ───────────────────
 
-const pluginCols = `id, name, kind, binary, sha256, address, token_sealed, enabled, version, driver, last_error, created_at, updated_at`
+const pluginCols = `id, name, kind, "binary", sha256, address, token_sealed, enabled, version, driver, last_error, created_at, updated_at`
 
 func scanPlugin(r rowScanner) (*model.Plugin, error) {
 	p := &model.Plugin{}
@@ -4315,7 +4315,7 @@ func scanPlugin(r rowScanner) (*model.Plugin, error) {
 func (s *Store) CreatePlugin(ctx context.Context, p *model.Plugin) (*model.Plugin, error) {
 	var id int64
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO plugins (name, kind, binary, sha256, address, token_sealed, enabled, version, driver, last_error)
+		`INSERT INTO plugins (name, kind, "binary", sha256, address, token_sealed, enabled, version, driver, last_error)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
 		p.Name, p.Kind, p.Binary, p.SHA256, p.Address, p.TokenSealed, p.Enabled, p.Version, p.Driver, p.LastError).Scan(&id)
 	if err != nil {
@@ -4351,7 +4351,7 @@ func (s *Store) ListPlugins(ctx context.Context) ([]*model.Plugin, error) {
 
 func (s *Store) UpdatePlugin(ctx context.Context, p *model.Plugin) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE plugins SET kind=$1, binary=$2, sha256=$3, address=$4, token_sealed=$5, enabled=$6, version=$7, driver=$8, last_error=$9, updated_at=NOW()
+		`UPDATE plugins SET kind=$1, "binary"=$2, sha256=$3, address=$4, token_sealed=$5, enabled=$6, version=$7, driver=$8, last_error=$9, updated_at=NOW()
 		 WHERE id=$10`,
 		p.Kind, p.Binary, p.SHA256, p.Address, p.TokenSealed, p.Enabled, p.Version, p.Driver, p.LastError, p.ID)
 	return err
