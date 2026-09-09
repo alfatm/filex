@@ -1,5 +1,4 @@
-# filex + the end-user app, wired to each other — a throwaway stack for testing
-# `app/` against a REAL server instead of its mock repository.
+# A local filex instance: the server, plus the end-user app in front of it.
 #
 #   docker compose -f docker-compose.app.yml up --build
 #
@@ -10,24 +9,37 @@
 # The order matters and the second step needs no second login: a cookie is
 # scoped by DOMAIN, not by port, so the session minted on :5212 is sent to
 # :5175 as well. That port is deliberately NOT 5174: a `pnpm dev` running on
-# the host owns that one, and the stack must not fight it for it. The app itself has no login screen — it is the signed-in
-# surface, and the admin SPA is where an account signs in.
+# the host owns that one, and the stack must not fight it for it. The app
+# itself has no login screen — it is the signed-in surface, and the admin SPA
+# is where an account signs in.
 #
-# Nothing here is production shape: the admin password is in this file, the
-# database and the drive are throwaway volumes, and the app is served by Vite
-# with hot reload rather than built. `docker compose -f docker-compose.app.yml
-# down -v` erases the lot and gives you a fresh install on the next `up`.
+# This file and `docker-compose.yml` are ALTERNATIVES, not companions: both
+# name their server container `filex`, so running the two at once fails on the
+# name rather than starting two servers that would fight over nothing.
+#
+# The app is served by Vite rather than as a built bundle because filex does
+# not embed it — `backend/embed` carries the admin SPA and the embed widget and
+# nothing else. Hot reload comes along with that, which is what makes an edit
+# on the host visible here without rebuilding anything.
+#
+# What is NOT production shape, and would have to change before this faced
+# anyone but you: the admin password below, a server whose database and drive
+# are throwaway volumes, and the app on a dev server. `docker compose -f
+# docker-compose.app.yml down -v` erases the lot and gives a fresh install on
+# the next `up`.
+
+name: filex-app
 
 services:
   # ---------------------------------------------------------------------
-  # filex, built from THIS working tree — the point of the stack is to test
-  # against the endpoints in the branch, not against a published image.
+  # filex, built from THIS working tree rather than from a published image:
+  # the instance is meant to run the endpoints in the branch you are on.
   # ---------------------------------------------------------------------
   filex:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    container_name: filex-app-test
+    container_name: filex
     ports:
       - "${FILEX_PORT:-5212}:5212"
     volumes:
@@ -50,20 +62,24 @@ services:
       FILEX_ADMIN_PASSWORD: ${FILEX_ADMIN_PASSWORD:-FilexTest1!}
 
       # First boot also creates one writable drive. Its NAME is what the app
-      # addresses every node by (`main://Docs/report.pdf`), so it is worth
+      # addresses every node by (`home://Docs/report.pdf`), so it is worth
       # keeping short and recognisable in the URL bar.
       FILEX_DEFAULT_STORAGE_DRIVER: local
-      FILEX_DEFAULT_STORAGE_NAME: ${FILEX_STORAGE_NAME:-main}
+      FILEX_DEFAULT_STORAGE_NAME: ${FILEX_STORAGE_NAME:-home}
       FILEX_DEFAULT_STORAGE_PATH: /srv/files
 
       FILEX_THUMBS_ENABLED: "true"
 
-      # Encrypts the secrets filex has to read back (internal/secretbox). The
-      # assistant refuses to store its provider key without one, so the stand
-      # cannot configure a model until this is set. A fixed test value here on
-      # purpose — a real deploy generates its own and keeps it off the host it
-      # backs up to.
-      FILEX_SECRET_KEY: app-stand-not-a-real-key
+      # Encrypts the secrets filex has to read back (internal/secretbox) — the
+      # assistant refuses to store its provider key without one, so no model can
+      # be configured until this is set.
+      #
+      # The default is a fixed string, which means anyone holding this file can
+      # read the secrets of an instance that kept it. That is fine for a machine
+      # only you reach and wrong the moment it is not, so it is overridable:
+      # export FILEX_SECRET_KEY before `up`. Changing it later makes the secrets
+      # already stored unreadable — they are re-entered, not migrated.
+      FILEX_SECRET_KEY: ${FILEX_SECRET_KEY:-app-stand-not-a-real-key}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5212/healthz"]
       interval: 5s
@@ -78,7 +94,7 @@ services:
   # ---------------------------------------------------------------------
   app:
     image: node:20-alpine
-    container_name: filex-app-test-ui
+    container_name: filex-app
     working_dir: /repo
     depends_on:
       filex:

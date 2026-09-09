@@ -105,6 +105,8 @@ export const useSearchStore = defineStore('search', () => {
   const query = reactive<SearchQuery>(emptyQuery());
   const hits = ref<SearchHit[]>([]);
   const total = ref(0);
+  /** The answer stopped at the limit, so `total` is a floor: the count line says "N+" rather than "N". */
+  const capped = ref(false);
   const loading = ref(false);
 
   function assign(next: SearchQuery) {
@@ -140,10 +142,11 @@ export const useSearchStore = defineStore('search', () => {
       if (id !== seq) return;
       hits.value = result.hits;
       total.value = result.total;
+      capped.value = result.capped;
     } finally {
       if (id === seq) loading.value = false;
     }
   }
 
-  return { open, query, hits, total, loading, assign, reset, openModal, close, run };
+  return { open, query, hits, total, capped, loading, assign, reset, openModal, close, run };
 });

@@ -17,6 +17,7 @@
     "gen:demo": "node scripts/gen-demo-tree.mjs"
   },
   "dependencies": {
+    "@brftech/filex-core": "workspace:*",
     "@fontsource/inter": "^5.1.0",
     "@headlessui/vue": "^1.7.23",
     "lucide-vue-next": "^0.453.0",

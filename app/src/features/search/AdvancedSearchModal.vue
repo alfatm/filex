@@ -280,7 +280,7 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
         <div class="mt-3 h-px bg-border" />
 
         <div class="mt-[14px] flex h-[26px] items-center justify-between">
-          <h3 class="text-17 font-semibold leading-none" aria-live="polite">{{ t('search.matching', store.total) }}</h3>
+          <h3 class="text-17 font-semibold leading-none" aria-live="polite">{{ t(store.capped ? 'search.matchingMore' : 'search.matching', store.total) }}</h3>
           <button type="button" class="text-14 leading-none text-primary hover:underline" @click="submit">{{ t('search.viewAll') }}</button>
         </div>
 

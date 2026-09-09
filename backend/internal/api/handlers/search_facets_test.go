@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -179,4 +180,49 @@ func TestSearchFacets_DirsOnlyAnswersFoldersAndTheContradictionAnswersNothing(t 
 	// A folder with an extension is a contradiction. Answering it with nothing
 	// is more honest than quietly picking whichever half came last.
 	require.Empty(t, f.search(t, map[string]any{"query": "Belgeler", "dirs_only": true, "ext": []string{"pdf"}}))
+}
+
+// `capped` is the honest half of a question this endpoint cannot answer.
+//
+// A true total would mean running the whole pipeline over the whole drive —
+// the index over-fetches, the scorer drops half-matches, and the facet, tenant
+// and RBAC passes drop more — which is the work the limit exists to avoid. What
+// IS knowable is whether the answer was cut off, and a client that shows "100
+// matching items" over a search that stopped at a hundred is stating a total
+// nobody gave it.
+func TestSearch_SaysWhenTheAnswerWasCutOff(t *testing.T) {
+	f := newFacetFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	for i := 0; i < 5; i++ {
+		f.seed(t, fmt.Sprintf("rapor-%d.md", i), 10, now, nil)
+	}
+
+	capped := func(body map[string]any) bool {
+		t.Helper()
+		body["storage_id"] = f.st.ID
+		raw, err := json.Marshal(body)
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodPost, "/api/files/search", bytes.NewReader(raw))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		f.h.Search(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var out struct {
+			Results []struct {
+				Name string `json:"name"`
+			} `json:"results"`
+			Capped bool `json:"capped"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		// The row fetched to learn there was more is never sent.
+		require.LessOrEqual(t, len(out.Results), body["limit"].(int))
+		return out.Capped
+	}
+
+	require.True(t, capped(map[string]any{"query": "rapor", "limit": 2}), "five match, two asked for")
+	// Exactly as many as were asked for and no more is NOT cut off — which is
+	// why the search fetches one past the limit rather than reading a full page
+	// as evidence.
+	require.False(t, capped(map[string]any{"query": "rapor", "limit": 5}))
+	require.False(t, capped(map[string]any{"query": "rapor", "limit": 50}))
 }

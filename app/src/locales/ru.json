@@ -21,7 +21,8 @@
     "apiKeys": "API-ключи",
     "search": "Поиск",
     "collapseMenu": "Свернуть меню",
-    "expandMenu": "Развернуть меню"
+    "expandMenu": "Развернуть меню",
+    "reload": "Обновить страницу"
   },
   "new": {
     "button": "Создать",
@@ -203,6 +204,8 @@
     "help": "Справка",
     "assistant": "ИИ-ассистент",
     "account": "Аккаунт",
+    "theme": "Тема: {current}. Следующая — {next}",
+    "adminSettings": "Настройки администратора",
     "signOut": "Выйти"
   },
   "files": {
@@ -400,6 +403,7 @@
     "contentOptions": "Параметры поиска по содержимому",
     "wholePhrase": "Точная фраза",
     "matching": "{count} совпадение | {count} совпадения | {count} совпадений",
+    "matchingMore": "{count}+ совпадение | {count}+ совпадения | {count}+ совпадений",
     "viewAll": "Все результаты →",
     "updated": "Обновлено {date}",
     "reset": "Сбросить",

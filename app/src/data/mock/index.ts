@@ -285,6 +285,8 @@ export const mockRepository: Repository = {
       permissions: true,
       deleteForever: true,
       folderDownload: false,
+      // The connection guides and the token manager read the live deployment; a mock has no host to name.
+      connections: false,
     };
   },
   async search(query) {

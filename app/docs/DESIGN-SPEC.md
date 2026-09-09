@@ -75,8 +75,12 @@ open); §3/§4 are authoritative where an earlier draft said "padding 28 32".
   Items: Home, My files, Shared with me, Recent, Starred, Trash.
 - Caption "STORAGES" at y 438 (12/600 uppercase, `--c-text-3`, x 26); storage
   items same geometry as nav (icon `HardDrive`), active state identical.
-- Caption "CONNECTIONS" at y 530; items "How to connect" (`Cable`), "API keys"
-  (`KeyRound`) — inert for now ("Coming soon").
+- Caption "CONNECTIONS" at y 530; items "How to connect" (`Cable`, `/connect`)
+  and "API keys" (`KeyRound`, `/api-keys`), same geometry and active state as
+  the nav above. Both pages mount shared `@brftech/filex-core` components —
+  `ConnectionsPanel` and `TokensPanel` — which read the live deployment, so
+  they are links only when a server is answering (`Capabilities.connections`)
+  and stay inert ("Coming soon") against the mock.
 - Quota block pinned bottom, x 26, bottom 34: storage name 15/600, "12.4 GB of
   100 GB used" 13 `--c-text-3`, progress bar h 6 radius pill bg `#e5e7eb`,
   fill primary, w 234.
@@ -92,10 +96,19 @@ open); §3/§4 are authoritative where an earlier draft said "padding 28 32".
   separate advanced search. When the AI panel is open the box ends at x 962.
 - Right cluster (icons 22px `--c-text-2`, hit area 40×40, gap 8): `Sparkles`
   (opens the AI assistant; hidden while the panel is open so the bar keeps the
-  reference width), `LayoutGrid` (view/apps), `Settings`, `HelpCircle`, then
-  avatar 36 circle bg `--c-primary-soft` letter 15/600 primary, then
-  `ChevronDown` 16. Apps / Settings / Help / Account are inert for now
+  reference width), `LayoutGrid` (view/apps), the theme button, `Settings`,
+  `HelpCircle`, then avatar 36 circle bg `--c-primary-soft` letter 15/600
+  primary, then `ChevronDown` 16. Apps / Help are inert for now
   (`aria-disabled`, tooltip "Coming soon", no dimming).
+- Theme button (product addition, not in the ref; it takes 48px, so the icons
+  start at x 1352 rather than 1400): one control cycling light → system → dark,
+  its icon the state it IS — `Sun` / `Monitor` / `Moon`. A menu would be three
+  clicks for what is usually the next one along. Writes straight through, so it
+  applies on click; the settings modal's Appearance row is the same setting
+  behind a draft, and it covers this button while open.
+- Account menu (avatar): "User settings" opens the modal, "Admin settings"
+  opens `/admin/settings` in a new tab and is shown to admins only — the
+  console's own guard turns everybody else away — then "Sign out", inert.
 
 ## 3. Page: My files — grid + Details (ref 1)
 
@@ -446,7 +459,14 @@ could test.
   disarm both.
 - **Folder upload** takes the flat list the directory picker returns and
   rebuilds the tree from `webkitRelativePath`, reusing folders that already
-  exist; the folders appear at once, the files as their transfers finish.
+  exist; the folders appear at once, the files as their transfers finish. The
+  tree is built a LEVEL at a time — one level's folders are independent, so they
+  are created together and the cost of a hundred-folder drop is the tree's depth
+  rather than a hundred waits in a row — and a folder is created FIRST, with the
+  name collision read as "it is already there". Asking in advance costs a whole
+  listing of the parent to decide one boolean, and for a folder being uploaded
+  the usual answer is "not there"; the listing still happens on a collision,
+  which is when it earns its cost.
 
 ## 7c. Capabilities and tags
 

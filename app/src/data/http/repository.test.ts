@@ -520,7 +520,7 @@ describe('HttpRepository', () => {
     routes = [['/api/files/search', { results: [] }]];
     const repo = new HttpRepository();
     const query = {
-      text: 'annual report', tags: [], scope: 'all', searchIn: 'everywhere', folderPath: '',
+      text: 'annual report', tags: [], scope: 'all', searchIn: 'everywhere', folderPath: '', path: '',
       fileType: 'any', modified: 'any', size: { preset: 'any' }, ownerId: '',
       wholePhrase: true,
     } as unknown as Parameters<HttpRepository['search']>[0];
@@ -1045,5 +1045,67 @@ describe('HttpRepository', () => {
     expect(calls[0].body).toMatchObject({ query: 'brand', dirs_only: true });
     // The drive is sieved here rather than sent: the app addresses drives by name and has no numeric id to send.
     expect(folders.map((n) => n.id)).toEqual(['main://Design/Brand']);
+  });
+
+  // ── the advanced form's last three ──────────────────────────────────────────
+
+  const form = (patch: Record<string, unknown> = {}) =>
+    ({
+      text: 'report', tags: [], scope: 'all', searchIn: 'all', folderPath: '', path: '',
+      fileType: 'any', modified: 'any', size: { preset: 'any', min: null, max: null, unit: 'MB' },
+      ownerId: null, wholePhrase: false, ...patch,
+    }) as unknown as Parameters<HttpRepository['search']>[0];
+
+  // The Path box used to be a no-op over HTTP: the mock honoured it, the server was never told, and a person
+  // typing a folder got results from everywhere with no sign of it.
+  it('sends the typed Path as a prefix and keeps only the drive it names', async () => {
+    routes = [
+      [
+        '/api/files/search',
+        {
+          results: [
+            { id: 1, storage_id: 1, storage: 'main', name: 'q1.pdf', path: '/Design/q1.pdf', type: 'file', size: 5 },
+            { id: 2, storage_id: 2, storage: 'archive', name: 'q1.pdf', path: '/Design/q1.pdf', type: 'file', size: 5 },
+          ],
+        },
+      ],
+    ];
+    const { hits } = await new HttpRepository().search(form({ path: '/main/Design/' }));
+
+    // The drive comes off: `path_prefix` is relative to the storage. The drive itself cannot be sent — the request
+    // carries no storage id — so it is applied to the answer, which is exact because the answer is the whole answer.
+    expect(calls[0].body).toMatchObject({ path_prefix: '/Design' });
+    expect(hits.map((h) => h.node.id)).toEqual(['main://Design/q1.pdf']);
+  });
+
+  it('turns a hand-typed size range into bytes instead of sieving the answer', async () => {
+    routes = [['/api/files/search', { results: [] }]];
+    await new HttpRepository().search(form({ size: { preset: 'custom', min: 2, max: 5, unit: 'MB' } }));
+
+    expect(calls[0].body).toMatchObject({ size_min: 2 * 1024 ** 2, size_max: 5 * 1024 ** 2 });
+  });
+
+  it('asks nothing at all when the Path box and the folder scope name folders neither of which holds the other', async () => {
+    routes = [['/api/files/search', { results: [] }]];
+    const result = await new HttpRepository().search(form({ path: '/main/Design', searchIn: 'current', folderPath: 'Docs' }));
+
+    // Nothing can be inside both, and that is an answer rather than a request.
+    expect(calls).toHaveLength(0);
+    expect(result).toEqual({ hits: [], total: 0, capped: false });
+  });
+
+  it('takes the deeper of the two when they agree', async () => {
+    routes = [['/api/files/search', { results: [] }]];
+    await new HttpRepository().search(form({ path: '/main/Design/Brand', searchIn: 'current', folderPath: 'Design' }));
+
+    expect(calls[0].body).toMatchObject({ path_prefix: '/Design/Brand' });
+  });
+
+  it('carries the server’s “there is more” through, so the count can say so', async () => {
+    routes = [['/api/files/search', { results: [], capped: true }]];
+    expect((await new HttpRepository().search(form())).capped).toBe(true);
+
+    routes = [['/api/files/search', { results: [] }]];
+    expect((await new HttpRepository().search(form())).capped).toBe(false);
   });
 });

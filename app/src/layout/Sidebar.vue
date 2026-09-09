@@ -23,6 +23,7 @@ import {
 import { useModalsStore } from '@/features/files/modalsStore';
 import { useUploadStore } from '@/features/files/uploadStore';
 import { useFormat } from '@/composables/useFormat';
+import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
 import { Button, IconButton, ProgressBar } from '@/ui';
@@ -33,6 +34,7 @@ const baseUrl = import.meta.env.BASE_URL;
 const { formatSize } = useFormat();
 const route = useRoute();
 const files = useFilesStore();
+const capabilities = useCapabilitiesStore();
 const view = useViewStore();
 const modals = useModalsStore();
 const uploads = useUploadStore();
@@ -46,9 +48,11 @@ const nav = [
   { name: 'trash', icon: Trash2, label: 'nav.trash' },
 ] as const;
 
+// Both screens mount shared components that ask the deployment about itself — the real host, the caller's login,
+// the storage names. Against the mock there is nothing to ask, so the entries stay inert there.
 const connections = [
-  { id: 'howToConnect', icon: Cable, label: 'nav.howToConnect' },
-  { id: 'apiKeys', icon: KeyRound, label: 'nav.apiKeys' },
+  { name: 'connect', icon: Cable, label: 'nav.howToConnect' },
+  { name: 'apiKeys', icon: KeyRound, label: 'nav.apiKeys' },
 ] as const;
 
 // Creating comes first, bringing something in second; the divider is the line between the two.
@@ -63,6 +67,16 @@ const newMenu = ref<{ x: number; y: number } | null>(null);
 const fileInput = ref<HTMLInputElement>();
 const folderInput = ref<HTMLInputElement>();
 const NEW_MENU_GAP = 6;
+
+/**
+ * The logo reloads the app, the way the logo of a web app usually does.
+ *
+ * A real reload rather than a route change plus a refetch: what somebody clicks it for is to start over from a
+ * state they no longer trust, and only a reload rebuilds every store from scratch.
+ */
+function reload() {
+  window.location.reload();
+}
 
 function openNewMenu(event: MouseEvent) {
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
@@ -108,10 +122,22 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
       >
         <MenuIcon :size="22" :stroke-width="1.75" />
       </IconButton>
-      <template v-if="!view.sidebarCollapsed">
-        <img :src="`${baseUrl}logo.svg`" alt="" class="ml-6 h-8 w-8" />
+      <!--
+        The mark and the name are one control: clicking them reloads the app. Its accessible name is the visible
+        name rather than an aria-label, so what a person says out loud to a voice control is what they can read; the
+        tooltip carries what the click does. Geometry is unchanged — the `ml-6` that spaced the mark from the
+        hamburger moved onto the button, so nothing in the reference shifts.
+      -->
+      <button
+        v-if="!view.sidebarCollapsed"
+        type="button"
+        :title="t('nav.reload')"
+        class="ml-6 flex items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+        @click="reload"
+      >
+        <img :src="`${baseUrl}logo.svg`" alt="" class="h-8 w-8" />
         <span class="ml-4 text-22 font-semibold leading-none">{{ t('app.name') }}</span>
-      </template>
+      </button>
     </div>
 
     <!-- Same left edge (x 14) as the active nav pill below; the button's own icon and label are centred inside it. -->
@@ -175,8 +201,18 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
       <p v-if="!view.sidebarCollapsed" :class="[captionClass, '!mt-[26px]']">{{ t('nav.connections') }}</p>
       <div v-else class="mx-auto mt-[22px] h-px w-8 bg-border" />
       <ul class="mt-2 flex flex-col gap-px" :class="view.sidebarCollapsed ? 'items-center' : 'pl-[14px] pr-5'">
-        <li v-for="item in connections" :key="item.id">
+        <li v-for="item in connections" :key="item.name">
+          <RouterLink
+            v-if="capabilities.can.connections"
+            :to="{ name: item.name }"
+            :class="[linkClass, route.name === item.name && activeClass]"
+            :title="view.sidebarCollapsed ? t(item.label) : undefined"
+          >
+            <component :is="item.icon" :size="20" :stroke-width="1.75" class="shrink-0" />
+            <span :class="view.sidebarCollapsed && 'sr-only'">{{ t(item.label) }}</span>
+          </RouterLink>
           <button
+            v-else
             type="button"
             :class="[itemClass, view.sidebarCollapsed ? 'cursor-default' : 'w-full cursor-default']"
             aria-disabled="true"

@@ -108,13 +108,13 @@ describe('search store', () => {
       expect(pending).toHaveLength(2);
       expect(store.loading).toBe(true);
 
-      pending[1]({ hits: [], total: 2 });
+      pending[1]({ hits: [], total: 2, capped: false });
       await second;
       expect(store.total).toBe(2);
       expect(store.loading).toBe(false);
 
       // The stale answer arrives afterwards and must be dropped without flipping `loading`.
-      pending[0]({ hits: [], total: 1 });
+      pending[0]({ hits: [], total: 1, capped: false });
       await first;
       expect(store.total).toBe(2);
       expect(store.loading).toBe(false);

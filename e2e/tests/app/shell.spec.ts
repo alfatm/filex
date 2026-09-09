@@ -1,5 +1,19 @@
 import { test, expect } from '@playwright/test';
 
+test.describe('Logo', () => {
+  test('reloads the app, and says so in the reader\'s language', async ({ page }) => {
+    await page.goto('files/Design');
+    const logo = page.getByRole('button', { name: 'filex', exact: true });
+    await expect(logo).toHaveAttribute('title', 'Reload');
+
+    // A real reload, not a route change: the proof is that a value set on the window does not survive it.
+    await page.evaluate(() => ((window as unknown as { marker?: number }).marker = 1));
+    await logo.click();
+    await expect(page.getByRole('heading', { name: 'Design', level: 1 })).toBeVisible();
+    expect(await page.evaluate(() => (window as unknown as { marker?: number }).marker)).toBeUndefined();
+  });
+});
+
 test.describe('Sidebar rail', () => {
   test('collapses to icons, keeps every destination reachable and remembers the choice', async ({ page }) => {
     await page.goto('files');

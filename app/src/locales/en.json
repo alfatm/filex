@@ -21,7 +21,8 @@
     "apiKeys": "API keys",
     "search": "Search",
     "collapseMenu": "Collapse menu",
-    "expandMenu": "Expand menu"
+    "expandMenu": "Expand menu",
+    "reload": "Reload"
   },
   "new": {
     "button": "New",
@@ -203,6 +204,8 @@
     "help": "Help",
     "assistant": "AI assistant",
     "account": "Account",
+    "theme": "Theme: {current}. Switch to {next}",
+    "adminSettings": "Admin settings",
     "signOut": "Sign out"
   },
   "files": {
@@ -400,6 +403,7 @@
     "contentOptions": "Content search options",
     "wholePhrase": "Match whole phrase",
     "matching": "{count} matching item | {count} matching items",
+    "matchingMore": "{count}+ matching item | {count}+ matching items",
     "viewAll": "View all results →",
     "updated": "Updated {date}",
     "reset": "Reset",

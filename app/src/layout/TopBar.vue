@@ -2,10 +2,24 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
-import { ChevronDown, HelpCircle, LayoutGrid, LogOut, Search, Settings, SlidersHorizontal, Sparkles, UserRound } from 'lucide-vue-next';
+import {
+  ChevronDown,
+  HelpCircle,
+  LayoutGrid,
+  LogOut,
+  Monitor,
+  Moon,
+  Search,
+  Settings,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sparkles,
+  Sun,
+  UserRound,
+} from 'lucide-vue-next';
 import { emptyQuery, toUrlQuery, useSearchStore } from '@/features/search/searchStore';
 import { joinPath, segments } from '@/lib/path';
-import { useSettingsStore } from '@/features/settings/settingsStore';
+import { THEMES, useSettingsStore } from '@/features/settings/settingsStore';
 import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
@@ -27,15 +41,39 @@ const capabilities = useCapabilitiesStore();
 const accountMenu = ref<{ x: number; y: number } | null>(null);
 const ACCOUNT_MENU_WIDTH = 208;
 
-/** Signing out needs the session endpoint, so only the settings entry acts for now. */
+/**
+ * Theme, one click away.
+ *
+ * It cycles rather than opening a menu: three states, and the one a person wants is almost always the next one.
+ * The icon is the state it IS, not the state it would become — the button has to be readable when nobody is about
+ * to press it, and the tooltip says both. Writes straight to the store, which applies and persists it; the
+ * settings modal keeps a draft, but it covers this button while it is open, so the two cannot race.
+ */
+const THEME_ICONS = { light: Sun, system: Monitor, dark: Moon } as const;
+const theme = computed(() => settings.settings.theme);
+const nextTheme = computed(() => THEMES[(THEMES.indexOf(theme.value) + 1) % THEMES.length]);
+const themeLabel = computed(() => t('topbar.theme', { current: t(`settings.theme.${theme.value}`), next: t(`settings.theme.${nextTheme.value}`) }));
+
+/**
+ * The admin panel, same origin: the backend serves this app under `/app/` and the console under `/admin/`.
+ * Offered only to an admin — the panel's own guard sends everybody else back out, so a member would follow the
+ * entry to a bounce. Over HTTP the server only ever says `admin` or `member`; the mock account is an `owner`.
+ */
+const ADMIN_SETTINGS_URL = '/admin/settings';
+const isAdmin = computed(() => !!files.user && files.user.role !== 'member');
+
+/** Signing out needs the session endpoint, so only the settings entries act for now. */
 const accountItems = computed<FloatingMenuEntry[]>(() => [
   { id: 'settings', label: t('settings.title'), icon: UserRound },
+  ...(isAdmin.value ? [{ id: 'adminSettings', label: t('topbar.adminSettings'), icon: ShieldCheck }] : []),
   { id: 'signOut', label: t('topbar.signOut'), icon: LogOut, dividerBefore: true, disabled: true, hint: t('common.comingSoon') },
 ]);
 
 function onAccountSelect(id: string) {
   accountMenu.value = null;
   if (id === 'settings') settings.open = true;
+  // A new tab: the console is a different application, and the person was in the middle of their files.
+  else if (id === 'adminSettings') window.open(ADMIN_SETTINGS_URL, '_blank', 'noopener');
 }
 
 const input = ref<HTMLInputElement>();
@@ -118,6 +156,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
         <Sparkles :size="22" :stroke-width="1.75" />
       </IconButton>
       <IconButton :label="t('topbar.apps')" :disabled-hint="t('common.comingSoon')"><LayoutGrid :size="22" :stroke-width="1.75" /></IconButton>
+      <IconButton :label="themeLabel" @click="settings.settings.theme = nextTheme">
+        <component :is="THEME_ICONS[theme]" :size="22" :stroke-width="1.75" />
+      </IconButton>
       <IconButton :label="t('topbar.settings')" @click="settings.open = true"><Settings :size="22" :stroke-width="1.75" /></IconButton>
       <IconButton :label="t('topbar.help')" :disabled-hint="t('common.comingSoon')"><HelpCircle :size="22" :stroke-width="1.75" /></IconButton>
       <button

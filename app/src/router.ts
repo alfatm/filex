@@ -8,6 +8,8 @@ const SearchPage = () => import('./pages/SearchPage.vue');
 const SharedPage = () => import('./pages/SharedPage.vue');
 const StarredPage = () => import('./pages/StarredPage.vue');
 const TrashPage = () => import('./pages/TrashPage.vue');
+const ConnectPage = () => import('./pages/ConnectPage.vue');
+const ApiKeysPage = () => import('./pages/ApiKeysPage.vue');
 
 export const routes = [
   { path: '/', alias: '/home', name: 'home', component: HomePage },
@@ -20,6 +22,10 @@ export const routes = [
   // One storage for now: its entry is the files root (the sidebar marks it active on every files route).
   { path: '/storage/:id', name: 'storage', redirect: '/files' },
   { path: '/search', name: 'search', component: SearchPage },
+  // The two connection screens. Both mount shared components that talk to the server directly, so the sidebar
+  // only links them when there is one (see `Capabilities.connections`).
+  { path: '/connect', name: 'connect', component: ConnectPage },
+  { path: '/api-keys', name: 'apiKeys', component: ApiKeysPage },
 ] as const;
 
 export default createRouter({

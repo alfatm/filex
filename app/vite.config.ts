@@ -164,6 +164,9 @@ export default defineConfig({
     hmr: process.env.VITE_HMR_CLIENT_PORT ? { clientPort: Number(process.env.VITE_HMR_CLIENT_PORT) } : undefined,
     proxy: {
       '/api': process.env.FILEX_API_PROXY ?? 'http://localhost:5212',
+      // The admin console, so the account menu's "Admin settings" opens it from here too. In a deployment the
+      // two are one origin already; in dev they are two ports, and a same-origin link would reopen this app.
+      '/admin': process.env.FILEX_API_PROXY ?? 'http://localhost:5212',
     },
   },
 });

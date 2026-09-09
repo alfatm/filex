@@ -85,6 +85,44 @@ describe('upload store', () => {
     expect(files.ordered.map((n) => n.name).sort()).toEqual(['b.txt', 'c.txt', 'd.txt']);
   });
 
+  // What the tree build costs. The old walk asked for a full listing of the parent before every folder, to decide
+  // one boolean, and did the whole thing one file at a time.
+  it('builds an uploaded tree a level at a time, without listing a folder to find out a name is free', async () => {
+    const { uploads } = await setup();
+    const created = vi.spyOn(repository, 'createFolder');
+    const listed = vi.spyOn(repository, 'listFolder');
+
+    await uploads.start([inFolder('Trip/a.txt'), inFolder('Trip/raw/b.txt'), inFolder('Trip/raw/c.txt')]);
+
+    // Two folders, two creates — three files sharing them cost nothing extra.
+    expect(created.mock.calls.map((c) => c[1])).toEqual(['Trip', 'raw']);
+    // One listing, and it is the refresh that puts the new tree on screen. Neither folder was listed for to find
+    // out its name was free: a folder being uploaded is usually new, so the collision is read as the answer
+    // instead of being asked about in advance. The old walk listed once per folder — three in total here.
+    expect(listed).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads a name collision as “it is already there” and pays for the listing only then', async () => {
+    const { files, uploads } = await setup();
+    await uploads.start([inFolder('Trip/a.txt')]);
+    await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS);
+    await files.openPath('');
+
+    const listed = vi.spyOn(repository, 'listFolder');
+    await uploads.start([inFolder('Trip/b.txt')]);
+    // Counted while the tree build is the only thing that has happened: two, the collision — which is the one time
+    // a listing earns its cost — and the refresh that shows the tree.
+    expect(listed).toHaveBeenCalledTimes(2);
+    listed.mockRestore(); // everything below transfers or navigates, and both list
+
+    await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS);
+    // Reused, not duplicated, and the second file landed in it.
+    const trip = files.ordered.filter((n) => n.name === 'Trip');
+    expect(trip).toHaveLength(1);
+    await files.open(trip[0].id);
+    expect(files.ordered.map((n) => n.name).sort()).toEqual(['a.txt', 'b.txt']);
+  });
+
   it('clear() mid-flight keeps the in-flight upload running and drops finished rows only', async () => {
     const { files, uploads } = await setup();
     await uploads.start([file('first.txt')]);

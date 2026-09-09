@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { repository } from '@/data';
+import { DUPLICATE_NAME } from '@/data/repository';
 import { useFilesStore } from '@/stores/files';
 
 /**
@@ -76,36 +77,67 @@ export const useUploadStore = defineStore('uploads', () => {
   async function start(list: FileList | File[], target?: string) {
     const root = target ?? files.targetFolderId;
     if (!root) return;
-    const chain = new Map<string, string>([['', root]]);
-    let createdFolder = false;
-    for (const file of Array.from(list)) {
-      const parts = file.webkitRelativePath ? file.webkitRelativePath.split('/').slice(0, -1) : [];
-      const parentId = await folderFor(root, parts, chain);
-      createdFolder ||= parts.length > 0;
-      void transfer(file, parentId);
+    const all = Array.from(list);
+    const chain = await buildTree(root, all);
+    for (const file of all) {
+      void transfer(file, chain.get(folderPath(file)) ?? root);
     }
     // The tree is there long before the first file finishes; show it right away.
-    if (createdFolder) await files.refresh();
+    if (chain.size > 1) await files.refresh();
   }
 
-  /** Walks `parts` under `root`, reusing folders that exist and creating the rest; `chain` caches both. */
-  async function folderFor(root: string, parts: string[], chain: Map<string, string>): Promise<string> {
-    let parentId = root;
-    let path = '';
-    for (const name of parts) {
-      path = path ? `${path}/${name}` : name;
-      const known = chain.get(path);
-      if (known !== undefined) {
-        parentId = known;
-        continue;
-      }
-      const siblings = await repository.listFolder(parentId);
-      const existing = siblings.find((n) => n.kind === 'folder' && n.name === name);
-      const node = existing ?? (await repository.createFolder(parentId, name));
-      chain.set(path, node.id);
-      parentId = node.id;
+  /** The folder a dropped file belongs in, relative to the drop target. "" for a plain file selection. */
+  function folderPath(file: File): string {
+    return file.webkitRelativePath ? file.webkitRelativePath.split('/').slice(0, -1).join('/') : '';
+  }
+
+  /**
+   * The folders a dropped tree needs, keyed by their path under `root`.
+   *
+   * Built a LEVEL at a time rather than a file at a time. Every folder on one level is independent — their parents
+   * are all resolved by then — so they are created together, and the cost of a hundred-folder drop becomes the
+   * tree's depth instead of a hundred waits in a row. The old walk also asked for a full listing of the parent
+   * before every single folder, to find out whether the name was taken.
+   */
+  async function buildTree(root: string, list: File[]): Promise<Map<string, string>> {
+    const chain = new Map<string, string>([['', root]]);
+    // Every folder the drop implies, including intermediate ones holding no file of their own.
+    const levels: Set<string>[] = [];
+    for (const file of list) {
+      const parts = folderPath(file) ? folderPath(file).split('/') : [];
+      parts.forEach((_, i) => {
+        (levels[i] ??= new Set()).add(parts.slice(0, i + 1).join('/'));
+      });
     }
-    return parentId;
+    for (const level of levels) {
+      const paths = [...level];
+      const made = await Promise.all(
+        paths.map((path) => {
+          const cut = path.lastIndexOf('/');
+          return folderAt(chain.get(cut < 0 ? '' : path.slice(0, cut))!, path.slice(cut + 1));
+        }),
+      );
+      paths.forEach((path, i) => chain.set(path, made[i]));
+    }
+    return chain;
+  }
+
+  /**
+   * One folder: created, or found where it already was.
+   *
+   * Create FIRST and read the collision as the answer. Asking "is it there" costs a whole listing of the parent —
+   * every row of it, to decide one boolean — and for a folder being uploaded the usual answer is "no". The listing
+   * still happens on a collision, which is exactly when it is worth paying for.
+   */
+  async function folderAt(parentId: string, name: string): Promise<string> {
+    try {
+      return (await repository.createFolder(parentId, name)).id;
+    } catch (error) {
+      if ((error as Error).message !== DUPLICATE_NAME) throw error;
+      const existing = (await repository.listFolder(parentId)).find((n) => n.kind === 'folder' && n.name === name);
+      if (!existing) throw error;
+      return existing.id;
+    }
   }
 
   /**

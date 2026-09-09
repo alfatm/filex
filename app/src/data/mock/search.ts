@@ -64,6 +64,9 @@ export function search(query: SearchQuery, now = Date.now()): SearchResult {
   // Whole-phrase keeps the text as one term; otherwise every word must be found somewhere.
   const terms = query.wholePhrase ? [query.text.trim()].filter(Boolean) : query.text.split(/\s+/).filter(Boolean);
   const matchesText = (value: string) => terms.every((term) => fold(value).includes(fold(term)));
+  // A subtree, not a raw string prefix — the same thing the server's `path_prefix` means, so the demo and a real
+  // install answer the Path box alike. `/demo/design` is "inside Design"; it is not "anything starting with those
+  // letters", which would also match a sibling called `Designs`.
   const pathFilter = query.path.trim().replace(/\/+$/, '').toLowerCase();
   const tagsWanted = query.tags.map((t) => t.toLowerCase());
   const scopeRoot = `/${joinPath([rootNode.name, ...segments(query.folderPath)])}/`.toLowerCase();
@@ -83,7 +86,7 @@ export function search(query: SearchQuery, now = Date.now()): SearchResult {
 
     if (query.searchIn === 'shared' && !node.shared) continue;
     if (query.searchIn === 'current' && !`${folderAbs.toLowerCase()}/`.startsWith(scopeRoot)) continue;
-    if (pathFilter && !fullPath.toLowerCase().startsWith(pathFilter)) continue;
+    if (pathFilter && !inSubtree(fullPath.toLowerCase(), pathFilter)) continue;
     if (tagsWanted.length && !tagsWanted.every((t) => tags.includes(t))) continue;
     if (query.ownerId && node.ownerId !== query.ownerId) continue;
     if (query.fileType !== 'any' && (node.kind !== 'file' || !TYPE_GROUPS[query.fileType].includes(node.fileType ?? 'other'))) continue;
@@ -113,5 +116,11 @@ export function search(query: SearchQuery, now = Date.now()): SearchResult {
       contentText !== null && (query.scope === 'all' || query.scope === 'content') ? snippetOf(contentText, highlight) : undefined;
     hits.push({ node, storageId, folderPath: folder, snippet });
   }
-  return { hits, total: hits.length };
+  // No limit here, so nothing is ever cut off: the mock's answer is always the whole answer.
+  return { hits, total: hits.length, capped: false };
+}
+
+/** Whether `path` is `prefix` itself or something inside it. Segment-wise, so `/a/bc` is not inside `/a/b`. */
+function inSubtree(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}/`);
 }

@@ -199,16 +199,42 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const SIZE_UNIT_BYTES = { KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3 } as const;
 
 /**
+ * Where a search is confined: a drive, and a folder inside it — or `null` for "nowhere it could match".
+ *
+ * Two controls say this, and they can both be set. The Path box names a drive and a folder in the FULL address
+ * space (`/demo/design/`), because that is what a person sees in the breadcrumb; the server's `path_prefix` is
+ * relative to the storage, so the drive comes off here. The "current folder" scope names a folder without a drive.
+ * Both are subtrees, so setting both means the deeper of the two — unless neither contains the other, and then
+ * they contradict and nothing can satisfy both. That is an answer, not a failure, and it costs no request.
+ */
+function searchConfine(query: SearchQuery): { drive?: string; prefix: string } | null {
+  const typed = query.path.split('/').filter(Boolean);
+  const scoped = query.searchIn === 'current' ? query.folderPath.split('/').filter(Boolean) : [];
+  if (!typed.length) return { prefix: scoped.join('/') };
+  const [drive, ...under] = typed;
+  if (!scoped.length) return { drive, prefix: under.join('/') };
+  const [deep, shallow] = under.length >= scoped.length ? [under, scoped] : [scoped, under];
+  if (shallow.some((part, i) => part !== deep[i])) return null;
+  return { drive, prefix: deep.join('/') };
+}
+
+/**
  * The advanced form as request fields. Extensions rather than a group name, because which extensions count as
  * "documents" is the app's word and `extensionsOf` is where it is kept — the server holds no second copy of it.
  */
-function searchFacets(query: SearchQuery): Record<string, unknown> {
+function searchFacets(query: SearchQuery, confine: { prefix: string }): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   // `searchIn`, not `scope`: the scope picks which FIELDS are consulted, this picks WHERE.
-  if (query.searchIn === 'current' && query.folderPath) out.path_prefix = `/${query.folderPath}`;
+  if (confine.prefix) out.path_prefix = `/${confine.prefix}`;
   if (query.fileType !== 'any') out.ext = extensionsOf(TYPE_GROUPS[query.fileType]);
   if (query.modified !== 'any') out.modified_after = Date.now() - MODIFIED_WINDOW_DAYS[query.modified] * DAY_MS;
-  if (query.size.preset !== 'any' && query.size.preset !== 'custom') {
+  if (query.size.preset === 'custom') {
+    // A hand-typed range is bytes after a multiplication, which is exactly what the server takes. It used to be
+    // sieved out of the answer instead, so past the hit limit it narrowed a WINDOW rather than the search.
+    const unit = SIZE_UNIT_BYTES[query.size.unit] ?? 1;
+    if (query.size.min !== null) out.size_min = query.size.min * unit;
+    if (query.size.max !== null) out.size_max = query.size.max * unit;
+  } else if (query.size.preset !== 'any') {
     const [min, max] = SIZE_PRESET_BYTES[query.size.preset];
     if (min > 0) out.size_min = min;
     if (Number.isFinite(max)) out.size_max = max;
@@ -251,18 +277,6 @@ function listingFacets(filter?: ListingFilter): Record<string, string | number |
 function quoted(text: string): string {
   const inner = text.replaceAll('"', ' ').trim();
   return inner ? `"${inner}"` : '';
-}
-
-/**
- * The one size form the server has no expression for: a hand-typed range. The presets became `size_min`/`size_max`
- * on the request; this stays here because the form allows a range in whichever unit the user picked.
- */
-function withinCustomSize(node: Node, size: SearchQuery['size']): boolean {
-  if (node.kind !== 'file') return false;
-  const unit = SIZE_UNIT_BYTES[size.unit] ?? 1;
-  if (size.min !== null && node.size < size.min * unit) return false;
-  if (size.max !== null && node.size > size.max * unit) return false;
-  return true;
 }
 
 function asRepositoryError(error: unknown): never {
@@ -612,6 +626,8 @@ export class HttpRepository implements Repository {
       deleteForever: true,
       // And the per-node event feed (`GET /api/files/activity`), which the details panel's second tab needs.
       activity: true,
+      // `/api/tokens` and the guides' own endpoints are mounted unconditionally and open to every account.
+      connections: true,
     };
   }
 
@@ -1113,20 +1129,25 @@ export class HttpRepository implements Repository {
     // because `invoice 2026` has to keep finding `invoice_2026.pdf`. The tag terms stay outside the quotes.
     const phrase = query.wholePhrase ? quoted(query.text) : query.text;
     const text = query.tags.length ? [phrase, ...query.tags.map((t) => `tag:${t}`)].join(' ').trim() : phrase;
+    const confine = searchConfine(query);
+    // The Path box and the current-folder scope naming two folders neither of which holds the other. Nothing can
+    // satisfy both, and that is the answer — no request is worth making for it.
+    if (!confine) return { hits: [], total: 0, capped: false };
     // POST rather than the GET form: the facets are a list and four numbers, and the body is where filex's search
     // has always taken them. No storage_id — the app addresses drives by name and has no numeric one to send, so
-    // the server asks every drive the caller could see and lets its own RBAC pass decide what comes back.
-    const { results } = await request<{ results: (WireNode & { snippet?: string })[] }>('/api/files/search', {
+    // the server asks every drive the caller could see and lets its own RBAC pass decide what comes back. Which is
+    // also why a Path box naming a drive is sieved here: it is the one part of the confinement the request cannot
+    // carry.
+    const { results, capped } = await request<{ results: (WireNode & { snippet?: string })[]; capped?: boolean }>('/api/files/search', {
       method: 'POST',
-      body: { query: text, limit: SEARCH_LIMIT, ...(scope ? { scope } : {}), ...searchFacets(query) },
+      body: { query: text, limit: SEARCH_LIMIT, ...(scope ? { scope } : {}), ...searchFacets(query, confine) },
     });
     const hits: SearchHit[] = [];
     for (const row of results) {
       if (!row.storage) continue;
+      if (confine.drive && row.storage !== confine.drive) continue;
       const node = this.owned(fromModelNode(row, row.storage), row.owner_id !== undefined);
       this.remember(node.id, row.id);
-      // Only what the server could not express: a hand-typed size range.
-      if (query.size.preset === 'custom' && !withinCustomSize(node, query.size)) continue;
       const parent = parentPath(node.id);
       hits.push({
         node,
@@ -1136,7 +1157,8 @@ export class HttpRepository implements Repository {
         ...(row.snippet ? { snippet: fromSnippet(row.snippet) } : {}),
       });
     }
-    return { hits, total: hits.length };
+    // `capped` says the server stopped at the limit with more still matching, so the count is a floor, not a total.
+    return { hits, total: hits.length, capped: capped ?? false };
   }
 
 

@@ -21,7 +21,8 @@
     "apiKeys": "API anahtarları",
     "search": "Arama",
     "collapseMenu": "Menüyü daralt",
-    "expandMenu": "Menüyü genişlet"
+    "expandMenu": "Menüyü genişlet",
+    "reload": "Yeniden yükle"
   },
   "new": {
     "button": "Yeni",
@@ -203,6 +204,8 @@
     "help": "Yardım",
     "assistant": "Yapay zekâ asistanı",
     "account": "Hesap",
+    "theme": "Tema: {current}. {next} moduna geç",
+    "adminSettings": "Yönetici ayarları",
     "signOut": "Oturumu kapat"
   },
   "files": {
@@ -400,6 +403,7 @@
     "contentOptions": "İçerik arama seçenekleri",
     "wholePhrase": "Tam ifadeyle eşleştir",
     "matching": "{count} eşleşen öğe",
+    "matchingMore": "{count}+ eşleşen öğe",
     "viewAll": "Tüm sonuçları gör →",
     "updated": "Güncellendi: {date}",
     "reset": "Sıfırla",

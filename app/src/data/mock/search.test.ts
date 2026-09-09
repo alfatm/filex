@@ -86,7 +86,7 @@ describe('mock search', () => {
     expect(paths).toHaveLength(12);
     // The Design folder, the two indexed hits and its 8 real files.
     expect(search(query({ text: 'design', path: '/demo/design' })).hits).toHaveLength(11);
-    expect(search(query({ text: 'nothing-here' }))).toEqual({ hits: [], total: 0 });
+    expect(search(query({ text: 'nothing-here' }))).toEqual({ hits: [], total: 0, capped: false });
   });
 
   it('restricts the current-folder scope to a nested folder path', () => {

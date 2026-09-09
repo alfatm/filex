@@ -64,6 +64,8 @@ export interface Capabilities {
   deleteForever: boolean;
   /** Downloading a folder or a mixed selection as one archive. */
   folderDownload: boolean;
+  /** "How to connect" and "API keys": the shared panels, which need a real server to answer for. */
+  connections: boolean;
 }
 
 /** Everything off: what an unreachable or older server is assumed to offer until it answers. */
@@ -82,6 +84,7 @@ export function noCapabilities(): Capabilities {
     permissions: false,
     deleteForever: false,
     folderDownload: false,
+    connections: false,
   };
 }
 
@@ -314,6 +317,14 @@ export interface SearchHit {
 export interface SearchResult {
   hits: SearchHit[];
   total: number;
+  /**
+   * The answer stopped at the limit with more still matching, so `total` is a floor rather than a count.
+   *
+   * A true total is not cheaply knowable: the index over-fetches candidates and the scorer, the facets, the tenant
+   * pass and RBAC each drop some, so counting them all means running the whole pipeline over the whole drive. What
+   * IS knowable is whether the answer was cut off — and saying "100+" is honest where saying "100" was not.
+   */
+  capped: boolean;
 }
 
 export type AssistantMode = 'filename' | 'content' | 'tags';

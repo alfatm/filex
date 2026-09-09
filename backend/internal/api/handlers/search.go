@@ -436,12 +436,14 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			results = append(results, searchResult{Node: n, Matched: search.MatchedName})
-			if len(results) >= req.Limit {
+			// One past the limit, deliberately: it is the difference between
+			// knowing there is more and guessing it from a full page.
+			if len(results) > req.Limit {
 				break
 			}
 		}
 	case h.Index != nil:
-		hits := h.Index.SafeSearchFiltered(r.Context(), parsed.Text, req.Limit, sc, tagFilter)
+		hits := h.Index.SafeSearchFiltered(r.Context(), parsed.Text, req.Limit+1, sc, tagFilter)
 		for _, hit := range hits {
 			n, err := h.Store.GetNode(r.Context(), hit.NodeID)
 			if err == nil && (req.StorageID == 0 || n.StorageID == req.StorageID) {
@@ -473,12 +475,27 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				results = append(results, searchResult{Node: n, Matched: search.MatchedName})
-				if len(results) >= req.Limit {
+				if len(results) > req.Limit {
 					break
 				}
 			}
 			sortByRank(results, plan)
 		}
+	}
+	// `capped` is the honest half of a question this endpoint cannot answer.
+	//
+	// A TRUE total would mean running the whole pipeline over the whole drive:
+	// the index over-fetches candidates, the scorer drops half-matches, and the
+	// facet, tenant and RBAC passes below drop more. Counting all of that is
+	// the work the limit exists to avoid.
+	//
+	// What is knowable is whether the answer was cut off, and that is worth
+	// saying: a client showing "100 matching items" over a search that stopped
+	// at a hundred is stating a total it was never given. With this it can say
+	// "100+", which is true. The extra row is dropped here rather than sent.
+	capped := len(results) > req.Limit
+	if capped {
+		results = results[:req.Limit]
 	}
 	// The index restriction covers the branch that consults the index. The bare
 	// `tag:` listing and the SQL LIKE fallback do not go through it at all, and
@@ -542,7 +559,7 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 	// nothing to print it as, so the results list named the caller as the owner
 	// of every file it found, on a shared drive included.
 	attachOwnerNames(r.Context(), h.Store, nodes)
-	out := map[string]any{"results": results}
+	out := map[string]any{"results": results, "capped": capped}
 	if facetTruncated {
 		// Said out loud rather than absorbed: past the ceiling the facet set is
 		// a sample, so a hit outside it cannot be found however well it matches.
