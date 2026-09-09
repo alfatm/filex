@@ -509,6 +509,12 @@ exactly — a folder listing is not paged, and shared-with-me is asked for its
 whole page because its rows are grants, not files, and carry nothing a query
 could test.
 
+Beside the chips on My files sits a name box ("Filter in this folder…", pill
+h 38, w 265, folder icon). It narrows the open folder by substring, case
+insensitively, in the client — the folder listing is complete, so nothing is
+lost — and is cleared on every navigation, because it belongs to the folder
+it was typed in. It counts as a filter for the empty state and "Clear filters".
+
 ## 7b. Navigation, dragging and load states
 
 - **Breadcrumbs**: the home button, then every folder above the open one, then

@@ -2,7 +2,7 @@
 import { watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
-import { AlertTriangle, Filter, FolderOpen, Info, LayoutGrid, List, MoreVertical, Upload } from 'lucide-vue-next';
+import { AlertTriangle, Filter, Folder, FolderOpen, Info, LayoutGrid, List, MoreVertical, Upload } from 'lucide-vue-next';
 import FilterChip from '@/features/files/FilterChip.vue';
 import { type FilterId } from '@/features/files/filters';
 import { useDragStore } from '@/features/files/dragStore';
@@ -12,7 +12,7 @@ import { useUploadStore } from '@/features/files/uploadStore';
 import { splitRoute } from '@/lib/path';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
-import { Button, IconButton } from '@/ui';
+import { Button, IconButton, Input } from '@/ui';
 import Breadcrumbs from './files/Breadcrumbs.vue';
 import DetailsPanel from './files/DetailsPanel.vue';
 import EmptyState from './files/EmptyState.vue';
@@ -136,6 +136,17 @@ watch(
       <div role="group" :aria-label="t('filter.title')" class="flex items-center gap-[10px]">
         <FilterChip v-for="id in FILTERS" :key="id" :id="id" />
       </div>
+      <!-- Narrows the open folder by name on the client; it is cleared on every navigation (see the store). -->
+      <Input
+        v-model="files.nameFilter"
+        type="search"
+        :icon="Folder"
+        :height="38"
+        :width="265"
+        class="!rounded-full"
+        :placeholder="t('filter.name')"
+        :label="t('filter.name')"
+      />
       <SortControl v-if="view.mode === 'list'" variant="pill" class="ml-auto mr-[10px]" />
       <template v-else>
         <SortControl class="ml-auto" />

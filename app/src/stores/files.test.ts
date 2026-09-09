@@ -114,6 +114,20 @@ describe('files store', () => {
     expect(files.loading).toBe(false);
   });
 
+  it('the name box narrows the open folder case-insensitively and is cleared by the next navigation', async () => {
+    const files = await setup();
+    await files.openPath(null, 'Design');
+    files.nameFilter = '  .PNG ';
+    expect(files.filtered).toBe(true);
+    expect(files.ordered.map((n) => n.name)).toEqual(['dashboard.png', 'wireframe.png']);
+    await files.openPath(null, '');
+    expect(files.nameFilter).toBe('');
+    expect(files.filtered).toBe(false);
+    files.nameFilter = 'nope';
+    files.clearFilter();
+    expect(files.nameFilter).toBe('');
+  });
+
   it('orders folders before files and sorts modified dates as instants', async () => {
     const files = await setup();
     const view = useViewStore();

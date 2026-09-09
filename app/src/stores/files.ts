@@ -65,7 +65,9 @@ export const useFilesStore = defineStore('files', () => {
   const focusPath = ref<Node[]>([]);
   /** Chips above the listing. The repository applies them, so every change is a fresh load, as it will be over HTTP. */
   const filter = ref<ListingFilter>(emptyFilter());
-  const filtered = computed(() => isFiltered(filter.value));
+  /** The box beside the chips: narrows the open folder by name. A folder listing is not paged, so it is applied here, exactly. */
+  const nameFilter = ref('');
+  const filtered = computed(() => isFiltered(filter.value) || nameFilter.value.trim() !== '');
   const filterPeople = ref<Person[]>([]);
   const listing = ref<Listing | null>(null);
   /** True while the newest load is in flight; the pages show a skeleton instead of an empty listing. */
@@ -103,7 +105,9 @@ export const useFilesStore = defineStore('files', () => {
           return a.name.localeCompare(b.name, i18n.global.locale.value, { sensitivity: 'base' }) * dir;
       }
     };
-    return [...items.value].sort(cmp);
+    const query = nameFilter.value.trim().toLowerCase();
+    const named = query ? items.value.filter((n) => n.name.toLowerCase().includes(query)) : items.value;
+    return [...named].sort(cmp);
   });
   const folders = computed(() => sorted.value.filter((n) => n.kind === 'folder'));
   const files = computed(() => sorted.value.filter((n) => n.kind === 'file'));
@@ -191,6 +195,8 @@ export const useFilesStore = defineStore('files', () => {
   // The selection is dropped before the load, so whoever reacts to the new listing (details panel, dev hooks)
   // sees it clean rather than the old one vanishing a tick later.
   async function open(folderId: string) {
+    // "Filter in this folder": the name box belongs to the folder it was typed in.
+    nameFilter.value = '';
     selection.clear();
     selection.focusedId.value = null;
     await load({ kind: 'folder', folderId });
@@ -243,6 +249,7 @@ export const useFilesStore = defineStore('files', () => {
 
   async function openListing(kind: ListingKind) {
     lastAddress = null;
+    nameFilter.value = '';
     selection.clear();
     selection.focusedId.value = null;
     await load({ kind });
@@ -302,6 +309,7 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   function clearFilter() {
+    nameFilter.value = '';
     return setFilter(emptyFilter());
   }
 
@@ -464,6 +472,7 @@ export const useFilesStore = defineStore('files', () => {
     loading,
     error,
     filter,
+    nameFilter,
     filtered,
     filterPeople,
     listing,
