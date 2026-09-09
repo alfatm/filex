@@ -3,7 +3,7 @@ import type { Node } from '@/data/types';
 import { CSV_MAX_ROWS, parseCsv, previewKind, previewList, splitLines, TEXT_MAX_BYTES } from './preview';
 
 const file = (name: string, extra: Partial<Node> = {}): Node =>
-  ({ id: name, name, kind: 'file', size: 100, assetUrl: `/app/demo-assets/${name}`, fileType: 'other', ...extra }) as Node;
+  ({ id: name, name, kind: 'file', size: 100, assetUrl: `/demo-assets/${name}`, fileType: 'other', ...extra }) as Node;
 
 describe('previewKind', () => {
   it('maps the node type and extension to a renderer', () => {

@@ -6,24 +6,59 @@ and kept in step with the code since. ✅ means the app and filex agree; ⚠️ 
 something is still done in the client, or done in a way worth knowing about; ❌
 means there is nothing on the server to talk to.
 
-## Hosting: filex does not serve this app ❌
+## Hosting: filex serves this app ✅
 
-The biggest gap is not an endpoint. **The Go server has no `/app` route at all**
-— `backend/embed/embed.go` embeds `admin` and `web` and nothing else, and
-`routes.go` mounts the ADMIN bundle at `/drive`. The app is in no Dockerfile and
-in no CI job either.
+**Closed.** The earlier decision here — *"the dev stand is the whole story for
+now; embedding the app in the binary is a later wave"* — was reversed: the app
+is embedded in the binary and mounted at the **root**. An apex visit is a person
+wanting their files; the admin console keeps `/admin/`, and `/` was a 302 to it
+until this moved.
 
-So the only way to run it today is `docker-compose.app.yml`, which builds
-`packages/core` and `app/` inside the container and serves the bundle with
-`vite preview` on :5175. `base` stays `/app/` because that is the path that
-stand serves it from — not because anything in Go mounts it.
+What carries it:
 
-Decision, so it stops living in people's heads: **the dev stand is the whole
-story for now; embedding the app in the binary is a later wave.** Two things
-follow from it and are already in place — the stand serves a BUILD, not the dev
-server, so the screenshot/e2e hooks in `src/dev/screenshotQuery.ts` cannot fake
-answers against a real backend; and a production `vite build` without
-`VITE_FILEX_API` fails instead of quietly shipping the mock repository.
+| Piece | Where |
+|---|---|
+| `//go:embed all:admin all:web all:app` | `backend/embed/embed.go` |
+| `/` + the root catch-all, wired LAST in `wireStatic` | `backend/internal/api/routes.go` |
+| built + staged into `embed/app` | `docker/Dockerfile`, `docker/Dockerfile.slim` |
+| built + copied for the goreleaser binaries | `.github/workflows/release.yml` (`binaries`) |
+| built + copied for a local `pnpm run build:all` | `scripts/sync-embed.mjs`, `package.json` |
+| `.keep` placeholder so a CLI-only build compiles | `desktop/scripts/fetch-cli.mjs` |
+
+Four properties of that wiring are deliberate:
+
+- **`/api/*` answers 404 on its own.** Measured, not assumed: with only the
+  catch-all in place, `/api/nope` came back `200 text/html` — the SPA's
+  index.html — because the API surface is registered endpoint by endpoint
+  rather than behind one blanket subrouter. A removed or mistyped endpoint has
+  to stay a 404, or it reaches the caller as "unexpected token <" from a JSON
+  parser.
+- **The root catch-all is registered LAST.** chi prefers the more specific
+  pattern, so `/api/…`, `/admin/…`, `/drive/…`, `/s/{token}`, `/d/{token}`,
+  `/dav`, `/s3` and `/embed.js` all still win. The cost is real and worth
+  stating: anything NOT registered now answers the app's `index.html` with
+  **200 instead of 404**, and a new top-level route does not exist until it is
+  registered. Paths that look like files still 404 — `spaHandler` checks
+  `hasAssetExt` before falling back.
+- **`/files/edit` stays the ADMIN editor.** It is registered above the
+  catch-all, which shadows the app's own `/files/:path*` for a folder literally
+  named `edit`. Left that way on purpose: the editor URL is an existing
+  contract (`openPageBase` in the admin SPA), and a folder named `edit` at a
+  drive root is the rarer case.
+- **An empty `embed/app` falls back to the console, and never 500s.** The
+  directory is created by every build pipeline whether or not the app was
+  built, and `stripPrefix` only rejects an *empty* one — so `wireStatic` probes
+  for `index.html`, and a build without the app restores the old `/` → `/admin/`
+  redirect instead of serving a broken page.
+
+`base` lives in `app/vite.config.ts` and the router reads it back through
+`import.meta.env.BASE_URL`, so the two cannot drift.
+
+`docker-compose.app.yml` is still the dev stand (now on `:5175/` rather than
+`:5175/app/`): it serves a BUILD, not the dev server, so the screenshot/e2e
+hooks in `src/dev/screenshotQuery.ts` cannot fake answers against a real
+backend; and a production `vite build` without `VITE_FILEX_API` fails instead
+of quietly shipping the mock repository.
 
 ## Repository ↔ API
 

@@ -61,7 +61,7 @@ const themeLabel = computed(() => t('topbar.theme', { current: t(`settings.theme
 const assistantOffered = computed(() => !view.assistantOpen && capabilities.can.assistant && settings.settings.assistantEnabled);
 
 /**
- * The admin panel, same origin: the backend serves this app under `/app/` and the console under `/admin/`.
+ * The admin panel, same origin: the backend serves this app at the root and the console under `/admin/`.
  * Offered only to an admin — the panel's own guard sends everybody else back out, so a member would follow the
  * entry to a bounce. Over HTTP the server only ever says `admin` or `member`; the mock account is an `owner`.
  */

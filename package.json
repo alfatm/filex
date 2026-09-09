@@ -18,8 +18,9 @@
     "clean": "pnpm -r clean && rm -rf bin/ goreleaser-dist/",
     "build:backend": "cd backend && go build -trimpath -ldflags='-s -w' -o ../bin/filex ./cmd/filex",
     "build:web": "pnpm --filter=\"./web\" build",
+    "build:app": "VITE_FILEX_API=1 pnpm --filter=\"./app\" build",
     "build:packages": "pnpm -r --filter=\"./packages/*\" build",
-    "build:all": "pnpm run build:packages && pnpm run build:web && pnpm run sync:embed && pnpm run build:backend",
+    "build:all": "pnpm run build:packages && pnpm run build:web && pnpm run build:app && pnpm run sync:embed && pnpm run build:backend",
     "sync:embed": "node scripts/sync-embed.mjs",
     "release:dry": "goreleaser release --snapshot --clean --skip=publish",
     "release": "goreleaser release --clean"

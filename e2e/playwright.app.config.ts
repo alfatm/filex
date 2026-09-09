@@ -10,7 +10,7 @@ const APP_DIR = path.resolve(E2E_DIR, '../app');
  * ⚠ This suite needs a directory that is NOT in this repository.
  *
  * The mock dataset (`app/src/data/mock/tree.json`) describes a real tree of demo files that lives in a SIBLING
- * repository, `drive-demo-assets`; `app/vite.config.ts` serves it under `/app/demo-assets/` and only warns when it
+ * repository, `drive-demo-assets`; `app/vite.config.ts` serves it under `/demo-assets/` and only warns when it
  * is absent. That warning scrolls past in the Vite output and the suite then fails much later and elsewhere: ~7
  * functional tests (preview, download, thumbnails) and all 15 visual baselines go red with "expected 2 links, got
  * 0", "screenshot comparison failed" and other messages that say nothing about a missing checkout.
@@ -35,7 +35,7 @@ if (!existsSync(DEMO_ASSETS_DIR)) {
 }
 
 /**
- * Playwright config for the END-USER SPA (`app/`, served at /app/).
+ * Playwright config for the END-USER SPA (`app/`, served at the root).
  *
  * Kept apart from `playwright.config.ts` on purpose: the admin suite needs a
  * filex binary, an admin login and a single worker over a shared SQLite DB;
@@ -47,7 +47,7 @@ if (!existsSync(DEMO_ASSETS_DIR)) {
  *   pnpm --filter filex-e2e test:app:ui         # UI mode
  *   pnpm --filter filex-e2e test:app:update     # refresh visual baselines
  *
- * ⚠ baseURL ends in `/app/`. Navigate with `page.goto('files')`, NOT
+ * ⚠ baseURL ends in `/`. Navigate with `page.goto('files')`, NOT
  * `page.goto('/files')`: a leading slash resolves against the origin and
  * drops the `/app` prefix, which the dev server answers with an empty page.
  *
@@ -59,7 +59,7 @@ if (!existsSync(DEMO_ASSETS_DIR)) {
  * browser's zone, so both must be fixed for the run to be deterministic.
  */
 const PORT = 5176;
-const BASE_URL = `http://localhost:${PORT}/app/`;
+const BASE_URL = `http://localhost:${PORT}/`;
 
 export default defineConfig({
   testDir: './tests/app',

@@ -21,13 +21,14 @@ jobs:
         with:
           go-version: "1.25"
           cache-dependency-path: backend/go.sum
-      # backend/embed/{admin,web} are git-ignored — the real bytes come from
-      # the frontend build. `//go:embed all:admin all:web` fails to resolve on
-      # empty dirs, so drop a placeholder for vet/test/build.
+      # backend/embed/{admin,web,app} are git-ignored — the real bytes come
+      # from the frontend build. `//go:embed all:admin all:web all:app` fails
+      # to resolve on empty dirs, so drop a placeholder for vet/test/build.
       - name: Embed placeholders
         run: |
-          mkdir -p backend/embed/admin backend/embed/web
-          touch backend/embed/admin/.placeholder backend/embed/web/.placeholder
+          mkdir -p backend/embed/admin backend/embed/web backend/embed/app
+          touch backend/embed/admin/.placeholder backend/embed/web/.placeholder \
+                backend/embed/app/.placeholder
       - name: Vet
         working-directory: backend
         run: go vet ./...

@@ -8,7 +8,11 @@ defineProps<{ kind: ThumbnailKind; duration?: string; src?: string }>();
 // Several thumbnails render on one page; an SVG gradient id must be unique in the document.
 const skyId = useId();
 const figId = useId();
+const sheetId = useId();
 const CARD_SHADOW = 'filter: drop-shadow(0 1.5px 2px rgba(76, 29, 149, 0.12))';
+// Spreadsheet placeholder: x of the bars in the three wide columns, y of the five data rows.
+const SHEET_COLS = [68, 128, 187];
+const SHEET_ROWS = [27, 42, 57, 72, 87];
 const failed = ref(false);
 </script>
 
@@ -132,14 +136,37 @@ const failed = ref(false);
       </g>
     </svg>
 
-    <svg v-else-if="kind === 'spreadsheet'" viewBox="0 0 236 108" class="h-full w-full bg-white" aria-hidden="true">
-      <rect width="236" height="20" fill="#dcfce7" />
+    <!-- A sheet of data: the header band, the rows under it running past the bottom edge, and the chart it is read for. -->
+    <svg v-else-if="kind === 'spreadsheet'" viewBox="0 0 236 108" class="h-full w-full" aria-hidden="true">
+      <defs>
+        <linearGradient :id="sheetId" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffffff" stop-opacity="0" />
+          <stop offset="1" stop-color="#ffffff" />
+        </linearGradient>
+      </defs>
+      <rect width="236" height="108" fill="#f0fdf4" />
+
+      <rect x="16" y="12" width="220" height="96" fill="#ffffff" />
+      <rect x="16" y="12" width="220" height="15" fill="#dcfce7" />
       <g stroke="#e5e7eb" stroke-width="1">
-        <line v-for="i in 5" :key="`h${i}`" x1="0" :y1="i * 20" x2="236" :y2="i * 20" />
-        <line v-for="i in 4" :key="`v${i}`" :x1="i * 59" y1="0" :x2="i * 59" y2="108" />
+        <line v-for="i in 6" :key="`sh${i}`" x1="16" :y1="12 + i * 15" x2="236" :y2="12 + i * 15" />
+        <line v-for="x in SHEET_COLS" :key="`sv${x}`" :x1="x - 10" y1="12" :x2="x - 10" y2="108" />
+        <line x1="16" y1="12" x2="16" y2="108" />
       </g>
-      <g fill="#9ca3af">
-        <rect v-for="i in 8" :key="`c${i}`" :x="8 + (i % 4) * 59" :y="27 + Math.floor((i - 1) / 4) * 40" width="32" height="5" rx="2" />
+      <g fill="#22c55e">
+        <rect v-for="x in SHEET_COLS" :key="`sx${x}`" :x="x" y="17" width="30" height="5" rx="2.5" />
+      </g>
+      <template v-for="y in SHEET_ROWS" :key="`sr${y}`">
+        <rect x="22" :y="y + 5" width="25" height="5" rx="2.5" fill="#bbf7d0" />
+        <rect v-for="x in SHEET_COLS" :key="`sc${x}-${y}`" :x="x" :y="y + 5" width="24" height="5" rx="2.5" fill="#e5e7eb" />
+      </template>
+      <rect y="55" width="236" height="53" :fill="`url(#${sheetId})`" />
+
+      <g style="filter: drop-shadow(0 2px 3px rgba(22, 101, 52, 0.16))">
+        <rect x="188" y="64" width="38" height="38" rx="11" fill="#ffffff" />
+        <rect x="194" y="84" width="6" height="10" rx="2" fill="#86efac" />
+        <rect x="204" y="79" width="6" height="15" rx="2" fill="#4ade80" />
+        <rect x="214" y="72" width="6" height="22" rx="2" fill="#16a34a" />
       </g>
     </svg>
 

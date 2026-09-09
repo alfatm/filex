@@ -201,7 +201,7 @@ test('Move to trash and Restore travel through the server, not the store', async
 test('Download hands back the bytes that were uploaded', async ({ page }) => {
   /*
    * The regression guard for a URL bug this suite caught: `downloadUrl` used to be built in the UI by appending
-   * `?download=1` to `node.assetUrl`, which is right for the mock (a static `/app/demo-assets/<file>`) and wrong
+   * `?download=1` to `node.assetUrl`, which is right for the mock (a static `/demo-assets/<file>`) and wrong
    * for HTTP, where `assetUrl` already carries a query string — the second '?' made `path` read as
    * `live://Live E2E/renamed.txt?download=1`, and Chromium reported the download as `canceled`. Building the URL
    * is now the data layer's job (`repository.downloadUrl(id)`), so a UI that goes back to string-concatenation

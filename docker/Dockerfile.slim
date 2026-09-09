@@ -40,6 +40,7 @@ COPY packages/core/package.json ./packages/core/
 COPY packages/webcomponent/package.json ./packages/webcomponent/
 COPY packages/react/package.json ./packages/react/
 COPY web/package.json ./web/
+COPY app/package.json ./app/
 
 # Install all workspace deps (core/webcomponent/react/web). Use --no-frozen-lockfile
 # in dev images that don't ship a lockfile yet; CI ships a lockfile so it's frozen.
@@ -53,19 +54,28 @@ RUN pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 # Copy sources after install for max cache hit.
 COPY packages/ ./packages/
 COPY web/ ./web/
+COPY app/ ./app/
 
 # Build npm packages first (web depends on them transitively for type imports
 # and the webcomponent dist gets embedded into the Go binary).
 RUN pnpm -r --filter='./packages/*' build
 RUN pnpm --filter='./web' build
 
+# The end-user app (mounted at /app/ by the Go server). VITE_FILEX_API is read
+# at BUILD time and app/vite.config.ts REFUSES a production build without it,
+# rather than shipping the mock repository behind a real-looking UI. "1" is the
+# same-origin form: the app is served by the binary that answers /api.
+ENV VITE_FILEX_API=1
+RUN pnpm --filter='./app' build
+
 # ---------------------------------------------------------------------------
 # Stage 2: Stage embed assets in /tmp for the Go build to consume
 # ---------------------------------------------------------------------------
 FROM frontend-build AS embed-prep
-RUN mkdir -p /tmp/embed/admin /tmp/embed/web && \
+RUN mkdir -p /tmp/embed/admin /tmp/embed/web /tmp/embed/app && \
     cp -r /src/web/dist/. /tmp/embed/admin/ && \
-    cp -r /src/packages/webcomponent/dist/. /tmp/embed/web/
+    cp -r /src/packages/webcomponent/dist/. /tmp/embed/web/ && \
+    cp -r /src/app/dist/. /tmp/embed/app/
 
 # ---------------------------------------------------------------------------
 # Stage 3: Build the Go binary with embedded assets
@@ -86,6 +96,7 @@ RUN go mod download || go mod tidy
 COPY backend/ ./
 COPY --from=embed-prep /tmp/embed/admin ./embed/admin
 COPY --from=embed-prep /tmp/embed/web   ./embed/web
+COPY --from=embed-prep /tmp/embed/app   ./embed/app
 
 # `go mod tidy` here (not just in the deps layer) because the COPY above
 # overwrites any go.sum produced earlier when the source tree didn't ship

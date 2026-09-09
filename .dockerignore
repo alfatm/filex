@@ -9,8 +9,10 @@ filex
 filex-test
 backend/embed/admin
 backend/embed/web
+backend/embed/app
 !backend/embed/admin/.keep
 !backend/embed/web/.keep
+!backend/embed/app/.keep
 
 # Test reports.
 e2e/test-results

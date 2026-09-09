@@ -241,8 +241,8 @@ describe('mock repository mutations', () => {
     ]);
     // Real sizes and the served file for every kind; dates one hour apart below the folder's reference date.
     const logo = listed.find((n) => n.name === 'logo.svg')!;
-    expect(logo).toMatchObject({ id: 'design/logo-svg', size: 684, fileType: 'image', assetUrl: '/app/demo-assets/Design/logo.svg' });
-    expect(listed.find((n) => n.name === 'Brand Guidelines.pdf')?.assetUrl).toBe('/app/demo-assets/Design/Brand%20Guidelines.pdf');
+    expect(logo).toMatchObject({ id: 'design/logo-svg', size: 684, fileType: 'image', assetUrl: '/demo-assets/Design/logo.svg' });
+    expect(listed.find((n) => n.name === 'Brand Guidelines.pdf')?.assetUrl).toBe('/demo-assets/Design/Brand%20Guidelines.pdf');
     expect(listed.map((n) => n.modifiedAt?.slice(0, 13))).toEqual(listed.map((_, i) => `2026-07-01T0${8 - i}`));
     expect((await repo.getPath('design/logo-svg')).map((n) => n.id)).toEqual(['demo', 'design']);
     expect(names(await repo.listFolders('demo'))).toContain('Design');
@@ -298,9 +298,9 @@ describe('mock repository mutations', () => {
 
   it('every file carries the asset URL of its real file', async () => {
     const code = await repo.listFolder('code');
-    expect(code.every((n) => n.assetUrl?.startsWith('/app/demo-assets/Code/'))).toBe(true);
-    expect((await repo.getNode('code/dockerfile')).assetUrl).toBe('/app/demo-assets/Code/Dockerfile');
-    expect((await repo.getNode('ui-design-fig')).assetUrl).toBe('/app/demo-assets/UI%20Design.fig');
+    expect(code.every((n) => n.assetUrl?.startsWith('/demo-assets/Code/'))).toBe(true);
+    expect((await repo.getNode('code/dockerfile')).assetUrl).toBe('/demo-assets/Code/Dockerfile');
+    expect((await repo.getNode('ui-design-fig')).assetUrl).toBe('/demo-assets/UI%20Design.fig');
   });
 });
 

@@ -54,7 +54,7 @@ docker build -t brftech/filex:slim -f docker/Dockerfile.slim .
 ```
 
 Both Dockerfiles are multi-stage:
-1. `frontend-build` — node 20 + pnpm, builds packages + admin UI
+1. `frontend-build` — node 20 + pnpm, builds packages, the admin UI and the end-user app (`/app/`)
 2. `embed-prep` — stages the dist files
 3. `backend-build` — golang 1.25, builds with `//go:embed` consuming the staged dist
 4. runtime — `alpine:3.20`; this is the only stage where slim and full differ

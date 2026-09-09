@@ -1293,17 +1293,9 @@ func BuildRouter(d *Deps) http.Handler {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// ────── root → admin SPA ──────
-	// Bare `/` would otherwise return chi's stock 404. The admin SPA
-	// lives at /admin/, so 302 anyone landing on the apex URL there.
-	// Demo deployments render a public landing on /admin/login;
-	// non-demo deployments render a sign-in form. Either way the SPA
-	// owns the user-facing entry.
-	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
-		http.Redirect(w, req, "/admin/", http.StatusFound)
-	})
-
 	// ────── embedded static ──────
+	// This also claims `/` and the root catch-all for the end-user app, so it
+	// goes LAST: every route registered above wins over the SPA fallback.
 	wireStatic(r, d.Embed)
 
 	return r
@@ -1313,14 +1305,15 @@ func BuildRouter(d *Deps) http.Handler {
 // admin panel is served from. See wireStatic and GitHub #14.
 const UserUIPrefix = "/drive"
 
-// wireStatic mounts the embedded /admin SPA and the per-asset Web
-// Component bundle at /embed.js (+ neighbouring assets).
+// wireStatic mounts the embedded /admin SPA, the end-user app at the root and
+// the per-asset Web Component bundle at /embed.js (+ neighbouring assets).
 //
 // Layout inside the embed.FS:
 //
 //	admin/  ← Vite-built Vue 3 admin SPA (index.html + assets/...)
 //	web/    ← @brftech/filex Web Component bundle (filex.iife.js +
 //	          style.css + LICENSE)
+//	app/    ← Vite-built Vue 3 end-user SPA (app/), mounted at /
 //
 // SPA fallback: any /admin/* request that doesn't map to a real file
 // falls back to admin/index.html so vue-router's client routes work.
@@ -1368,6 +1361,50 @@ func wireStatic(r chi.Router, fs embed.FS) {
 		r.Handle(UserUIPrefix, http.RedirectHandler(UserUIPrefix+"/", http.StatusMovedPermanently))
 		r.Handle(UserUIPrefix+"/", userSPA)
 		r.Handle(UserUIPrefix+"/*", userSPA)
+	}
+
+	// ⚠ Registered together with the root catch-all below, and only because of
+	// it: an unknown /api/… path is a typo or a removed endpoint, and answering
+	// it with the SPA's index.html turns a clean 404 into "unexpected token <"
+	// inside somebody's JSON parser. Subtrees that are their own subrouter
+	// (/api/auth, /api/files, …) already answer for themselves and are more
+	// specific, so this only catches what nothing else claims.
+	r.Handle("/api/*", http.NotFoundHandler())
+
+	// The end-user app — a bundle of its OWN (app/), not the admin SPA under a
+	// second name the way /drive is — and it owns the ROOT: an apex visit is a
+	// person wanting their files, not the administrator's console (which keeps
+	// /admin/). Until this moved, `/` was a 302 to /admin/.
+	//
+	// ⚠ This registers a root catch-all, so it MUST be wired after every other
+	// route: chi prefers a more specific pattern, so /api/…, /admin/…, /s/{token}
+	// and friends still win, but anything NOT registered now answers the app's
+	// index.html with 200 instead of a 404. Two consequences to keep in mind:
+	// a new top-level route does not exist until it is registered here, and
+	// /files/edit stays the ADMIN editor (registered above), which shadows the
+	// app's own /files/:path* for a folder literally named "edit".
+	//
+	// ⚠ A non-empty embed/app is NOT proof that the app was built: every build
+	// pipeline creates the directory whether or not it ran the app build, and
+	// stripPrefix only rejects an EMPTY one — so a lone `.keep` would pass it
+	// and then answer 500 "missing index.html" on every request. Probing
+	// index.html is what turns that into a readable 404 naming the build.
+	appFS, err := stripPrefix(fs, "app")
+	if err == nil {
+		if _, err = appFS.ReadFile("index.html"); err != nil {
+			appFS = nil
+		}
+	}
+	if appFS == nil {
+		// No bundle: keep the apex useful rather than answering chi's stock
+		// 404 — the console is the one UI this build definitely carries.
+		r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+			http.Redirect(w, req, "/admin/", http.StatusFound)
+		})
+	} else {
+		appSPA := spaHandler{root: appFS, urlPrefix: ""}
+		r.Handle("/", appSPA)
+		r.Handle("/*", appSPA)
 	}
 
 	webFS, err := stripPrefix(fs, "web")

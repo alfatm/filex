@@ -7,6 +7,7 @@
  *
  *   web/dist/                       -> backend/embed/admin/
  *   packages/webcomponent/dist/     -> backend/embed/web/
+ *   app/dist/                       -> backend/embed/app/
  *
  * Run after building the frontend:
  *   pnpm run build:packages
@@ -34,12 +35,17 @@ const targets = [
     dest: path.join(root, 'backend', 'embed', 'web'),
     label: 'web component bundle',
   },
+  {
+    src: path.join(root, 'app', 'dist'),
+    dest: path.join(root, 'backend', 'embed', 'app'),
+    label: 'end-user app',
+  },
 ];
 
 async function syncDir({ src, dest, label }) {
   if (!existsSync(src)) {
     console.error(`\u2717 [${label}] Source not found: ${src}`);
-    console.error(`  Did you run 'pnpm run build:packages && pnpm run build:web' first?`);
+    console.error(`  Did you run 'pnpm run build:packages && pnpm run build:web && pnpm run build:app' first?`);
     process.exit(1);
   }
 

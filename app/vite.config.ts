@@ -171,13 +171,14 @@ const apiProxy = {
   '/admin': process.env.FILEX_API_PROXY ?? 'http://localhost:5212',
 };
 
-// Vite config for the filex end-user UI. `base` MUST stay '/app/': it is the path the app is served from and the
-// prefix its router and asset URLs are built with. Nothing in the Go server mounts it — `backend/embed` carries
-// the admin SPA and the embed widget only, and there is no `/app` route — so the one way to run this today is
-// `docker-compose.app.yml`, which serves the built bundle under that same base. See docs/BACKEND-GAP.md § Hosting.
+// Vite config for the filex end-user UI. `base` is '/': the app is the product's front door, mounted at the ROOT
+// by the Go server (wireStatic in backend/internal/api/routes.go), with the admin console at /admin/ beside it.
+// The router reads this same value through `import.meta.env.BASE_URL` rather than repeating it — they are one
+// decision, and an index.html whose asset URLs point where nothing answers is what splitting them produces.
+// See docs/BACKEND-GAP.md § Hosting.
 export default defineConfig({
   plugins: [vue(), demoAssets(), requireApiTarget()],
-  base: '/app/',
+  base: '/',
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),

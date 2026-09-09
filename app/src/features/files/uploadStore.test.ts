@@ -51,7 +51,7 @@ const IMAGE: Node = {
   shared: false,
   starred: false,
   fileType: 'image',
-  assetUrl: '/app/demo-assets/shot.png',
+  assetUrl: '/demo-assets/shot.png',
 };
 
 const file = (name: string) => new File(['x'], name);

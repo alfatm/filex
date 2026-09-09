@@ -33,6 +33,8 @@ export const routes = [
 ] as const;
 
 export default createRouter({
-  history: createWebHistory('/app/'),
+  // Read from Vite's `base` rather than repeated here: the two must agree, and a literal is how they stop
+  // agreeing. See app/vite.config.ts.
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [...routes],
 });

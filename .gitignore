@@ -4,6 +4,7 @@
 /backend/dist/
 /backend/embed/web/
 /backend/embed/admin/
+/backend/embed/app/
 /packages/*/dist/
 /web/dist/
 /web/dev-dist/

@@ -70,12 +70,18 @@ jobs:
       - name: Build frontend + sync into backend/embed
         env:
           NODE_OPTIONS: "--max-old-space-size=4096"
+          # app/vite.config.ts refuses a production build without it rather
+          # than shipping the mock repository behind a real-looking UI. "1" is
+          # the same-origin form: the binary that serves /app/ answers /api.
+          VITE_FILEX_API: "1"
         run: |
           pnpm -r --filter='./packages/*' build
           pnpm --filter='./web' build
-          mkdir -p backend/embed/admin backend/embed/web
+          pnpm --filter='./app' build
+          mkdir -p backend/embed/admin backend/embed/web backend/embed/app
           cp -r web/dist/. backend/embed/admin/
           cp -r packages/webcomponent/dist/. backend/embed/web/
+          cp -r app/dist/. backend/embed/app/
 
       - uses: actions/setup-go@v5
         with:

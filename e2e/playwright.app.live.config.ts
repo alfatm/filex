@@ -29,12 +29,12 @@ const APP_DIR = path.resolve(E2E_DIR, '../app');
  * mock rows; it is behind `import.meta.env.DEV`, so a dev server pointed at a real backend can be made to assert
  * things the server never said. A build has none of it. `docker-compose.app.yml` serves the stand the same way.
  *
- * ⚠ baseURL ends in `/app/`, as in the mock suite: navigate with `page.goto('files')`, not `page.goto('/files')`.
+ * ⚠ baseURL ends in `/`, as in the mock suite: navigate with `page.goto('files')`, not `page.goto('/files')`.
  */
 
 /** Where `vite preview` will serve `app/dist`. run.mjs picks a free one; 5178 is the bare-hands default. */
 const PORT = Number(process.env.E2E_APP_PORT) || 5178;
-const BASE_URL = `http://127.0.0.1:${PORT}/app/`;
+const BASE_URL = `http://127.0.0.1:${PORT}/`;
 
 /** The filex server this run talks to. `vite.config.ts` reads the same variable to point the preview proxy at it. */
 const API_PROXY = process.env.FILEX_API_PROXY;
