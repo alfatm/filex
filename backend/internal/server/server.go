@@ -755,6 +755,21 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 		}
 	}
 
+	// Thumbnails for files that arrive ON a storage. Every write through filex
+	// dispatches the pipeline from its handler; the sync walk has none, so its
+	// files kept placeholder tiles until an operator ran `thumb backfill`. A
+	// queue op, not the handlers' goroutine: the walk finds files by the
+	// thousand and the pool is bounded. Without a persistent queue the walk
+	// stays as it was and backfill remains the way (docs/thumbnails.md).
+	if srvObj.qpool != nil {
+		thumbJob := queue.NewThumbJob(store, pipeline.GenerateThumb)
+		srvObj.qpool.Register(queue.TypeThumb, thumbJob.Handle)
+		qd := srvObj.queue
+		worker.AttachThumbs(func(ctx context.Context, n *model.Node) {
+			thumbJob.Enqueue(ctx, qd, n)
+		})
+	}
+
 	// Replica orchestration. The wrapper Driver itself is created
 	// lazily by the resolver — when a primary storage with a
 	// matching replica row exists. v0.1 does not auto-discover the

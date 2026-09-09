@@ -43,6 +43,21 @@ describe('an unreachable server', () => {
   });
 });
 
+describe('the home drive', () => {
+  // `main` holds the users' own files and is "My files" in the sidebar, so it is neither listed beside the extra
+  // mounts nor allowed to depend on the server's order for being the drive `/files` opens.
+  it('stays off the drive list and is the one an address without a drive opens', async () => {
+    const files = await setup();
+    const demo = files.storages[0];
+    files.storages = [{ ...demo, id: 'main', name: 'main', rootId: 'main://' }, demo];
+    await nextTick();
+
+    expect(files.listedStorages.map((s) => s.id)).toEqual([demo.id]);
+    await files.openPath(null, '');
+    expect(files.storage?.id).toBe('main');
+  });
+});
+
 describe('the open drive', () => {
   it('follows the drive the address names, and defaults to the first without one', async () => {
     const files = await setup();

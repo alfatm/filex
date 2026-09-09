@@ -39,15 +39,35 @@ describe('Sidebar storages', () => {
   it('marks only the drive the listing is in', async () => {
     const { files, wrapper } = await mountSidebar();
     files.storages = [
+      { id: 'other', name: 'other', rootId: 'other://', quota: { usedBytes: 0, totalBytes: 0 }, shared: false },
+      { id: 'demo', name: 'demo', rootId: 'demo://', quota: { usedBytes: 0, totalBytes: 0 }, shared: false },
+    ];
+    await nextTick();
+
+    const rows = wrapper.findAll('a').filter((a) => ['other', 'demo'].includes(a.text()));
+    expect(rows).toHaveLength(2);
+    const active = rows.filter((a) => a.classes().includes(ACTIVE)).map((a) => a.text());
+    expect(active).toEqual([files.storage!.name]);
+    wrapper.unmount();
+  });
+
+  // The home drive is "My files"; listing it under Storages made it look like one more mount to pick.
+  it('keeps the home drive off the list and names it as the home in the quota block', async () => {
+    const { files, wrapper } = await mountSidebar();
+    files.storages = [
       { id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 0, totalBytes: 0 }, shared: false },
       { id: 'demo', name: 'demo', rootId: 'demo://', quota: { usedBytes: 0, totalBytes: 0 }, shared: false },
     ];
     await nextTick();
 
     const rows = wrapper.findAll('a').filter((a) => ['main', 'demo'].includes(a.text()));
-    expect(rows).toHaveLength(2);
-    const active = rows.filter((a) => a.classes().includes(ACTIVE)).map((a) => a.text());
-    expect(active).toEqual([files.storage!.name]);
+    expect(rows.map((a) => a.text())).toEqual(['demo']);
+    expect(wrapper.text()).toContain('main — home folder');
+
+    // With nothing but the home drive there is no section to head.
+    files.storages = files.storages.slice(0, 1);
+    await nextTick();
+    expect(wrapper.text()).not.toContain('Storages');
     wrapper.unmount();
   });
 

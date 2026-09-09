@@ -31,6 +31,9 @@
     "fileUpload": "Upload files",
     "folderUpload": "Upload folder"
   },
+  "storage": {
+    "home": "{name} — home folder"
+  },
   "quota": {
     "used": "{used} of {total} used",
     "usedUnlimited": "{used} used"

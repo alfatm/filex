@@ -31,6 +31,9 @@
     "fileUpload": "Загрузить файлы",
     "folderUpload": "Загрузить папку"
   },
+  "storage": {
+    "home": "{name} — домашняя папка"
+  },
   "quota": {
     "used": "Занято {used} из {total}",
     "usedUnlimited": "Занято {used}"

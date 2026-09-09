@@ -555,6 +555,9 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 		nodes[i] = results[i].Node
 	}
 	attachStorageNames(r.Context(), h.Store, nodes)
+	// The thumbnail state too, so a hit's tile can show the cached preview
+	// rather than fetching the original.
+	attachThumbs(r.Context(), h.Store, nodes)
 	// And the owner's NAME, for the same reason: a hit carries owner_id and
 	// nothing to print it as, so the results list named the caller as the owner
 	// of every file it found, on a shared drive included.

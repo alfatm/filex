@@ -30,6 +30,13 @@ import (
 // should mark the node's thumb state as "skipped" rather than "failed".
 var ErrSkipped = errors.New("thumb: skipped")
 
+// SmallImageBytes is the size under which a browser-renderable image is not
+// thumbnailed at all: the client shows the file itself as its tile, so a
+// 320px JPEG next to a 100 KB original would cost a render and a cache file
+// to save nothing. The client applies the same number (SMALL_IMAGE_BYTES in
+// app/src/data/http/map.ts); the two must move together.
+const SmallImageBytes = 500 * 1024
+
 // Pipeline coordinates thumbnail generation.
 type Pipeline struct {
 	store    db.Store
@@ -131,6 +138,9 @@ func (p *Pipeline) GenerateThumb(ctx context.Context, node *model.Node) error {
 		err = p.generateSVG(ctx, node, drv)
 	case mime == "image/svg+xml":
 		_ = p.store.SetThumbnailState(ctx, node.ID, "skipped", "rsvg-convert not in PATH")
+		return ErrSkipped
+	case isBrowserImage(mime) && node.Size > 0 && node.Size < SmallImageBytes:
+		_ = p.store.SetThumbnailState(ctx, node.ID, "skipped", "small image, served as-is")
 		return ErrSkipped
 	case strings.HasPrefix(mime, "image/"):
 		err = p.generateImage(ctx, node, drv)
@@ -259,6 +269,17 @@ func mimeFromName(name string) string {
 		return "application/rtf"
 	}
 	return ""
+}
+
+// isBrowserImage names the formats every browser renders in an <img>, which
+// is what makes the original usable as its own tile under SmallImageBytes.
+// TIFF, HEIC and the rest still need a thumbnail whatever their size.
+func isBrowserImage(m string) bool {
+	switch m {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	}
+	return false
 }
 
 func isOfficeMime(m string) bool {

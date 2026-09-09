@@ -107,7 +107,7 @@ function buildTree(): Node[] {
     const ref = at === -1 ? REF_OVERRIDES[name] : undefined;
     const modifiedAt = ref?.modifiedAt ?? derivedDate(parent.modifiedAt ?? '', childrenOf(parentPath).indexOf(entry));
     const fileType = entry.kind === 'file' ? fileTypeOf(name) : undefined;
-    const thumbnail = fileType && (fileType === 'image' ? 'mountain' : TYPE_THUMBNAILS[fileType]);
+    const thumbnail = fileType && TYPE_THUMBNAILS[fileType];
     const node: Node = {
       id: idOf(entry.path),
       name,
@@ -123,6 +123,8 @@ function buildTree(): Node[] {
       ...(fileType && { fileType }),
       ...(thumbnail && { thumbnail }),
       ...(entry.kind === 'file' && { assetUrl: assetUrl(entry.path) }),
+      // The demo pictures are small, so the original doubles as its own preview; nothing else has one here.
+      ...(fileType === 'image' && { thumbUrl: assetUrl(entry.path) }),
       ...ref,
     };
     byPath.set(entry.path, node);

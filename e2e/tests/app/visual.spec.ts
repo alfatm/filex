@@ -50,8 +50,7 @@ async function settle(page: Page, ready: string | ((page: Page) => Locator)) {
   await expect(typeof ready === 'string' ? page.getByText(ready) : ready(page)).toBeVisible();
   // Inter is self-hosted (@fontsource); a shot taken before it swaps in differs in every glyph.
   await page.evaluate(() => document.fonts.ready);
-  // Thumbnails are real files (demo-assets/) loaded lazily: wait for the images in the frame, and for the video
-  // posters to have seeked to their frame (or failed, when the codec is unavailable).
+  // Thumbnails are real files (demo-assets/) loaded lazily: wait for the images in the frame.
   await page.evaluate(() => {
     const inFrame = (el: Element) => el.getBoundingClientRect().bottom > 0 && el.getBoundingClientRect().top < innerHeight;
     const images = Array.from(document.images)
@@ -62,15 +61,7 @@ async function settle(page: Page, ready: string | ((page: Page) => Locator)) {
             img.onload = img.onerror = resolve;
           }),
       );
-    const videos = Array.from(document.querySelectorAll('video'))
-      .filter((video) => inFrame(video) && !video.error && !(video.currentTime > 0 && !video.seeking && video.readyState >= 2))
-      .map(
-        (video) =>
-          new Promise((resolve) => {
-            video.onseeked = video.onerror = resolve;
-          }),
-      );
-    return Promise.all([...images, ...videos]);
+    return Promise.all(images);
   });
 }
 

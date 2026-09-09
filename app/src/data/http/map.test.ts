@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { fromFileNode, fromModelNode, fromTrashEntry, joinPath, nameOf, parentPath, splitPath, toQuota, toStorage, type WireFileNode, type WireNode } from './map';
+import {
+  fromFileNode,
+  fromModelNode,
+  fromTrashEntry,
+  joinPath,
+  nameOf,
+  parentPath,
+  SMALL_IMAGE_BYTES,
+  splitPath,
+  toQuota,
+  toStorage,
+  type WireFileNode,
+  type WireNode,
+} from './map';
 
 const listed = (patch: Partial<WireFileNode> = {}): WireFileNode => ({
   id: 42,
@@ -67,6 +80,33 @@ describe('listing rows → app model', () => {
     expect(fromFileNode(listed({ last_modified: undefined })).modifiedAt).toBeUndefined();
   });
 
+  it('points the tile at the cached thumbnail, versioned by mtime, and at nothing when the server has none', () => {
+    const thumbed = fromFileNode(listed({ thumb_url: '/api/files/thumb/42' }));
+    expect(thumbed.thumbUrl).toBe(`/api/files/thumb/42?v=${Date.parse('2026-07-01T10:00:00Z')}`);
+    expect(fromFileNode(listed({ thumb_url: '/api/files/thumb/42', last_modified: undefined })).thumbUrl).toBe('/api/files/thumb/42');
+    expect(fromFileNode(listed()).thumbUrl).toBeUndefined();
+  });
+
+  it('ignores the server’s extension card for types the app draws itself', () => {
+    // README.md would arrive with a thumb_url: the pipeline paints a coloured card with "MD" on it for any file it
+    // cannot render. The app has its own document art, so the card is not shown.
+    const md = listed({ path: 'main://Docs/README.md', basename: 'README.md', extension: 'md', thumb_url: '/api/files/thumb/42' });
+    expect(fromFileNode(md).thumbUrl).toBeUndefined();
+    expect(fromFileNode(md).thumbnail).toBe('document');
+    expect(fromFileNode(listed({ path: 'main://Docs/clip.mp4', basename: 'clip.mp4', extension: 'mp4', thumb_url: '/api/files/thumb/42' })).thumbUrl).toBe(
+      `/api/files/thumb/42?v=${Date.parse('2026-07-01T10:00:00Z')}`,
+    );
+  });
+
+  it('lets a small image be its own tile, and a large one wait for the server', () => {
+    const photo = (size: number) => listed({ path: 'main://Docs/photo.webp', basename: 'photo.webp', extension: 'webp', size });
+    expect(fromFileNode(photo(SMALL_IMAGE_BYTES - 1)).thumbUrl).toBe('/api/files/manager?q=preview&path=main%3A%2F%2FDocs%2Fphoto.webp');
+    expect(fromFileNode(photo(SMALL_IMAGE_BYTES)).thumbUrl).toBeUndefined();
+    expect(fromFileNode(photo(0)).thumbUrl).toBeUndefined();
+    // A small file that is not an image has no tile of its own.
+    expect(fromFileNode(listed({ size: 10 })).thumbUrl).toBeUndefined();
+  });
+
   it('leaves starred off: it is per-user metadata a listing row does not carry', () => {
     expect(fromFileNode(listed())).toMatchObject({ starred: false });
   });
@@ -119,6 +159,20 @@ describe('metadata rows → app model', () => {
   it('carries the trash timestamp only when there is one', () => {
     expect(fromModelNode(model(), 'main').deletedAt).toBeUndefined();
     expect(fromModelNode(model({ deleted_at: '2026-07-10T12:00:00Z' }), 'main').deletedAt).toBe('2026-07-10T12:00:00Z');
+  });
+
+  it('builds the thumbnail address from the node id, only once the pipeline reports it ready', () => {
+    const photo = (patch: Partial<WireNode> = {}) => model({ name: 'photo.jpg', path: '/Docs/photo.jpg', size: 4 << 20, ...patch });
+    expect(fromModelNode(photo({ thumb: { state: 'ready' } }), 'main').thumbUrl).toBe('/api/files/thumb/7?v=2026-07-01T10%3A00%3A00Z');
+    expect(fromModelNode(photo({ thumb: { state: 'pending' } }), 'main').thumbUrl).toBeUndefined();
+    expect(fromModelNode(photo(), 'main').thumbUrl).toBeUndefined();
+    expect(fromModelNode(photo({ type: 'dir', thumb: { state: 'ready' } }), 'main').thumbUrl).toBeUndefined();
+    // The server's extension card for a markdown file is not a picture of it; the app's document art shows instead.
+    expect(fromModelNode(model({ thumb: { state: 'ready' } }), 'main').thumbUrl).toBeUndefined();
+    // A small image is its own tile here too, whatever the pipeline said about it.
+    expect(fromModelNode(model({ name: 'photo.jpg', path: '/Docs/photo.jpg', size: 1024, thumb: { state: 'skipped' } }), 'main').thumbUrl).toBe(
+      '/api/files/manager?q=preview&path=main%3A%2F%2FDocs%2Fphoto.jpg',
+    );
   });
 
   it('carries the share flag, so a starred or recently-opened row badges like a listed one', () => {

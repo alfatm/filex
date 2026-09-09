@@ -216,6 +216,7 @@ func (h *Meta) ListStarred(w http.ResponseWriter, r *http.Request) {
 			nodes = filterByStorage(nodes, storageID)
 		}
 	}
+	attachThumbs(r.Context(), h.Store, nodes)
 	attachShared(r.Context(), h.Store, nodes)
 	attachOwnerNames(r.Context(), h.Store, nodes)
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -267,6 +268,7 @@ func (h *Meta) ListRecent(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	attachThumbs(r.Context(), h.Store, nodes)
 	attachShared(r.Context(), h.Store, nodes)
 	attachOwnerNames(r.Context(), h.Store, nodes)
 	writeJSON(w, http.StatusOK, map[string]any{

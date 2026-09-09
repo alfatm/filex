@@ -626,19 +626,7 @@ func (h *Manager) vfIndex(w http.ResponseWriter, r *http.Request, s *model.Stora
 		}
 	}
 
-	// Hydrate Thumb so projectFileNodes can emit thumb_url. The
-	// store's ListNodesByParent doesn't JOIN thumbnails (kept lean for
-	// sync/walker callers), so we patch each file's Thumb here. N+1 at
-	// list time is fine for realistic dir sizes (≤ low thousands);
-	// switch to a batched lookup if profiles ever flag it.
-	for _, n := range nodes {
-		if n.Type != model.NodeTypeFile {
-			continue
-		}
-		if t, terr := h.Store.GetThumbnail(r.Context(), n.ID); terr == nil && t != nil {
-			n.Thumb = t
-		}
-	}
+	attachThumbs(r.Context(), h.Store, nodes)
 	attachShared(r.Context(), h.Store, nodes)
 	attachItemCounts(r.Context(), h.Store, nodes, set)
 	files := projectFileNodes(s.Name, nodes, dirsOnly, set)
@@ -962,16 +950,7 @@ func (h *Manager) vfSearch(w http.ResponseWriter, r *http.Request, s *model.Stor
 		nodes = filtered
 	}
 
-	// Hydrate thumb metadata so search results carry the same
-	// thumb_url as the index listing (was always empty pre-v0.1.16).
-	for _, n := range nodes {
-		if n.Type != model.NodeTypeFile {
-			continue
-		}
-		if t, terr := h.Store.GetThumbnail(r.Context(), n.ID); terr == nil && t != nil {
-			n.Thumb = t
-		}
-	}
+	attachThumbs(r.Context(), h.Store, nodes)
 
 	// No item counts here: the hits span storages, so there is no single ACL set
 	// to decide whether a count would be honest. A folder hit shows its type.
@@ -1296,6 +1275,28 @@ func attachOwnerNames(ctx context.Context, store db.Store, nodes []*model.Node) 
 		}
 		if o, found := byNode[n.ID]; found {
 			n.OwnerName = o.Name
+		}
+	}
+}
+
+// attachThumbs hydrates Thumb on the files of a page so the projection (or the
+// raw model.Node JSON) carries the thumbnail state, and the client can point
+// at /api/files/thumb/{id} instead of the original bytes.
+//
+// The store's node listings don't JOIN thumbnails (kept lean for sync/walker
+// callers), so each file is looked up here. N+1 per page is fine for
+// realistic sizes (≤ low thousands); switch to a batched lookup if profiles
+// ever flag it.
+func attachThumbs(ctx context.Context, store db.Store, nodes []*model.Node) {
+	if store == nil {
+		return
+	}
+	for _, n := range nodes {
+		if n == nil || n.Type != model.NodeTypeFile {
+			continue
+		}
+		if t, err := store.GetThumbnail(ctx, n.ID); err == nil && t != nil {
+			n.Thumb = t
 		}
 	}
 }

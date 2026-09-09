@@ -91,6 +91,13 @@ open); §3/§4 are authoritative where an earlier draft said "padding 28 32".
   items same geometry as nav (icon `HardDrive`), active state identical. Active
   is the drive the LISTING is in, not "some files route" — the condition was the
   route name alone, and a second drive made every row light up at once.
+- **The home drive is not a storage row.** `main` is the system drive that
+  holds the users' own files, the way `/home` does; "My files" opens it, and
+  `/files` with no drive in the address means it whatever the server's order.
+  The STORAGES section lists the drives mounted beside it, and is left out
+  (caption, rule and all; the Home page's cards likewise) when there are none.
+  Where `main` is still named as a drive — the quota block, the destination
+  select of Move/Copy — it reads "main — home folder".
 - **Drive in the address.** The files route is `/files/<drive>/<path…>`: the
   drive is the first segment, so the URL says what a node id says
   (`/files/main/Docs` is `main://Docs`). It has to be there — without it a

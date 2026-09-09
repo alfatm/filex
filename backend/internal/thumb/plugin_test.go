@@ -84,7 +84,9 @@ func TestThumbnailFromAPluginStorage(t *testing.T) {
 	store, pipe, st, p := pluginPipeline(t)
 	src := pngBytes(t, 640, 480)
 	p.SeedBytes("fotograf.png", src)
-	n := fileNode(t, store, st, "/fotograf.png", "fotograf.png", int64(len(src)))
+	// Size is catalogue metadata; claimed above SmallImageBytes so the image
+	// path runs (a smaller one is served as-is, see the test below).
+	n := fileNode(t, store, st, "/fotograf.png", "fotograf.png", thumb.SmallImageBytes)
 
 	require.NoError(t, pipe.GenerateThumb(context.Background(), n))
 
@@ -111,7 +113,7 @@ func TestThumbnailFromAPluginStorage(t *testing.T) {
 // explains.
 func TestThumbnailFailureFromAPluginIsRecorded(t *testing.T) {
 	store, pipe, st, _ := pluginPipeline(t)
-	n := fileNode(t, store, st, "/yok.png", "yok.png", 1234)
+	n := fileNode(t, store, st, "/yok.png", "yok.png", thumb.SmallImageBytes)
 
 	require.Error(t, pipe.GenerateThumb(context.Background(), n))
 
@@ -120,6 +122,34 @@ func TestThumbnailFailureFromAPluginIsRecorded(t *testing.T) {
 	require.NotNil(t, row)
 	require.Equal(t, "failed", row.State)
 	require.NotEmpty(t, row.Error, "a failed thumbnail with no reason cannot be diagnosed")
+}
+
+// Under SmallImageBytes a browser-renderable image is its own tile: the
+// pipeline records the verdict and renders nothing, so no cache file appears
+// and a backfill does not pick the row up again.
+func TestSmallImageIsSkippedNotRendered(t *testing.T) {
+	store, pipe, st, p := pluginPipeline(t)
+	src := pngBytes(t, 64, 64)
+	p.SeedBytes("kucuk.png", src)
+	n := fileNode(t, store, st, "/kucuk.png", "kucuk.png", int64(len(src)))
+	require.Less(t, n.Size, int64(thumb.SmallImageBytes), "fixture must sit under the threshold")
+
+	require.ErrorIs(t, pipe.GenerateThumb(context.Background(), n), thumb.ErrSkipped)
+
+	row, err := store.GetThumbnail(context.Background(), n.ID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	require.Equal(t, "skipped", row.State)
+	_, err = os.Stat(pipe.CachePath(n.ID))
+	require.True(t, os.IsNotExist(err), "a skipped image must leave no cache file")
+
+	// The same bytes claimed to be larger go through the image path as before.
+	p.SeedBytes("buyuk.png", src)
+	big := fileNode(t, store, st, "/buyuk.png", "buyuk.png", thumb.SmallImageBytes)
+	require.NoError(t, pipe.GenerateThumb(context.Background(), big))
+	row, err = store.GetThumbnail(context.Background(), big.ID)
+	require.NoError(t, err)
+	require.Equal(t, "ready", row.State, "thumbnail error: %s", row.Error)
 }
 
 // ⚠ NOT MEASURED, and deliberately so: the video, audio, PDF and office

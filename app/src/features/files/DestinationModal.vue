@@ -7,7 +7,7 @@ import { splitPath } from '@/data/http/map';
 import type { Node } from '@/data/types';
 import { subjectMessage } from '@/i18n/subject';
 import FolderIcon from '@/pages/files/FolderIcon.vue';
-import { useFilesStore } from '@/stores/files';
+import { HOME_STORAGE, useFilesStore } from '@/stores/files';
 import { Button, Input, Select } from '@/ui';
 import Modal from '@/ui/Modal.vue';
 
@@ -36,7 +36,11 @@ const storageId = ref(source);
 // A copy across drives spans two adapters, which the server refuses. The other drives stay listed and greyed:
 // the answer the UI owes here is "not to there", not "there is nowhere else".
 const storageOptions = computed(() =>
-  files.storages.map((s) => ({ value: s.id, label: s.name, disabled: copying.value && s.id !== source })),
+  files.storages.map((s) => ({
+    value: s.id,
+    label: s.id === HOME_STORAGE ? t('storage.home', { name: s.name }) : s.name,
+    disabled: copying.value && s.id !== source,
+  })),
 );
 /**
  * The tree, a level at a time.

@@ -62,6 +62,7 @@ Cached JPEGs are released two ways, both described in
 | Kind | Source types | Generator | External binary (auto‑detected on `PATH`) |
 |---|---|---|---|
 | **Image** | `image/*` — jpg, png, gif, bmp, tiff, webp | Built‑in Go (stdlib + `x/image`) | **none** |
+| **Small image** | jpg, png, gif, webp under **500 KB** | *(none — `state=skipped`)* | **none** — the client shows the file itself as the tile; a 320px JPEG next to a 100 KB original would save nothing. `thumb.SmallImageBytes`, mirrored by `SMALL_IMAGE_BYTES` in the app |
 | **Video** | `video/*` — mp4, webm, mov, mkv, avi, … | `ffmpeg` — first frame at ~1 s, scaled to 320 wide | `ffmpeg` |
 | **Audio** | `audio/*` — mp3, wav, ogg, flac, m4a, aac, opus | `ffmpeg` — a 320×120 waveform image (`showwavespic`) | `ffmpeg` |
 | **PDF** | `application/pdf` | Ghostscript renders page 1 at 96 dpi (falls back to poppler) | `gs` **or** `pdftoppm` |
@@ -205,9 +206,12 @@ curl https://files.example.com/api/files/capabilities | jq .thumbs
 
 ## Backfill — catching up existing files
 
-New uploads get a thumbnail automatically. Files that entered the cache another
-way — a storage **sync**, or an install that previously ran **without** the
-tools — do **not**, so their rows stay empty. The `thumb backfill` command walks
+New uploads get a thumbnail automatically, and so does a file the storage
+**sync** catalogues or sees change — the walk queues a `thumb` op for it on the
+persistent ops queue, where a bounded worker pool renders it (uploads keep their
+priority over discovered files). Files that entered the cache before that
+existed, an install without a persistent queue, or one that previously ran
+**without** the tools, still have empty rows. The `thumb backfill` command walks
 every file node and (re)dispatches the pipeline:
 
 ```bash

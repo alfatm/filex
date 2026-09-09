@@ -424,6 +424,10 @@ func TestReadDuringTransfer_ThumbnailUsesStagedBytes(t *testing.T) {
 	node, err := f.store.GetNode(context.Background(), nodeID)
 	require.NoError(t, err)
 	require.Equal(t, model.TransferStateStaged, node.TransferState)
+	// The fixture is a few dozen bytes, which the pipeline would serve as-is
+	// (thumb.SmallImageBytes) without reading it. Claim a larger size — the
+	// catalogue row, not the bytes — so the image path runs.
+	node.Size = thumb.SmallImageBytes
 
 	// The dispatch path, not a private helper: GenerateThumb picks the image
 	// generator off the mime and reads the source itself.

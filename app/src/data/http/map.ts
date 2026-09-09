@@ -1,5 +1,5 @@
 import { fileTypeOf, TYPE_THUMBNAILS } from '../fileTypes';
-import type { ActivityEvent, MatchRange, Node, Quota, SearchHit, Session, Storage } from '../types';
+import type { ActivityEvent, FileType, MatchRange, Node, Quota, SearchHit, Session, Storage } from '../types';
 
 /**
  * filex's wire shapes → the app's model, and the addressing that ties them together.
@@ -50,6 +50,7 @@ export interface WireFileNode {
   storage: string;
   /** Epoch milliseconds; the driver's mtime, or when filex first saw the node. */
   last_modified?: number;
+  /** `/api/files/thumb/{id}`, present only once the pipeline has a ready thumbnail. */
   thumb_url?: string;
   /** The caller's effective level here — "" when the storage has RBAC off. */
   perm?: string;
@@ -97,6 +98,8 @@ export interface WireNode {
   owner_id?: number;
   /** The display name behind `owner_id`, stamped per listing page — an owner column showing a number is unreadable. */
   owner_name?: string;
+  /** Thumbnail state, stamped by the handlers that list files outside a folder; only `ready` has bytes to serve. */
+  thumb?: { state: 'pending' | 'ready' | 'failed' | 'skipped' };
 }
 
 /** One row of `/api/files/manager/trash` — `trash.TrashEntry`, a projection of its own. */
@@ -278,6 +281,35 @@ export function downloadUrl(id: string): string {
   return `/api/files/manager?q=download&path=${encodeURIComponent(id)}`;
 }
 
+/**
+ * Below this an image is its own tile: the server renders no thumbnail for it (the same number is
+ * `thumb.SmallImageBytes` in Go; the two move together), so the file is what the grid shows.
+ */
+export const SMALL_IMAGE_BYTES = 500 * 1024;
+
+/**
+ * The types whose server thumbnail is a picture OF the file: a downscaled image, a PDF's first page, a video frame.
+ * For everything else the server draws a coloured card with the extension on it (`thumb/generic.go`), which the
+ * app's own placeholder art already covers, better; that card is not shown.
+ */
+const RENDERED_TYPES: ReadonlySet<FileType> = new Set<FileType>(['image', 'pdf', 'mp4']);
+
+/**
+ * What a file's tile paints: the cached thumbnail when the server rendered one, versioned by the file's mtime because
+ * the server caches it for a day under the node id alone (a file overwritten in place would otherwise keep its old
+ * picture until the next day); a small image's own bytes; nothing else, so the placeholder art shows.
+ */
+function tileUrl(
+  thumb: string | undefined,
+  version: string | number | undefined,
+  file: { fileType?: FileType; size: number; original: string },
+): string | undefined {
+  if (thumb !== undefined && file.fileType !== undefined && RENDERED_TYPES.has(file.fileType)) {
+    return version === undefined ? thumb : `${thumb}?v=${encodeURIComponent(String(version))}`;
+  }
+  return file.fileType === 'image' && file.size > 0 && file.size < SMALL_IMAGE_BYTES ? file.original : undefined;
+}
+
 /** The parts every mapper fills the same way, from a name and a kind. */
 function typed(name: string, kind: Node['kind']): Pick<Node, 'fileType' | 'thumbnail' | 'ownerId'> {
   const fileType = kind === 'file' ? fileTypeOf(name) : undefined;
@@ -291,6 +323,9 @@ function typed(name: string, kind: Node['kind']): Pick<Node, 'fileType' | 'thumb
  */
 export function fromFileNode(wire: WireFileNode): Node {
   const kind = wire.type === 'dir' ? 'folder' : 'file';
+  const parts = typed(wire.basename, kind);
+  const thumbUrl =
+    kind === 'file' ? tileUrl(wire.thumb_url, wire.last_modified, { ...parts, size: wire.size, original: previewUrl(wire.path) }) : undefined;
   return {
     id: wire.path,
     name: wire.basename,
@@ -301,8 +336,9 @@ export function fromFileNode(wire: WireFileNode): Node {
     modifiedAt: wire.last_modified === undefined ? undefined : new Date(wire.last_modified).toISOString(),
     // A row filex could not date at all keeps none here too.
     createdAt: wire.created_at === undefined ? undefined : new Date(wire.created_at).toISOString(),
-    ...typed(wire.basename, kind),
+    ...parts,
     assetUrl: kind === 'file' ? previewUrl(wire.path) : undefined,
+    ...(thumbUrl === undefined ? {} : { thumbUrl }),
     shared: wire.shared ?? false,
     ...(wire.item_count === undefined ? {} : { itemCount: wire.item_count }),
     starred: false,
@@ -319,17 +355,28 @@ export function fromFileNode(wire: WireFileNode): Node {
 export function fromModelNode(wire: WireNode, adapter: string): Node {
   const kind = wire.type === 'dir' ? 'folder' : 'file';
   const id = joinPath(adapter, wire.path);
+  const modifiedAt = wire.backend_mtime ?? wire.db_mtime ?? wire.updated_at;
+  const parts = typed(wire.name, kind);
+  const thumbUrl =
+    kind === 'file'
+      ? tileUrl(wire.thumb?.state === 'ready' ? `/api/files/thumb/${wire.id}` : undefined, modifiedAt, {
+          ...parts,
+          size: wire.size,
+          original: previewUrl(id),
+        })
+      : undefined;
   return {
     id,
     name: wire.name,
     kind,
     parentId: parentPath(id),
     size: kind === 'folder' ? 0 : wire.size,
-    modifiedAt: wire.backend_mtime ?? wire.db_mtime ?? wire.updated_at,
+    modifiedAt,
     // Unlike the listing projection, `model.Node` does carry it — the details panel shows it when it is there.
     createdAt: wire.created_at,
-    ...typed(wire.name, kind),
+    ...parts,
     assetUrl: kind === 'file' ? previewUrl(id) : undefined,
+    ...(thumbUrl === undefined ? {} : { thumbUrl }),
     shared: wire.shared ?? false,
     starred: false,
     ...(wire.deleted_at ? { deletedAt: wire.deleted_at } : {}),

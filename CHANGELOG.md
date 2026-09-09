@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The `main` drive is no longer listed under Storages.** It is the system
+  drive holding the users' own files — their home — and "My files" is how it
+  is reached, so the sidebar section and the Home page cards now show only the
+  drives mounted beside it, and disappear when there are none. `/files` with no
+  drive in the address opens `main` regardless of the order the server lists
+  drives in. Where it is still named as a drive (the quota block, the Move/Copy
+  destination select) it reads "main — home folder".
 - **The plan card is redrawn after the new mockup:** a tinted card with the
   assistant's mark, a 40px picture per line (the image itself where the file is
   one), the name in front with size, folder and action under it, a check that

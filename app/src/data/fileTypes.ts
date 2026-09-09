@@ -16,8 +16,9 @@ const EXTENSION_TYPES: Record<string, FileType> = {
   mp4: 'mp4',
 };
 
-/** Placeholder artwork per type; images carry the real file in `assetUrl` and fall back to the mountain. */
+/** Placeholder artwork per type; an image paints its `thumbUrl` and falls back to the mountain. */
 export const TYPE_THUMBNAILS: Partial<Record<FileType, ThumbnailKind>> = {
+  image: 'mountain',
   md: 'document',
   ts: 'code',
   pdf: 'pdf',

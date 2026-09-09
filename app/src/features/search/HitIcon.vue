@@ -15,7 +15,7 @@ withDefaults(defineProps<{ node: Node; size?: number }>(), { size: 32 });
     class="shrink-0 overflow-hidden rounded-sm"
     :style="{ width: `${size}px`, height: `${size}px` }"
   >
-    <Thumbnail :kind="node.thumbnail" :src="node.assetUrl" />
+    <Thumbnail :kind="node.thumbnail" :src="node.thumbUrl" />
   </span>
   <FileTypeTile v-else :type="node.fileType ?? 'other'" :size="size" />
 </template>

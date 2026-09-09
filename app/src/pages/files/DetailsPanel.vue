@@ -117,17 +117,17 @@ function sentence(event: ActivityEvent): string {
     <Tabs v-model="tab" :tabs="tabs" class="mt-[46px]" />
 
     <template v-if="tab === 'details'">
-      <!-- Images get a preview that opens the full-size modal; folders and other files keep the reference geometry. -->
+      <!-- Images get their tile picture (never the original) as a preview that opens the full-size modal; folders and other files keep the reference geometry. -->
       <button
-        v-if="node.fileType === 'image' && node.assetUrl"
+        v-if="node.fileType === 'image' && node.thumbUrl"
         type="button"
         :aria-label="t('menu.preview')"
         class="mt-6 block h-[180px] w-full overflow-hidden rounded-lg border border-border bg-bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
         @click="actions.preview(node)"
       >
-        <img :src="node.assetUrl" :alt="node.name" loading="lazy" decoding="async" class="h-full w-full object-cover" />
+        <img :src="node.thumbUrl" :alt="node.name" loading="lazy" decoding="async" class="h-full w-full object-cover" />
       </button>
-      <h3 class="text-16 font-semibold leading-6" :class="node.fileType === 'image' && node.assetUrl ? 'mt-6' : 'mt-8'">{{ t('panel.general') }}</h3>
+      <h3 class="text-16 font-semibold leading-6" :class="node.fileType === 'image' && node.thumbUrl ? 'mt-6' : 'mt-8'">{{ t('panel.general') }}</h3>
       <dl class="mt-2">
         <div v-for="row in rows" :key="row.key" class="flex h-[31px] items-center text-15 leading-none">
           <dt class="w-[98px] shrink-0 text-text-3">{{ t(`panel.${row.key}`) }}</dt>

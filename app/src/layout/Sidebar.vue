@@ -26,7 +26,7 @@ import { useUploadStore } from '@/features/files/uploadStore';
 import { useFormat } from '@/composables/useFormat';
 import { useBrandingStore } from '@/stores/branding';
 import { useCapabilitiesStore } from '@/stores/capabilities';
-import { useFilesStore } from '@/stores/files';
+import { HOME_STORAGE, useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
 import { Button, IconButton, ProgressBar } from '@/ui';
 import FloatingMenu, { type FloatingMenuEntry } from '@/ui/FloatingMenu.vue';
@@ -186,15 +186,18 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
         </li>
       </ul>
 
-      <p v-if="!view.sidebarCollapsed" :class="captionClass">{{ t('nav.storages') }}</p>
-      <!-- The caption's place in rail mode: a rule, so the groups stay apart without a label. -->
-      <div v-else class="mx-auto mt-[22px] h-px w-8 bg-border" />
+      <!-- The home drive is "My files" above, so a section that would list only it is left out altogether. -->
+      <template v-if="files.listedStorages.length">
+        <p v-if="!view.sidebarCollapsed" :class="captionClass">{{ t('nav.storages') }}</p>
+        <!-- The caption's place in rail mode: a rule, so the groups stay apart without a label. -->
+        <div v-else class="mx-auto mt-[22px] h-px w-8 bg-border" />
+      </template>
       <ul class="mt-2 flex flex-col gap-px" :class="view.sidebarCollapsed ? 'items-center' : 'pl-[14px] pr-5'">
         <!--
           Active is the drive the listing is actually in, not "some files route": the condition used to be the
           route name alone, so with a second drive on the sidebar BOTH rows painted themselves active.
         -->
-        <li v-for="storage in files.storages" :key="storage.id">
+        <li v-for="storage in files.listedStorages" :key="storage.id">
           <RouterLink
             :to="filesRoute(storage.id, [])"
             :class="[linkClass, route.name === 'files' && files.storage?.id === storage.id && activeClass]"
@@ -235,7 +238,9 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
 
     <!-- The quota block needs its labels; the rail drops it rather than showing a bar with no numbers. -->
     <div v-if="files.storage && !view.sidebarCollapsed" class="mt-auto shrink-0 pb-[34px] pl-[26px] pt-6">
-      <p class="text-15 font-semibold leading-none">{{ files.storage.name }}</p>
+      <p class="text-15 font-semibold leading-none">
+        {{ files.storage.id === HOME_STORAGE ? t('storage.home', { name: files.storage.name }) : files.storage.name }}
+      </p>
       <p class="mt-1.5 text-13 leading-none text-text-3">
         {{
           files.storage.quota.totalBytes

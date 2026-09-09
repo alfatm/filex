@@ -77,6 +77,10 @@ services:
       FILEX_DEFAULT_STORAGE_PATH: /srv/files
 
       FILEX_THUMBS_ENABLED: "true"
+      # Files already catalogued before the sync walk started asking for
+      # thumbnails get theirs on the next start; rows that are ready are
+      # skipped, so a repeat boot costs one lookup per file.
+      FILEX_THUMB_BACKFILL_ON_BOOT: once
 
       # Encrypts the secrets filex has to read back (internal/secretbox) — the
       # assistant refuses to store its provider key without one, so no model can

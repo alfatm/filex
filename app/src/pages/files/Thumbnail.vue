@@ -3,28 +3,15 @@ import { ref, useId } from 'vue';
 import { Play } from 'lucide-vue-next';
 import type { ThumbnailKind } from '@/data/types';
 
-/** `src` is the real image / video (Node.assetUrl); without it, or once it fails to load, the placeholder paints. */
+/** `src` is the server's cached preview (Node.thumbUrl); without it, or once it fails to load, the placeholder paints. */
 defineProps<{ kind: ThumbnailKind; duration?: string; src?: string }>();
 // Several thumbnails render on one page; an SVG gradient id must be unique in the document.
 const skyId = useId();
 const failed = ref(false);
-/** Read from the video's metadata; the node's label shows until then. */
-const realDuration = ref<string | null>(null);
-
-const POSTER_SECOND = 1;
-
-function onVideoMetadata(event: Event) {
-  const video = event.target as HTMLVideoElement;
-  const total = Math.round(video.duration);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  realDuration.value = `${pad(Math.floor(total / 60))}:${pad(total % 60)}`;
-  // The frame at one second stands in for a poster.
-  video.currentTime = Math.min(POSTER_SECOND, video.duration);
-}
 </script>
 
 <template>
-  <!-- Real files render when the demo assets are served; otherwise placeholder artwork (mock content only). -->
+  <!-- The cached preview when the server has one; otherwise placeholder artwork per kind. -->
   <div class="relative h-full w-full overflow-hidden">
     <img v-if="src && kind !== 'video' && !failed" :src="src" alt="" loading="lazy" decoding="async" class="h-full w-full object-cover" @error="failed = true" />
 
@@ -82,24 +69,16 @@ function onVideoMetadata(event: Event) {
     </svg>
 
     <div v-else-if="kind === 'video'" class="relative flex h-full w-full items-center justify-center" style="background: linear-gradient(135deg, #312e81 0%, #1e1b4b 100%)">
-      <video
-        v-if="src && !failed"
-        :src="src"
-        preload="metadata"
-        muted
-        playsinline
-        class="absolute inset-0 h-full w-full object-cover"
-        @loadedmetadata="onVideoMetadata"
-        @error="failed = true"
-      />
+      <!-- The poster is the server's frame at one second, so the tile costs one JPEG instead of a media fetch. -->
+      <img v-if="src && !failed" :src="src" alt="" loading="lazy" decoding="async" class="absolute inset-0 h-full w-full object-cover" @error="failed = true" />
       <span class="relative flex h-11 w-11 items-center justify-center rounded-full bg-white/90 text-[#1e1b4b]">
         <Play :size="20" fill="currentColor" :stroke-width="0" class="ml-0.5" />
       </span>
       <span
-        v-if="realDuration ?? duration"
+        v-if="duration"
         class="absolute bottom-2 right-2 rounded-sm px-1.5 py-0.5 text-12 font-medium leading-none text-white"
         style="background: rgba(0, 0, 0, 0.65)"
-        >{{ realDuration ?? duration }}</span>
+        >{{ duration }}</span>
     </div>
   </div>
 </template>

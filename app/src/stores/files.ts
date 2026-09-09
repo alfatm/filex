@@ -15,6 +15,12 @@ import { useViewStore } from './view';
 export type ListingKind = 'recent' | 'starred' | 'shared' | 'trash';
 type Listing = { kind: 'folder'; folderId: string } | { kind: ListingKind };
 
+/**
+ * The drive that holds the users' own files. It is a name and not a flag because filex marks no drive as such: `main`
+ * is what every installation calls it, and the server lists it like any other mount.
+ */
+export const HOME_STORAGE = 'main';
+
 export const useFilesStore = defineStore('files', () => {
   const view = useViewStore();
   const toast = useToastStore();
@@ -24,14 +30,30 @@ export const useFilesStore = defineStore('files', () => {
 
   const storages = ref<Storage[]>([]);
   /**
+   * The drives the "Storages" section lists: every one but the home drive.
+   *
+   * `main` is the system drive that holds the users' own files — their home, the way `/home` is — and "My files" is
+   * how it is reached. Listing it beside the extra mounts made it look like one more drive to pick, which it is not.
+   */
+  const listedStorages = computed(() => storages.value.filter((s) => s.id !== HOME_STORAGE));
+  /**
    * The drive the folder view is in, by id.
    *
-   * Null until navigation names one, which is what makes the first drive the default: `/files` with no drive in
+   * Null until navigation names one, which is what makes the home drive the default: `/files` with no drive in
    * it, and the flat listings (recent, starred, shared, trash), which span every drive and name none.
    */
   const storageId = ref<string | null>(null);
-  /** The open drive, or the first one while nothing has been opened. A drive that is gone falls back the same way. */
-  const storage = computed(() => storages.value.find((s) => s.id === storageId.value) ?? storages.value[0] ?? null);
+  /**
+   * The open drive; the home drive while nothing has been opened, or the first one on an installation without a
+   * home drive. A drive that is gone falls back the same way.
+   */
+  const storage = computed(
+    () =>
+      storages.value.find((s) => s.id === storageId.value) ??
+      storages.value.find((s) => s.id === HOME_STORAGE) ??
+      storages.value[0] ??
+      null,
+  );
   const user = ref<User | null>(null);
   /** Current folder in the folder view; null on the flat listings. */
   const folder = ref<Node | null>(null);
@@ -429,6 +451,7 @@ export const useFilesStore = defineStore('files', () => {
 
   return {
     storages,
+    listedStorages,
     storage,
     ready,
     user,

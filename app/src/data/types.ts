@@ -22,8 +22,10 @@ export interface Node {
   itemCount?: number;
   fileType?: FileType;
   thumbnail?: ThumbnailKind;
-  /** URL of the real file (served from demo-assets/): thumbnails, the preview modal and downloads read it. */
+  /** URL of the real file (served from demo-assets/): the preview modal and downloads read it. */
   assetUrl?: string;
+  /** The server's cached 320px preview of the file; the grid and list tiles paint it, never the original. */
+  thumbUrl?: string;
   /** Last time the user opened (previewed) the file; Recent orders by it ahead of `modifiedAt`. */
   openedAt?: string;
   /** Video duration label, e.g. "02:14". */

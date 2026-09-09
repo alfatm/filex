@@ -57,36 +57,39 @@ watch(() => files.revision, load);
       </IconButton>
     </div>
 
-    <h2 class="mt-[30px] text-17 font-semibold leading-[26px]">{{ t('home.storages') }}</h2>
-    <div class="mt-1 grid gap-[14px]" style="grid-template-columns: repeat(auto-fill, 336px)">
-      <RouterLink
-        v-for="storage in files.storages"
-        :key="storage.id"
-        :to="filesRoute(storage.id, [])"
-        class="flex h-[100px] items-center rounded-lg border border-border bg-bg px-5 hover:border-border-hover hover:bg-hover-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
-      >
-        <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded bg-primary-soft text-primary">
-          <HardDrive :size="22" :stroke-width="1.75" />
-        </span>
-        <span class="ml-4 min-w-0 flex-1">
-          <span class="block truncate-safe text-16 font-medium leading-none">{{ storage.name }}</span>
-          <span class="mt-1.5 block text-13 leading-none text-text-3">
-            {{
-              storage.quota.totalBytes
-                ? t('quota.used', { used: formatSize(storage.quota.usedBytes), total: formatSize(storage.quota.totalBytes) })
-                : t('quota.usedUnlimited', { used: formatSize(storage.quota.usedBytes) })
-            }}
+    <!-- The home drive is "My files" in the sidebar; the cards are for the drives mounted beside it, if any. -->
+    <template v-if="files.listedStorages.length">
+      <h2 class="mt-[30px] text-17 font-semibold leading-[26px]">{{ t('home.storages') }}</h2>
+      <div class="mt-1 grid gap-[14px]" style="grid-template-columns: repeat(auto-fill, 336px)">
+        <RouterLink
+          v-for="storage in files.listedStorages"
+          :key="storage.id"
+          :to="filesRoute(storage.id, [])"
+          class="flex h-[100px] items-center rounded-lg border border-border bg-bg px-5 hover:border-border-hover hover:bg-hover-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+        >
+          <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded bg-primary-soft text-primary">
+            <HardDrive :size="22" :stroke-width="1.75" />
           </span>
-          <!-- Same rule as the sidebar: an account with no ceiling gets the figure without a bar that cannot fill. -->
-          <ProgressBar
-            v-if="storage.quota.totalBytes"
-            class="mt-2.5"
-            :value="storage.quota.usedBytes"
-            :max="storage.quota.totalBytes"
-          />
-        </span>
-      </RouterLink>
-    </div>
+          <span class="ml-4 min-w-0 flex-1">
+            <span class="block truncate-safe text-16 font-medium leading-none">{{ storage.name }}</span>
+            <span class="mt-1.5 block text-13 leading-none text-text-3">
+              {{
+                storage.quota.totalBytes
+                  ? t('quota.used', { used: formatSize(storage.quota.usedBytes), total: formatSize(storage.quota.totalBytes) })
+                  : t('quota.usedUnlimited', { used: formatSize(storage.quota.usedBytes) })
+              }}
+            </span>
+            <!-- Same rule as the sidebar: an account with no ceiling gets the figure without a bar that cannot fill. -->
+            <ProgressBar
+              v-if="storage.quota.totalBytes"
+              class="mt-2.5"
+              :value="storage.quota.usedBytes"
+              :max="storage.quota.totalBytes"
+            />
+          </span>
+        </RouterLink>
+      </div>
+    </template>
 
     <h2 class="mt-[40px] text-17 font-semibold leading-[26px]">{{ t('home.recent') }}</h2>
     <div v-if="recent.length" role="listbox" :aria-label="t('home.recent')" class="mt-1 grid gap-[14px]" style="grid-template-columns: repeat(auto-fill, 236px)">
