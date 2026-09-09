@@ -2,10 +2,11 @@ import { createPinia, setActivePinia } from 'pinia';
 import { nextTick } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApprovalCard, AssistantContext, AssistantEvent, AssistantMode, AssistantSession, PlanCard, SearchHit } from '@/data/types';
+import { HttpError } from '@/data/http/client';
 import { useAssistantStore } from './assistantStore';
 
 const calls: { prompt: string; mode: AssistantMode; conversationId: string | null; signal: AbortSignal; context?: AssistantContext }[] = [];
-const approvals: { id: string; path: string }[] = [];
+const approvals: { id: string; path: string; allow: boolean }[] = [];
 const decisions: { id: string; planId: string; approve: boolean }[] = [];
 let script: AssistantEvent[] = [];
 /** When set, the generator throws this instead of yielding once the script is exhausted. */
@@ -37,8 +38,8 @@ vi.mock('@/data', () => ({
       if (messagesFailWith) throw messagesFailWith;
       return { messages: [{ id: 'm1', role: 'assistant', text: 'earlier', at: '', cards: [{ kind: 'approval', path: 'main://pay.csv' }] }], granted: ['main://pay.csv'] };
     },
-    approveAssistantRead: async (id: string, path: string) => {
-      approvals.push({ id, path });
+    decideAssistantRead: async (id: string, path: string, allow: boolean) => {
+      approvals.push({ id, path, allow });
     },
     decideAssistantPlan: async (id: string, planId: string, approve: boolean) => {
       decisions.push({ id, planId, approve });
@@ -165,6 +166,19 @@ describe('assistant store', () => {
     expect(calls[0]).toMatchObject({ prompt: 'what is this?', context });
   });
 
+  it('attaches a report to the open assistant message', async () => {
+    const report = { title: 'Everything', rows: [hit, hit2] };
+    script = [{ type: 'text', delta: 'The list is in the report.' }, { type: 'report', report }, { type: 'done' }];
+    const store = useAssistantStore();
+    const turn = store.send('list everything');
+    await step();
+    expect(store.messages[1].reports).toBeUndefined();
+    await step();
+    expect(store.messages[1].reports).toEqual([report]);
+    await step();
+    await turn;
+  });
+
   it('appends a second hits event to the cards already attached', async () => {
     script = [
       { type: 'hits', hits: [hit] },
@@ -207,7 +221,57 @@ describe('assistant store', () => {
     await step();
     await step();
     await turn;
-    expect(store.messages[1]).toMatchObject({ text: 'half an ', error: true });
+    expect(store.messages[1]).toMatchObject({ text: 'half an ', error: 'failed' });
+  });
+
+  // Out of credit is not "try again": the answer is the same until an administrator acts, and the line says so.
+  it('keeps the kind of failure the server names', async () => {
+    script = [{ type: 'error', message: 'provider returned 429: insufficient_quota', code: 'quota' }, { type: 'done' }];
+    const store = useAssistantStore();
+    const turn = store.send('x');
+    await step();
+    await step();
+    await turn;
+    expect(store.messages[1]).toMatchObject({ role: 'assistant', text: '', error: 'quota' });
+  });
+
+  it('reads a 503 as the assistant being gone, not as a hiccup', async () => {
+    script = [];
+    failWith = new HttpError(503, { error: 'no assistant is configured' }, 'no assistant is configured');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = useAssistantStore();
+    const turn = store.send('x');
+    await step();
+    await turn;
+    expect(store.messages[1]).toMatchObject({ role: 'assistant', text: '', error: 'unavailable' });
+    consoleError.mockRestore();
+  });
+
+  // A minute of silence is a hung connection: the server says what it is doing when it is doing something.
+  it('drops a turn that says nothing for a minute, and says so rather than marking it stopped', async () => {
+    vi.useFakeTimers();
+    try {
+      script = [{ type: 'text', delta: 'late' }];
+      const store = useAssistantStore();
+      const turn = store.send('x');
+      await vi.waitFor(() => expect(release).not.toBeNull());
+      expect(store.streaming).toBe(true);
+
+      vi.advanceTimersByTime(59_000);
+      expect(store.messages).toHaveLength(1);
+      vi.advanceTimersByTime(1_000);
+      expect(store.messages[1]).toMatchObject({ role: 'assistant', text: '', error: 'timeout' });
+      expect(calls[0].signal.aborted).toBe(true);
+
+      // The word that arrives after the drop is not appended: the connection is closed.
+      release!();
+      await turn;
+      expect(store.messages[1].text).toBe('');
+      expect(store.messages[1].aborted).toBeUndefined();
+      expect(store.streaming).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('abort stops the stream, keeps the partial answer and marks it stopped', async () => {
@@ -252,7 +316,7 @@ describe('assistant store', () => {
     await step();
     await step();
     await turn;
-    expect(store.messages[1]).toMatchObject({ role: 'assistant', text: 'partial', error: true });
+    expect(store.messages[1]).toMatchObject({ role: 'assistant', text: 'partial', error: 'failed' });
     expect(store.streaming).toBe(false);
     expect(consoleError).toHaveBeenCalledTimes(1);
 
@@ -261,7 +325,7 @@ describe('assistant store', () => {
     const again = store.send('y');
     await step();
     await again;
-    expect(store.messages[3]).toMatchObject({ role: 'assistant', text: '', error: true });
+    expect(store.messages[3]).toMatchObject({ role: 'assistant', text: '', error: 'failed' });
     expect(store.streaming).toBe(false);
     expect(consoleError).toHaveBeenCalledTimes(2);
     consoleError.mockRestore();
@@ -334,15 +398,56 @@ describe('assistant store', () => {
     expect(card).toMatchObject({ path: 'main://Docs/pay.csv', reason: 'to total the salaries' });
     expect(store.isGranted(card)).toBe(false);
 
-    await store.approveRead('main://Docs/pay.csv');
-    expect(approvals).toEqual([{ id: 's1', path: 'main://Docs/pay.csv' }]);
+    await store.decideRead(card, true);
+    expect(approvals).toEqual([{ id: 's1', path: 'main://Docs/pay.csv', allow: true }]);
+    expect(card.decision).toBe('allowed');
     expect(store.isGranted(card)).toBe(true);
+    // Nothing was typed into the chat for it: the answer went to the waiting turn, not to the model as a message.
+    expect(calls).toHaveLength(1);
     // Approving one file says nothing about the next one.
     expect(store.isGranted({ kind: 'approval', path: 'main://Docs/other.csv' })).toBe(false);
 
-    // Approving twice does not ask the server twice.
-    await store.approveRead('main://Docs/pay.csv');
+    // A decided card is decided; pressing again asks the server nothing.
+    await store.decideRead(card, false);
     expect(approvals).toHaveLength(1);
+    expect(card.decision).toBe('allowed');
+  });
+
+  // The turn stands still at the card on the server, so a minute of silence there is the person thinking, not a
+  // hung connection; and the card comes back down the same stream decided, closing the one that asked.
+  it('holds the watchdog while a permission card is open, and closes the card the server sends back decided', async () => {
+    vi.useFakeTimers();
+    try {
+      script = [
+        { type: 'card', card: { kind: 'approval', path: 'main://Docs/pay.csv', reason: 'to total the salaries' } },
+        { type: 'card', card: { kind: 'approval', path: 'main://Docs/pay.csv', reason: 'to total the salaries', decision: 'denied' } },
+        { type: 'text', delta: 'Fine without it.' },
+        { type: 'done' },
+      ];
+      const store = useAssistantStore();
+      const turn = store.send('summarise pay');
+      await step();
+      expect(store.awaiting).toBe('main://Docs/pay.csv');
+      vi.advanceTimersByTime(120_000);
+      expect(store.messages[1].error).toBeUndefined();
+      expect(store.streaming).toBe(true);
+
+      const card = store.messages[1].cards?.[0] as ApprovalCard;
+      await store.decideRead(card, false);
+      expect(store.awaiting).toBeNull();
+      expect(card.decision).toBe('denied');
+
+      // The decided card is the same card, not a second one.
+      await step();
+      expect(store.messages[1].cards).toHaveLength(1);
+      await step();
+      await step();
+      await turn;
+      expect(store.messages[1].text).toBe('Fine without it.');
+      expect(store.messages[1].error).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reopens a conversation with its pending questions and the permissions already given', async () => {

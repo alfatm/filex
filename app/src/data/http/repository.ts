@@ -1,7 +1,7 @@
 import { DUPLICATE_NAME, OPERATION_PENDING, WRONG_PASSWORD, type Repository } from '../repository';
 import { matchesFilter, MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
-import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantContext, type AssistantConversation, type AssistantMode, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type Branding, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
+import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantContext, type AssistantConversation, type AssistantMode, type AssistantReport, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type Branding, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
 import { HttpError, putChunk, request, streamJSON } from './client';
 import {
   fromFileNode,
@@ -86,14 +86,18 @@ const ASSISTANT_STATUS = '/api/assistant/status';
 
 /** One frame of the turn stream; filex carries the kind inside the payload rather than on an `event:` line. */
 interface WireAssistantEvent {
-  type: 'meta' | 'text' | 'tool' | 'card' | 'hits' | 'title' | 'error' | 'done';
+  type: 'meta' | 'text' | 'tool' | 'card' | 'hits' | 'report' | 'title' | 'error' | 'done';
   conversation_id?: string;
   delta?: string;
   message?: string;
+  /** `error`: "quota" or "unavailable" when the failure is one the person can act on; absent otherwise. */
+  code?: string;
   /** `title`: the name the server gave this conversation. */
   title?: string;
   /** `hits`: what a search found, for the panel's result cards. */
   hits?: WireAssistantHit[];
+  /** `report`: a document a tool wrote for the person. */
+  report?: WireReport;
   /** `tool`: which tool, and the path or query it was given. */
   tool?: string;
   target?: string;
@@ -126,11 +130,24 @@ interface WirePlanResult {
   url?: string;
 }
 
+/** A document a tool wrote for the person: its rows are search-result rows, so the same mapping draws them. */
+interface WireReport {
+  title?: string;
+  text?: string;
+  rows?: WireAssistantHit[];
+}
+
+function fromReport(wire: WireReport): AssistantReport {
+  return { title: wire.title ?? '', ...(wire.text ? { text: wire.text } : {}), rows: (wire.rows ?? []).map(fromAssistantHit) };
+}
+
 /** A stored card, as the messages endpoint redraws it — a plan is hydrated from the plan row, not from the message. */
 interface WireCard {
   kind: string;
   path?: string;
   reason?: string;
+  /** `approval`: how it ended, once it has. */
+  decision?: string;
   plan_id?: string;
   plan_kind?: string;
   summary?: string;
@@ -163,7 +180,10 @@ function fromCard(wire: WireCard): AssistantCard | null {
       ...(wire.results?.length ? { results: wire.results.map(fromPlanResult) } : {}),
     };
   }
-  if (wire.kind === 'approval') return { kind: 'approval', path: wire.path ?? '', reason: wire.reason };
+  if (wire.kind === 'approval') {
+    const decision = wire.decision === 'allowed' || wire.decision === 'denied' || wire.decision === 'expired' ? wire.decision : undefined;
+    return { kind: 'approval', path: wire.path ?? '', reason: wire.reason, ...(decision ? { decision } : {}) };
+  }
   return null;
 }
 
@@ -354,6 +374,8 @@ interface WireChatMessage {
   cards?: WireCard[];
   /** What the searches in this turn found, stored with the answer. */
   hits?: WireAssistantHit[];
+  /** The documents the tools wrote for the person in this turn, stored with the answer. */
+  reports?: WireReport[];
 }
 
 function fromChatSession(wire: WireChatSession): AssistantSession {
@@ -1207,8 +1229,13 @@ export class HttpRepository implements Repository {
         if (card) yield { type: 'card', card };
       }
       else if (event.type === 'hits' && event.hits?.length) yield { type: 'hits', hits: event.hits.map(fromAssistantHit) };
+      else if (event.type === 'report' && event.report) yield { type: 'report', report: fromReport(event.report) };
       else if (event.type === 'title' && event.title) yield { type: 'title', title: event.title };
-      else if (event.type === 'error') yield { type: 'error', message: event.message ?? '' };
+      else if (event.type === 'error') {
+        // Only the two codes the panel has words for; anything newer reads as the ordinary failure.
+        const code = event.code === 'quota' || event.code === 'unavailable' ? event.code : undefined;
+        yield { type: 'error', message: event.message ?? '', ...(code ? { code } : {}) };
+      }
       else if (event.type === 'done') yield { type: 'done' };
     }
   }
@@ -1253,14 +1280,15 @@ export class HttpRepository implements Repository {
         ...(m.aborted ? { aborted: true } : {}),
         ...(m.cards?.length ? { cards: m.cards.map(fromCard).filter((c): c is AssistantCard => c !== null) } : {}),
         ...(m.hits?.length ? { hits: m.hits.map(fromAssistantHit) } : {}),
+        ...(m.reports?.length ? { reports: m.reports.map(fromReport) } : {}),
       })),
       granted: granted ?? [],
     };
   }
 
-  /** One path, one permission. The server takes no other shape of this call. */
-  async approveAssistantRead(id: string, path: string): Promise<void> {
-    await request(`${ASSISTANT_SESSIONS}/${id}/approvals`, { method: 'POST', body: { path } });
+  /** One path, one answer. The server takes no other shape of this call. */
+  async decideAssistantRead(id: string, path: string, allow: boolean): Promise<void> {
+    await request(`${ASSISTANT_SESSIONS}/${id}/approvals`, { method: 'POST', body: { path, decision: allow ? 'allow' : 'deny' } });
   }
 
   /** The body is empty on purpose: the work is the plan the server already stored, not anything sent from here. */

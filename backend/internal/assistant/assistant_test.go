@@ -6,6 +6,7 @@ package assistant
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -119,6 +120,34 @@ func TestStream_QuotesTheProvidersError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "404")
 	assert.Contains(t, err.Error(), "does not exist")
+	assert.Equal(t, ErrorCodeUnavailable, ErrorCode(err), "a model that is gone is the assistant being gone")
+}
+
+// The person is told what KIND of failure it was when there is something they
+// can do about it: out of credit is an administrator's problem, an assistant
+// that is gone is not coming back on retry. Everything else stays generic.
+func TestErrorCode_TellsQuotaAndUnavailableApart(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"402", &ProviderError{Status: http.StatusPaymentRequired}, ErrorCodeQuota},
+		{"openai's 429 for no credit", &ProviderError{Status: http.StatusTooManyRequests, Detail: `{"error":{"code":"insufficient_quota"}}`}, ErrorCodeQuota},
+		{"anthropic's 400 for no credit", &ProviderError{Status: http.StatusBadRequest, Detail: `{"error":{"message":"Your credit balance is too low"}}`}, ErrorCodeQuota},
+		{"a real rate limit", &ProviderError{Status: http.StatusTooManyRequests, Detail: `{"error":{"code":"rate_limit_exceeded"}}`}, ""},
+		{"revoked key", &ProviderError{Status: http.StatusUnauthorized}, ErrorCodeUnavailable},
+		{"model gone", &ProviderError{Status: http.StatusNotFound}, ErrorCodeUnavailable},
+		{"switched off", ErrNotConfigured, ErrorCodeUnavailable},
+		{"wrapped", fmt.Errorf("assistant: %w", &ProviderError{Status: http.StatusForbidden}), ErrorCodeUnavailable},
+		{"overloaded", &ProviderError{Status: http.StatusServiceUnavailable}, ""},
+		{"network", fmt.Errorf("assistant: dial tcp: connection refused"), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, ErrorCode(tc.err))
+		})
+	}
 }
 
 // Stopping is something a person does on purpose, so it is not an error and
@@ -278,13 +307,14 @@ func TestSystemPrompt_CarriesTheRulesItMustCarry(t *testing.T) {
 	for _, required := range []string{
 		"highest priority",
 		"NO undo",
-		"Wait for the user's direct approval",
+		"Nothing has happened yet",
 		"do not \"try something and see\"",
 		"Permission is per file",
 		"tell the user immediately",
 		"never on your own initiative",
 		"change permissions",
 		"storage://path",
+		"more than 20 files",
 	} {
 		assert.Contains(t, prompt, required, "the system prompt lost: %s", required)
 	}
@@ -527,4 +557,34 @@ func TestSystemPrompt_ListsTheToolsTheDeploymentHas(t *testing.T) {
 	assert.Contains(t, prompt, "# Your tools")
 	assert.Contains(t, prompt, "`list_folder` — lists a folder")
 	assert.NotContains(t, prompt, "you have no tools")
+}
+
+// A tool result can show the model a picture. Each protocol carries it where
+// it allows one: Anthropic inside the tool_result block, the openai-compatible
+// dialect as a user turn of parts right after the text-only tool message.
+func TestMessages_CarryAToolResultsPicture(t *testing.T) {
+	req := Request{Messages: []Message{
+		{Role: RoleUser, Content: "what is in the picture?"},
+		{Role: RoleAssistant, ToolCalls: []ToolCall{{ID: "call_1", Name: "view_image", Args: `{"path":"main://a.png"}`}}},
+		{Role: RoleTool, ToolCallID: "call_1", Content: `{"path":"main://a.png"}`, Images: []Image{{Mime: "image/jpeg", Data: []byte("JPEGBYTES")}}},
+	}}
+	encoded := "SlBFR0JZVEVT" // base64 of JPEGBYTES
+
+	anthropic, err := json.Marshal(anthropicMessages(req.Messages))
+	require.NoError(t, err)
+	assert.Contains(t, string(anthropic), `"type":"tool_result"`)
+	assert.Contains(t, string(anthropic), `"type":"image"`)
+	assert.Contains(t, string(anthropic), `"media_type":"image/jpeg"`)
+	assert.Contains(t, string(anthropic), `"data":"`+encoded+`"`)
+	assert.Equal(t, 3, len(anthropicMessages(req.Messages)), "the picture rides on the result, not as a turn of its own")
+
+	openai := openAIMessages(req)
+	require.Len(t, openai, 4, "tool message, then the user turn that carries the picture")
+	assert.Equal(t, RoleTool, openai[2].Role)
+	assert.Equal(t, `{"path":"main://a.png"}`, openai[2].Content, "the tool message stays text — this dialect takes nothing else there")
+	assert.Equal(t, RoleUser, openai[3].Role)
+	parts, err := json.Marshal(openai[3].Content)
+	require.NoError(t, err)
+	assert.Contains(t, string(parts), `"type":"image_url"`)
+	assert.Contains(t, string(parts), `"url":"data:image/jpeg;base64,`+encoded+`"`)
 }

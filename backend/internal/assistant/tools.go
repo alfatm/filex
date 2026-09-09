@@ -51,6 +51,14 @@ type ToolCall struct {
 	Args string
 }
 
+// How an approval card ended. The turn waits for one of these; `expired` is
+// the person not answering while it waited.
+const (
+	DecisionAllowed = "allowed"
+	DecisionDenied  = "denied"
+	DecisionExpired = "expired"
+)
+
 // Card is something shown to the PERSON rather than to the model: a request to
 // open one file, or a plan of work waiting for their decision. It is the only
 // thing in a turn that the person, and not the model, answers.
@@ -59,6 +67,9 @@ type Card struct {
 	// Approval: the file being asked for, and why.
 	Path   string `json:"path,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// Decision is how the approval ended — one of the Decision* values — once
+	// it has; empty while the card is still in front of the person.
+	Decision string `json:"decision,omitempty"`
 	// Plan: which stored plan this is, what it does, and every item in it. The
 	// items are carried in full because a plan is approved by reading it — a
 	// card that said "12 changes" would be a button with nothing behind it.
@@ -120,6 +131,13 @@ type ToolOutcome struct {
 	// that draws it, and giving this package a file type of its own would mean
 	// two places to change when a column moves.
 	Hits json.RawMessage
+	// Report is a document the tool wrote for the PERSON — a list of files, a
+	// search's results, a written report — as opaque JSON the interface draws
+	// as a card they can open and download. Opaque for the same reason Hits is.
+	Report json.RawMessage
+	// Images are pictures the model is to SEE with this result — view_image's
+	// output. They travel to the provider and are not stored.
+	Images []Image
 }
 
 // Toolbox is a deployment's set of tools.
@@ -140,14 +158,17 @@ type Event struct {
 	Card *Card
 	// Hits: what a tool found, for the person to look at rather than read about.
 	Hits json.RawMessage
+	// Report: a document a tool wrote for the person.
+	Report json.RawMessage
 }
 
 // Event types.
 const (
-	EventText = "text"
-	EventTool = "tool"
-	EventCard = "card"
-	EventHits = "hits"
+	EventText   = "text"
+	EventTool   = "tool"
+	EventCard   = "card"
+	EventHits   = "hits"
+	EventReport = "report"
 )
 
 // Emit receives events in the order they happen. Returning an error stops the

@@ -10,9 +10,13 @@ package handlers_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -34,6 +38,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/pathkey"
+	"github.com/brf-tech/filex/backend/internal/search/extract"
 	"github.com/brf-tech/filex/backend/internal/share"
 	"github.com/brf-tech/filex/backend/internal/storage"
 	"github.com/brf-tech/filex/backend/internal/storage/drivers/local"
@@ -232,8 +237,16 @@ func assistantFiles(t *testing.T, provider *scriptedProvider) (*httptest.Server,
 // turnStream runs one turn and returns every event it produced.
 func turnStream(t *testing.T, client *http.Client, url, prompt string) []map[string]any {
 	t.Helper()
-	body, _ := json.Marshal(map[string]string{"prompt": prompt})
-	resp, err := client.Post(url, "application/json", strings.NewReader(string(body)))
+	return turnStreamWith(t, client, url, map[string]any{"prompt": prompt}, nil)
+}
+
+// turnStreamWith runs one turn with the given body and hands every event to
+// `on` as it arrives — while the stream is still open, which is how a test
+// answers a card the turn is waiting on.
+func turnStreamWith(t *testing.T, client *http.Client, url string, body map[string]any, on func(map[string]any)) []map[string]any {
+	t.Helper()
+	raw, _ := json.Marshal(body)
+	resp, err := client.Post(url, "application/json", strings.NewReader(string(raw)))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -248,6 +261,9 @@ func turnStream(t *testing.T, client *http.Client, url, prompt string) []map[str
 		var event map[string]any
 		require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event))
 		events = append(events, event)
+		if on != nil {
+			on(event)
+		}
 	}
 	return events
 }
@@ -294,66 +310,251 @@ func TestAssistantTools_LooksAtAFolderAndAnswersFromWhatItSaw(t *testing.T) {
 
 // ⚠⚠ The rule the whole gate exists for: contents do not reach the model until
 // the person approves THAT file, and approving one file approves one file.
+//
+// The permission is an interruption, not a conversation: the turn stands still
+// at the card, the button answers it, and the same turn goes on — the model
+// reads the contents (or a refusal) as the tool's result. Nothing is typed.
 func TestAssistantTools_ContentsNeedPermissionForThatExactFile(t *testing.T) {
 	provider := newScriptedProvider(t,
 		toolFrame("call_1", "read_file", map[string]any{"path": "main://notes/pay.csv", "reason": "to summarise the salaries"}),
-		textFrame("May I open pay.csv?"),
+		textFrame("Ada earns 99999."),
+		// A different file in the same folder — one approval is not a licence.
+		toolFrame("call_2", "read_file", map[string]any{"path": "main://notes/hello.txt", "reason": "checking the other one"}),
+		textFrame("Fine without it."),
 	)
 	srv, client, _ := assistantFiles(t, provider)
 	session := newSession(t, srv, client)
 	turnURL := srv.URL + "/api/assistant/sessions/" + session + "/turn"
+	approvalsURL := srv.URL + "/api/assistant/sessions/" + session + "/approvals"
 
-	events := turnStream(t, client, turnURL, "summarise the pay file")
+	// The card arrives with the stream still open; the person answers it from
+	// another connection, and only then does the file open.
+	answered := 0
+	events := turnStreamWith(t, client, turnURL, map[string]any{"prompt": "summarise the pay file"}, func(event map[string]any) {
+		if event["type"] != "card" || event["decision"] != nil {
+			return
+		}
+		assert.Equal(t, "approval", event["kind"])
+		assert.Equal(t, "main://notes/pay.csv", event["path"])
+		assert.Equal(t, "to summarise the salaries", event["reason"], "the model's own reason, shown to the person deciding")
+		assert.NotContains(t, provider.sent(), "99999", "the contents must not reach the model before consent")
+		st, raw := doReq(t, client, http.MethodPost, approvalsURL, map[string]any{"path": "main://notes/pay.csv"})
+		require.Equal(t, http.StatusOK, st, "approve: %s", raw)
+		answered++
+	})
+	require.Equal(t, 1, answered, "the person was asked once: %v", events)
 	cards := eventsOfType(events, "card")
-	require.Len(t, cards, 1, "the person is asked, in the panel")
-	assert.Equal(t, "approval", cards[0]["kind"])
-	assert.Equal(t, "main://notes/pay.csv", cards[0]["path"])
-	assert.Equal(t, "to summarise the salaries", cards[0]["reason"], "the model's own reason, shown to the person deciding")
-	assert.NotContains(t, provider.sent(), "99999", "the contents must not reach the model before consent")
-
-	// The person approves that one file, and only then does it open.
-	st, raw := doReq(t, client, http.MethodPost, srv.URL+"/api/assistant/sessions/"+session+"/approvals",
-		map[string]any{"path": "main://notes/pay.csv"})
-	require.Equal(t, http.StatusOK, st, "approve: %s", raw)
-
-	provider.frames = []string{
-		toolFrame("call_2", "read_file", map[string]any{"path": "main://notes/pay.csv", "reason": "to summarise the salaries"}),
-		textFrame("Ada earns 99999."),
-		// A different file in the same folder — one approval is not a licence.
-		toolFrame("call_3", "read_file", map[string]any{"path": "main://notes/hello.txt", "reason": "checking the other one"}),
-		textFrame("May I open hello.txt too?"),
-	}
-	provider.calls = 0
-	provider.seen = nil
-
-	events = turnStream(t, client, turnURL, "yes, go ahead")
-	assert.Empty(t, eventsOfType(events, "card"), "an approved file needs no second permission")
+	require.Len(t, cards, 2, "the card once to ask, once decided: %v", cards)
+	assert.Nil(t, cards[0]["decision"])
+	assert.Equal(t, "allowed", cards[1]["decision"], "the panel takes the buttons off it")
+	assert.Equal(t, "Ada earns 99999.", answerText(events), "the same turn answered")
 	assert.Contains(t, provider.sent(), "99999", "now the contents are allowed through")
+	assert.Equal(t, 2, provider.rounds(), "one round to ask for the file, one to answer — no round for a typed permission")
 
-	events = turnStream(t, client, turnURL, "and the other file?")
+	// The next file is asked for on its own, and a refusal is a tool result
+	// the model goes on from, not a dead end.
+	events = turnStreamWith(t, client, turnURL, map[string]any{"prompt": "and the other file?"}, func(event map[string]any) {
+		if event["type"] != "card" || event["decision"] != nil {
+			return
+		}
+		assert.Equal(t, "main://notes/hello.txt", event["path"])
+		st, raw := doReq(t, client, http.MethodPost, approvalsURL, map[string]any{"path": "main://notes/hello.txt", "decision": "deny"})
+		require.Equal(t, http.StatusOK, st, "deny: %s", raw)
+	})
 	cards = eventsOfType(events, "card")
-	require.Len(t, cards, 1, "the next file is asked for on its own")
-	assert.Equal(t, "main://notes/hello.txt", cards[0]["path"])
+	require.Len(t, cards, 2)
+	assert.Equal(t, "denied", cards[1]["decision"])
+	assert.Equal(t, "Fine without it.", answerText(events))
 	assert.NotContains(t, provider.sent(), "nothing secret here")
+	assert.Contains(t, provider.sent(), "did not allow", "the model is told, and told not to ask again")
 
-	// Reopening the conversation redraws what was asked and what was answered.
-	st, raw = doReq(t, client, http.MethodGet, srv.URL+"/api/assistant/sessions/"+session, nil)
+	// Reopening the conversation redraws what was asked and how each ended.
+	st, raw := doReq(t, client, http.MethodGet, srv.URL+"/api/assistant/sessions/"+session, nil)
 	require.Equal(t, http.StatusOK, st)
 	var stored struct {
 		Granted  []string `json:"granted"`
 		Messages []struct {
 			Cards []struct {
-				Path string `json:"path"`
+				Path     string `json:"path"`
+				Decision string `json:"decision"`
 			} `json:"cards"`
 		} `json:"messages"`
 	}
 	require.NoError(t, json.Unmarshal(raw, &stored))
-	assert.Equal(t, []string{"main://notes/pay.csv"}, stored.Granted)
-	var carded int
+	assert.Equal(t, []string{"main://notes/pay.csv"}, stored.Granted, "denying stores no grant")
+	var decisions []string
 	for _, m := range stored.Messages {
-		carded += len(m.Cards)
+		for _, c := range m.Cards {
+			decisions = append(decisions, c.Path+"="+c.Decision)
+		}
 	}
-	assert.Equal(t, 2, carded, "both approval requests survive a reload")
+	assert.Equal(t, []string{"main://notes/pay.csv=allowed", "main://notes/hello.txt=denied"}, decisions)
+}
+
+// A PDF is read the way the search index reads it — through the extractor for
+// its format — so the model gets the text and not the bytes.
+func TestAssistantTools_ReadsAPDFThroughTheExtractor(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "read_file", map[string]any{"path": "main://notes/report.pdf", "reason": "to say what it is about"}),
+		textFrame("It is about filex."),
+	)
+	srv, client, store := assistantFiles(t, provider)
+	addFile(t, store, "/notes/report.pdf", minimalPDF("Quarterly revenue grew"))
+	session := newSession(t, srv, client)
+	st, raw := doReq(t, client, http.MethodPost, srv.URL+"/api/assistant/sessions/"+session+"/approvals", map[string]any{"path": "main://notes/report.pdf"})
+	require.Equal(t, http.StatusOK, st, "approve: %s", raw)
+
+	events := turnStream(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", "what is the report about?")
+	assert.Empty(t, eventsOfType(events, "card"), "approved beforehand, so nothing to ask")
+	assert.Equal(t, "It is about filex.", answerText(events))
+	// A tool result is a JSON string inside the request's JSON, hence the escaped quotes.
+	sent := provider.sent()
+	assert.Contains(t, sent, "Quarterly", "the text layer reached the model")
+	assert.Contains(t, sent, `\"extracted_from\":\"application/pdf\"`)
+	assert.NotContains(t, sent, "%PDF", "the bytes did not")
+}
+
+// Pictures have two tools of their own: view_image hands the model the picture
+// (scaled, as JPEG), read_image_text hands it the words in it by OCR — and
+// read_file, which is for text, sends the model to those two.
+func TestAssistantTools_LooksAtAnImageAndReadsItsText(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "view_image", map[string]any{"path": "main://notes/logo.png", "reason": "to say what it shows"}),
+		textFrame("A red rectangle."),
+		toolFrame("call_2", "read_image_text", map[string]any{"path": "main://notes/logo.png", "reason": "to read the words on it"}),
+		textFrame("No words."),
+		toolFrame("call_3", "read_file", map[string]any{"path": "main://notes/logo.png", "reason": "trying the text tool"}),
+		textFrame("Wrong tool."),
+	)
+	srv, client, store := assistantFiles(t, provider)
+	addFile(t, store, "/notes/logo.png", redPNG(40, 30))
+	session := newSession(t, srv, client)
+	turnURL := srv.URL + "/api/assistant/sessions/" + session + "/turn"
+	st, raw := doReq(t, client, http.MethodPost, srv.URL+"/api/assistant/sessions/"+session+"/approvals", map[string]any{"path": "main://notes/logo.png"})
+	require.Equal(t, http.StatusOK, st, "approve: %s", raw)
+
+	events := turnStream(t, client, turnURL, "what is in logo.png?")
+	assert.Equal(t, "A red rectangle.", answerText(events))
+	sent := provider.sent()
+	assert.Contains(t, sent, `\"width\":40`, "the result names the picture's size")
+	assert.Contains(t, sent, `"type":"image_url"`, "and the picture itself follows, for the model to see")
+	assert.Contains(t, sent, `"url":"data:image/jpeg;base64,`, "re-encoded as JPEG, whatever it was")
+
+	events = turnStream(t, client, turnURL, "any words on it?")
+	assert.Equal(t, "No words.", answerText(events))
+	sent = provider.sent()
+	if extract.TesseractBin() == "" {
+		assert.Contains(t, sent, "OCR is not installed on this server", "a missing tesseract is said, not disguised as an empty picture")
+	} else {
+		assert.Contains(t, sent, "view_image lets you look at", "a picture with no words points at the other tool")
+	}
+
+	events = turnStream(t, client, turnURL, "read it as text then")
+	assert.Equal(t, "Wrong tool.", answerText(events))
+	assert.Contains(t, provider.sent(), "is an image: read_image_text extracts the text in it, view_image lets you look at it")
+}
+
+// redPNG is a w×h solid red picture.
+func redPNG(w, h int) []byte {
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, color.RGBA{R: 220, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	_ = png.Encode(&buf, img)
+	return buf.Bytes()
+}
+
+// The chip binds the search rather than advising the model: on Tags every
+// term is a tag, on Filename contents are not consulted.
+func TestAssistantTools_TheChipBindsTheSearch(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "search_files", map[string]any{"path": "main://", "query": "payroll"}),
+		textFrame("One tagged file."),
+		toolFrame("call_2", "search_files", map[string]any{"path": "main://", "query": "payroll"}),
+		textFrame("Nothing by that name."),
+	)
+	srv, client, store := assistantFiles(t, provider)
+	tagFile(t, store, "/notes/pay.csv", "payroll")
+	session := newSession(t, srv, client)
+	turnURL := srv.URL + "/api/assistant/sessions/" + session + "/turn"
+
+	events := turnStreamWith(t, client, turnURL, map[string]any{"prompt": "payroll", "mode": "tags"}, nil)
+	hits := eventsOfType(events, "hits")
+	require.Len(t, hits, 1, "%v", events)
+	rows, _ := hits[0]["hits"].([]any)
+	require.Len(t, rows, 1, "the tagged file, found by its tag: %v", rows)
+	assert.Contains(t, provider.sent(), `\"query\":\"tag:payroll\"`, "the word became a tag")
+	assert.Contains(t, provider.sent(), `\"scope\":\"tags\"`, "and the model is told which scope answered")
+
+	events = turnStreamWith(t, client, turnURL, map[string]any{"prompt": "payroll", "mode": "filename"}, nil)
+	hits = eventsOfType(events, "hits")
+	require.Len(t, hits, 1)
+	rows, _ = hits[0]["hits"].([]any)
+	assert.Empty(t, rows, "no file is NAMED payroll")
+}
+
+// addFile puts one more file into the fixture's storage: on disk, and as the
+// node row the read path resolves it through.
+func addFile(t *testing.T, store db.Store, clean string, body []byte) {
+	t.Helper()
+	ctx := context.Background()
+	storages, err := store.ListEnabledStorages(ctx)
+	require.NoError(t, err)
+	require.Len(t, storages, 1)
+	st := storages[0]
+	var cfg struct {
+		Root string `json:"root"`
+	}
+	require.NoError(t, json.Unmarshal(st.ConfigJSON, &cfg))
+	require.NoError(t, os.WriteFile(filepath.Join(cfg.Root, filepath.FromSlash(clean)), body, 0o644))
+	parent, err := store.GetNodeByPath(ctx, st.ID, pathkey.Hash(st.ID, path.Dir(clean)))
+	require.NoError(t, err)
+	_, err = store.CreateNode(ctx, &model.Node{
+		StorageID: st.ID, ParentID: &parent.ID, Name: path.Base(clean),
+		Path: clean, PathHash: pathkey.Hash(st.ID, clean), Type: model.NodeTypeFile, Size: int64(len(body)),
+	})
+	require.NoError(t, err)
+}
+
+func tagFile(t *testing.T, store db.Store, clean string, tags ...string) {
+	t.Helper()
+	ctx := context.Background()
+	storages, err := store.ListEnabledStorages(ctx)
+	require.NoError(t, err)
+	node, err := store.GetNodeByPath(ctx, storages[0].ID, pathkey.Hash(storages[0].ID, clean))
+	require.NoError(t, err)
+	require.NoError(t, store.SetNodeTags(ctx, node.ID, tags))
+}
+
+// minimalPDF is a one-page PDF with `text` in its text layer — the same shape
+// the extractor's own tests build.
+func minimalPDF(text string) []byte {
+	stream := fmt.Sprintf("BT /F1 12 Tf 72 720 Td (%s) Tj ET", text)
+	objs := []string{
+		"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+		"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+		"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
+		fmt.Sprintf("4 0 obj\n<< /Length %d >>\nstream\n%s\nendstream\nendobj\n", len(stream), stream),
+		"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+	}
+	var buf bytes.Buffer
+	buf.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objs)+1)
+	for i, o := range objs {
+		offsets[i+1] = buf.Len()
+		buf.WriteString(o)
+	}
+	xref := buf.Len()
+	fmt.Fprintf(&buf, "xref\n0 %d\n", len(objs)+1)
+	buf.WriteString("0000000000 65535 f \n")
+	for i := 1; i <= len(objs); i++ {
+		fmt.Fprintf(&buf, "%010d 00000 n \n", offsets[i])
+	}
+	fmt.Fprintf(&buf, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objs)+1, xref)
+	return buf.Bytes()
 }
 
 // A turn that keeps calling tools stops on its own and says so.
@@ -392,6 +593,72 @@ func TestAssistantTools_SearchSendsTheRowsToTheInterface(t *testing.T) {
 		seen += len(m.Hits)
 	}
 	assert.Equal(t, len(rows), seen, "every row shown during the turn is still there")
+}
+
+// A long list goes to the person as a report card, not as prose: the rows are
+// resolved to current metadata, a path the model made up is reported back to
+// it as missing rather than written into the document, and the card is stored
+// with the answer so a reopened conversation still has it to download.
+func TestAssistantTools_ReportGoesToTheInterfaceAndIsStored(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "write_report", map[string]any{
+			"title": "Notes", "text": "Everything in notes.",
+			"paths": []string{"main://notes/hello.txt", "main://notes/pay.csv", "main://notes/nope.txt"},
+		}),
+		textFrame("The list is in the report."),
+	)
+	srv, client, _ := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+
+	events := turnStream(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", "list my notes")
+	reports := eventsOfType(events, "report")
+	require.Len(t, reports, 1, "%v", events)
+	report, _ := reports[0]["report"].(map[string]any)
+	assert.Equal(t, "Notes", report["title"])
+	assert.Equal(t, "Everything in notes.", report["text"])
+	rows, _ := report["rows"].([]any)
+	require.Len(t, rows, 2, "the path that does not exist is not a row")
+	first, _ := rows[0].(map[string]any)
+	assert.Equal(t, "main://notes/hello.txt", first["path"])
+	assert.Equal(t, "hello.txt", first["name"])
+	assert.Equal(t, "file", first["type"])
+	assert.EqualValues(t, 19, first["size"], "the row is the file as it is, not as the model said")
+
+	// The model is told which path went nowhere, so it can say so.
+	sent := provider.sent()
+	assert.Contains(t, sent, `\"missing\":[\"main://notes/nope.txt\"]`)
+	assert.Contains(t, sent, `\"rows\":2`)
+
+	st, raw := doReq(t, client, http.MethodGet, srv.URL+"/api/assistant/sessions/"+session, nil)
+	require.Equal(t, http.StatusOK, st)
+	var stored struct {
+		Messages []struct {
+			Reports []map[string]any `json:"reports"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &stored))
+	var seen []map[string]any
+	for _, m := range stored.Messages {
+		seen = append(seen, m.Reports...)
+	}
+	require.Len(t, seen, 1)
+	assert.Equal(t, "Notes", seen[0]["title"])
+	assert.Len(t, seen[0]["rows"], 2)
+}
+
+// A report with neither text nor paths is refused as an answer the model has
+// to read, not as a failed turn.
+func TestAssistantTools_ReportNeedsSomethingToReport(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "write_report", map[string]any{"title": "Empty"}),
+		textFrame("Nothing to report."),
+	)
+	srv, client, _ := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+
+	events := turnStream(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", "make an empty report")
+	assert.Empty(t, eventsOfType(events, "report"))
+	assert.Contains(t, provider.sent(), "a report needs paths, text, or both")
 }
 
 // The scope chip is a hint for the turn it was set on: it reaches the model,

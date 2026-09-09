@@ -353,7 +353,7 @@ export const mockRepository: Repository = {
     return { messages: (chatMessages.get(id) ?? []).map((m) => ({ ...m })), granted: [] };
   },
 
-  async approveAssistantRead() {
+  async decideAssistantRead() {
     // Nothing to record — see above.
   },
 

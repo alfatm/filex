@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HttpRepository } from './repository';
 import type { WireFileNode } from './map';
-import type { SearchHit } from '../types';
+import type { AssistantReport, SearchHit } from '../types';
 
 /** One recorded call, in the order the repository made it. */
 interface Call {
@@ -694,6 +694,37 @@ describe('HttpRepository', () => {
     expect(hit.snippet).toEqual({ text: 'the invoice for March', ranges: [{ start: 4, end: 11 }] });
   });
 
+  it('turns a report a tool wrote into a downloadable card with search-result rows', async () => {
+    const frames = [
+      'data: {"type":"meta","conversation_id":"7"}\n\n',
+      'data: {"type":"report","report":{"title":"Q1 files","text":"All of them.","rows":[{"path":"main://Docs/spec.pdf","name":"spec.pdf","type":"file","size":12,"last_modified":1788800115455}]}}\n\n',
+      'data: {"type":"done"}\n\n',
+    ];
+    vi.stubGlobal('fetch', async () => {
+      const encoder = new TextEncoder();
+      return {
+        ok: true,
+        status: 200,
+        body: new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const frame of frames) controller.enqueue(encoder.encode(frame));
+            controller.close();
+          },
+        }),
+      } as Response;
+    });
+    const events = [];
+    for await (const event of new HttpRepository().assistantAsk('list the quarter', 'filename', '7', new AbortController().signal)) {
+      events.push(event);
+    }
+    const report = events.find((e) => e.type === 'report');
+    expect(report).toBeDefined();
+    const { report: card } = report as { report: AssistantReport };
+    expect(card.title).toBe('Q1 files');
+    expect(card.text).toBe('All of them.');
+    expect(card.rows[0].node).toMatchObject({ id: 'main://Docs/spec.pdf', name: 'spec.pdf', kind: 'file', size: 12 });
+  });
+
   it('passes the name the server gave the conversation', async () => {
     const frames = [
       'data: {"type":"meta","conversation_id":"7"}\n\n',
@@ -789,14 +820,16 @@ describe('HttpRepository', () => {
     expect(conversation.messages[1].cards).toEqual([{ kind: 'approval', path: 'main://Docs/pay.csv', reason: 'to total the salaries' }]);
   });
 
-  it('grants permission for one path, in the shape the server takes', async () => {
+  it('answers a read request for one path, in the shape the server takes', async () => {
     routes = [['/approvals', { ok: true }]];
-    await new HttpRepository().approveAssistantRead('7', 'main://Docs/pay.csv');
+    await new HttpRepository().decideAssistantRead('7', 'main://Docs/pay.csv', true);
     expect(calls.at(-1)).toMatchObject({
       url: '/api/assistant/sessions/7/approvals',
       method: 'POST',
-      body: { path: 'main://Docs/pay.csv' },
+      body: { path: 'main://Docs/pay.csv', decision: 'allow' },
     });
+    await new HttpRepository().decideAssistantRead('7', 'main://Docs/pay.csv', false);
+    expect(calls.at(-1)).toMatchObject({ body: { path: 'main://Docs/pay.csv', decision: 'deny' } });
   });
   it('reads a plan card as the server currently holds it, not as the message froze it', async () => {
     routes = [

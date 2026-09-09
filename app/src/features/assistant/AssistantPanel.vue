@@ -17,6 +17,7 @@ import { pageContext } from './context';
 import { planText } from './plan';
 import AnswerText from './AnswerText.vue';
 import PlanDetails from './PlanDetails.vue';
+import ReportCard from './ReportCard.vue';
 import ResultCard from './ResultCard.vue';
 import SessionList from './SessionList.vue';
 
@@ -65,31 +66,31 @@ async function openSession(id: string) {
 }
 
 /** The tools the panel has words for; anything else shows its bare name rather than a missing-translation key. */
-const KNOWN_TOOLS = ['list_storages', 'list_folder', 'search_files', 'read_file'] as const;
+const KNOWN_TOOLS = ['list_storages', 'list_folder', 'search_files', 'read_file', 'read_image_text', 'view_image', 'write_report'] as const;
 
-/** What the assistant is doing right now, in words, while it does it. */
+/**
+ * What the assistant is doing right now, in words, while it does it — and "Thinking…" from the question until the
+ * first word or tool, which used to be a blank: the model's first token can be many seconds away, and a panel that
+ * shows nothing for them reads as a request that never left.
+ */
 const activityLabel = computed(() => {
   const running = assistant.activity;
-  if (!running) return '';
-  const name = (KNOWN_TOOLS as readonly string[]).includes(running.tool) ? t(`assistant.tools.${running.tool}`) : running.tool;
-  return running.target ? `${name} ${running.target}` : name;
+  if (running) {
+    const name = (KNOWN_TOOLS as readonly string[]).includes(running.tool) ? t(`assistant.tools.${running.tool}`) : running.tool;
+    return running.target ? `${name} ${running.target}` : name;
+  }
+  // Standing at a permission card is not thinking: the card, with its buttons, is what is happening.
+  if (assistant.awaiting) return '';
+  const last = assistant.messages.at(-1);
+  return assistant.streaming && !(last?.role === 'assistant' && last.text) ? t('assistant.thinking') : '';
 });
 
 /**
- * Permission for ONE file. The grant is recorded server-side and then said out loud in the chat: everything the
- * assistant is told has to be visible in the conversation, a permission most of all.
- *
- * ⚠ The path is quoted in that sentence (`assistant.card.allowedPrompt`) rather than left bare. A model reading
- * "You may read main://a/notes.md." takes the sentence's full stop for part of the name, calls read_file with it,
- * and is refused — correctly, since the grant is an exact match, but for a reason nobody can see.
+ * How a permission card ended: what the card itself says, or — for a conversation from before cards carried it — the
+ * grant list. Null while the buttons are still on it.
  */
-async function allowRead(card: ApprovalCard) {
-  await assistant.approveRead(card.path);
-  send(t('assistant.card.allowedPrompt', { path: card.path }));
-}
-
-function refuseRead(card: ApprovalCard) {
-  send(t('assistant.card.deniedPrompt', { path: card.path }));
+function decisionOf(card: ApprovalCard) {
+  return card.decision ?? (assistant.isGranted(card) ? 'allowed' : null);
 }
 
 /**
@@ -153,7 +154,7 @@ function scrollToEnd() {
 
 // Keep the newest words in view while the answer streams, unless the reader scrolled up to re-read.
 watch(
-  () => assistant.messages.map((m) => m.text.length + (m.hits?.length ?? 0)).join(),
+  () => assistant.messages.map((m) => m.text.length + (m.hits?.length ?? 0) + (m.reports?.length ?? 0)).join(),
   async () => {
     const el = log.value;
     if (!el) return;
@@ -207,9 +208,9 @@ onBeforeUnmount(() => {
     <SessionList v-if="showSessions" @open="openSession" />
 
     <template v-else>
-      <p class="mt-4 shrink-0 text-15 leading-normal text-text-3">{{ t('assistant.intro') }}</p>
-
       <div ref="log" role="log" aria-live="off" class="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto">
+        <!-- The intro is a placeholder for the empty log, not a heading: the first message takes its place. -->
+        <p v-if="!assistant.messages.length" class="text-15 leading-normal text-text-3">{{ t('assistant.intro') }}</p>
         <template v-for="{ message, followUp, streaming } in rows" :key="message.id">
           <div v-if="message.role === 'user'" class="flex items-start justify-end">
             <div class="max-w-[300px] rounded-xl bg-primary-soft px-4 py-3">
@@ -220,7 +221,7 @@ onBeforeUnmount(() => {
           </div>
           <div v-else-if="followUp" :aria-live="streaming ? 'off' : undefined">
             <AnswerText :text="message.text" />
-            <p v-if="message.error" class="mt-1 text-14 text-danger">{{ t('assistant.error') }}</p>
+            <p v-if="message.error" class="mt-1 text-14 text-danger">{{ t(`assistant.failure.${message.error}`) }}</p>
             <p v-else-if="message.aborted" class="mt-1 text-13 text-text-3">{{ t('assistant.stopped') }}</p>
             <p class="mt-1 text-12 leading-none text-text-3">{{ formatTime(message.at) }}</p>
           </div>
@@ -231,12 +232,13 @@ onBeforeUnmount(() => {
               </span>
               <div class="ml-3 min-w-0 rounded-xl bg-bg-muted px-4 py-3" :aria-live="streaming ? 'off' : undefined">
                 <AnswerText :text="message.text" />
-                <p v-if="message.error" class="mt-1 text-14 text-danger">{{ t('assistant.error') }}</p>
+                <p v-if="message.error" class="mt-1 text-14 text-danger">{{ t(`assistant.failure.${message.error}`) }}</p>
                 <p v-else-if="message.aborted" class="mt-1 text-13 text-text-3">{{ t('assistant.stopped') }}</p>
                 <p class="mt-1 text-12 leading-none text-text-3">{{ formatTime(message.at) }}</p>
               </div>
             </div>
             <ResultCard v-for="hit in message.hits" :key="hit.node.id" :hit="hit" />
+            <ReportCard v-for="(report, at) in message.reports" :key="at" :report="report" />
 
             <!-- Spec §6: permission is asked for one file at a time, and the card says which file and why. -->
             <template v-for="(card, at) in message.cards" :key="at">
@@ -279,21 +281,28 @@ onBeforeUnmount(() => {
               <p class="text-14 font-medium leading-snug">{{ t('assistant.card.title') }}</p>
               <p class="mt-1 break-all text-14 leading-snug text-text-3">{{ card.path }}</p>
               <p v-if="card.reason" class="mt-1 text-13 leading-snug text-text-3">{{ card.reason }}</p>
-              <p v-if="assistant.isGranted(card)" class="mt-3 text-13 leading-none text-success">{{ t('assistant.card.approved') }}</p>
+              <p
+                v-if="decisionOf(card)"
+                class="mt-3 text-13 leading-none"
+                :class="decisionOf(card) === 'allowed' ? 'text-success' : 'text-text-3'"
+              >
+                {{ t(`assistant.card.${decisionOf(card)}`) }}
+              </p>
+              <!-- Answered while the turn streams — that is the point: the turn is waiting for exactly this. -->
               <div v-else class="mt-3 flex flex-wrap gap-[10px]">
                 <button
                   type="button"
-                  :disabled="!canSend"
+                  :disabled="!online"
                   class="inline-flex h-9 items-center rounded-full bg-primary px-4 text-14 leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
-                  @click="allowRead(card)"
+                  @click="assistant.decideRead(card, true)"
                 >
                   {{ t('assistant.card.allow') }}
                 </button>
                 <button
                   type="button"
-                  :disabled="!canSend"
+                  :disabled="!online"
                   class="inline-flex h-9 items-center rounded-full border border-border px-4 text-14 leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
-                  @click="refuseRead(card)"
+                  @click="assistant.decideRead(card, false)"
                 >
                   {{ t('assistant.card.deny') }}
                 </button>
@@ -318,6 +327,7 @@ onBeforeUnmount(() => {
             role="radio"
             :aria-checked="assistant.mode === mode"
             :tabindex="assistant.mode === mode ? 0 : -1"
+            :title="t(`assistant.modeHint.${mode}`)"
             class="inline-flex h-[38px] items-center gap-2 rounded-full px-4 text-15 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
             :class="assistant.mode === mode ? 'bg-primary text-white' : 'border border-border text-text hover:bg-hover-row'"
             @click="assistant.mode = mode"

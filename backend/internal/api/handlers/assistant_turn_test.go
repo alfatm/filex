@@ -179,6 +179,39 @@ func TestAssistantTurn_StreamsTheAnswerAndKeepsBothHalves(t *testing.T) {
 	assert.Equal(t, 2, log.Session.MessageCount)
 }
 
+// A provider account with no credit left answers every turn the same way, and
+// "something went wrong, try again" would have the person trying again. The
+// error frame names the kind, so the panel can say who has to act.
+func TestAssistantTurn_NamesTheFailureThePersonCanActOn(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}`)
+	}))
+	t.Cleanup(provider.Close)
+	srv, admin, store := assistantServer(t)
+	email, pw := testutil.SeedAdmin(t, store)
+	testutil.LoginAs(t, srv, admin, email, pw)
+	configureAssistant(t, srv, admin, map[string]any{
+		"enabled": true, "provider": "openai", "base_url": provider.URL,
+		"model": "test-model", "api_key": "sk-test", "turns_per_minute": 20,
+	})
+
+	session := newSession(t, srv, admin)
+	events := turnEvents(t, context.Background(), admin, srv.URL+"/api/assistant/sessions/"+session+"/turn", "How are my files?", nil)
+
+	require.NotEmpty(t, events)
+	assert.Equal(t, "done", events[len(events)-1]["type"])
+	var failure map[string]any
+	for _, event := range events {
+		if event["type"] == "error" {
+			failure = event
+		}
+	}
+	require.NotNil(t, failure, "the turn failed and said so: %v", events)
+	assert.Equal(t, "quota", failure["code"])
+	assert.Contains(t, failure["message"], "insufficient_quota", "the provider's own words are still quoted")
+}
+
 // ⚠ The behaviour the owner asked for by name: a partial answer that reached
 // the session stays in it. Somebody who pressed stop had read the beginning.
 func TestAssistantTurn_StoppedMidAnswerKeepsWhatWasWritten(t *testing.T) {

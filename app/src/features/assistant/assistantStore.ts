@@ -1,7 +1,8 @@
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import { repository } from '@/data';
-import type { ApprovalCard, AssistantCard, AssistantContext, AssistantMessage, AssistantMode, AssistantSession, PlanCard, PlanOutcome } from '@/data/types';
+import { HttpError } from '@/data/http/client';
+import type { ApprovalCard, AssistantCard, AssistantContext, AssistantFailure, AssistantMessage, AssistantMode, AssistantSession, PlanCard, PlanOutcome } from '@/data/types';
 
 export const ASSISTANT_MODES: AssistantMode[] = ['filename', 'content', 'tags'];
 
@@ -10,6 +11,13 @@ export const MAX_ASSISTANT_SESSIONS = 100;
 
 /** The last conversation on screen, so a reload or a new tab comes back to it rather than to an empty chat. */
 const STORAGE_KEY = 'filex.app.assistant.session';
+
+/**
+ * How long the server may say nothing before the turn is given up on. A turn that is doing something says so — a
+ * tool event, a word — so a minute of silence is a hung connection, not a slow answer, and a spinner that never stops
+ * is worse than an error line.
+ */
+const SILENCE_MS = 60_000;
 
 function storedSessionId(): string | null {
   try {
@@ -31,8 +39,13 @@ export const useAssistantStore = defineStore('assistant', () => {
   const granted = ref<string[]>([]);
   /** What the assistant is doing right now, while it is doing it: `{ tool, target }`, or null between tools. */
   const activity = ref<{ tool: string; target?: string } | null>(null);
+  /** The file the running turn is standing still for — an approval card with its buttons still on — or null. */
+  const awaiting = ref<string | null>(null);
   let controller: AbortController | null = null;
   let seq = 0;
+  // The silence watchdog of the running turn; `rearm` is null between turns.
+  let watchdog: ReturnType<typeof setTimeout> | undefined;
+  let rearm: (() => void) | null = null;
 
   watch(sessionId, (id) => {
     try {
@@ -67,11 +80,26 @@ export const useAssistantStore = defineStore('assistant', () => {
     controller = own;
     // The assistant message the next `text` / `hits` event appends to; `done` closes it.
     let current: AssistantMessage | null = null;
+    const fail = (kind: AssistantFailure) => {
+      // A failure before the first word still leaves a message to hang the error line on.
+      (current ?? push('assistant', '')).error = kind;
+    };
+    // Re-armed by every event. Firing drops the connection the way a stop does, but says why — and not through
+    // abort(), which would mark the answer as stopped by the person.
+    rearm = () => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        fail('timeout');
+        own.abort();
+      }, SILENCE_MS);
+    };
     try {
+      rearm();
       // Created inline rather than through newSession(), which clears the log — the question just pushed is in it.
       if (!sessionId.value) sessionId.value = (await repository.createAssistantSession()).id;
       for await (const event of repository.assistantAsk(prompt, mode.value, sessionId.value, own.signal, context)) {
         if (own.signal.aborted) break;
+        rearm?.();
         // `meta` names the conversation the server wrote the turn into; it is the session already on screen.
         if (event.type === 'meta') continue;
         if (event.type === 'done') {
@@ -93,22 +121,58 @@ export const useAssistantStore = defineStore('assistant', () => {
           activity.value = null;
           current.text += event.delta;
         } else if (event.type === 'hits') current.hits = [...(current.hits ?? []), ...event.hits];
-        else if (event.type === 'card') current.cards = [...(current.cards ?? []), event.card];
+        else if (event.type === 'report') current.reports = [...(current.reports ?? []), event.report];
+        else if (event.type === 'card') attachCard(current, event.card);
         // The model call failed part-way. What arrived stays: it is what the reader already read.
-        else current.error = true;
+        else current.error = event.code ?? 'failed';
       }
     } catch (error) {
       // A fetch rejects with AbortError after abort(); that is the expected way out, not a failure.
       if (!own.signal.aborted) {
-        (current ?? push('assistant', '')).error = true;
+        // 503 is the server saying there is no assistant any more — switched off, or its provider gone — which is
+        // not something trying again changes.
+        fail(error instanceof HttpError && error.status === 503 ? 'unavailable' : 'failed');
         console.error('assistant stream failed', error);
       }
     } finally {
+      clearTimeout(watchdog);
       if (controller === own) {
         controller = null;
+        rearm = null;
         streaming.value = false;
         activity.value = null;
+        awaiting.value = null;
       }
+    }
+  }
+
+  /**
+   * A card goes on the message that raised it — except an approval coming back decided, which is the card that
+   * asked, again, and closes it. While an approval is open the turn is standing still on the server, waiting for the
+   * person; a minute of that is not a hung connection, so the watchdog is held until they answer.
+   */
+  function attachCard(message: AssistantMessage, card: AssistantCard) {
+    if (card.kind === 'approval') {
+      const asked = message.cards?.find((c): c is ApprovalCard => c.kind === 'approval' && c.path === card.path);
+      if (asked && card.decision) {
+        settleRead(asked, card.decision);
+        return;
+      }
+      if (!card.decision) {
+        awaiting.value = card.path;
+        clearTimeout(watchdog);
+      }
+    }
+    message.cards = [...(message.cards ?? []), card];
+  }
+
+  /** Closes an approval card: how it ended, what that means for later reads, and the turn moving again. */
+  function settleRead(card: ApprovalCard, decision: NonNullable<ApprovalCard['decision']>) {
+    card.decision = decision;
+    if (decision === 'allowed' && !granted.value.includes(card.path)) granted.value = [...granted.value, card.path];
+    if (awaiting.value === card.path) {
+      awaiting.value = null;
+      rearm?.();
     }
   }
 
@@ -117,8 +181,11 @@ export const useAssistantStore = defineStore('assistant', () => {
     if (!controller) return;
     controller.abort();
     controller = null;
+    clearTimeout(watchdog);
+    rearm = null;
     streaming.value = false;
     activity.value = null;
+    awaiting.value = null;
     const last = messages.value.at(-1);
     if (last?.role === 'assistant' && last.text) last.aborted = true;
   }
@@ -194,13 +261,14 @@ export const useAssistantStore = defineStore('assistant', () => {
   }
 
   /**
-   * Records permission to read ONE file, for this conversation only. The caller then says so in the chat, because
-   * everything the assistant is told has to be visible in the conversation — including a permission.
+   * Answers a request to read ONE file, for this conversation only. Nothing is said in the chat: the turn is standing
+   * at the card, and the answer reaches the model as the tool's result — contents, or a refusal — the way an
+   * interrupt is served, not the way a message is sent.
    */
-  async function approveRead(path: string) {
-    if (!sessionId.value || granted.value.includes(path)) return;
-    await repository.approveAssistantRead(sessionId.value, path);
-    granted.value = [...granted.value, path];
+  async function decideRead(card: ApprovalCard, allow: boolean) {
+    if (!sessionId.value || card.decision) return;
+    await repository.decideAssistantRead(sessionId.value, card.path, allow);
+    settleRead(card, allow ? 'allowed' : 'denied');
   }
 
   /** Whether a card has already been answered, so a reopened chat does not ask twice. */
@@ -243,8 +311,9 @@ export const useAssistantStore = defineStore('assistant', () => {
     streaming,
     granted,
     activity,
+    awaiting,
     send,
-    approveRead,
+    decideRead,
     isGranted,
     decidePlan,
     isPlan,

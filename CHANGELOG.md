@@ -7,8 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Long lists leave the chat as a report card.** The assistant may name at
+  most 20 files in an answer; a folder's contents, everything a search found or
+  a written report go through the new `write_report` tool instead. The person
+  gets a card with the title and the count, can open it in full, and can
+  download it as text or CSV — both built in the browser from the rows the
+  server resolved, so a path the model misremembered is reported back to it as
+  missing rather than written into the file. The tool changes nothing and needs
+  no approval. The turn stream carries it as a `report` frame; it is stored
+  with the answer and comes back as `reports` on the message.
+
 ### Changed
 
+- **The assistant panel never goes blank while a turn is running.** The
+  activity line says "Thinking…" from the question until the first word or
+  tool arrives; a turn that says nothing for a minute is dropped and the answer
+  says so ("No answer came for a minute…"), instead of a spinner that never
+  stops. Failures the person cannot fix by retrying get their own line: the
+  provider account being out of credit, and an assistant that is gone. The turn
+  stream's `error` frame now carries `code: quota | unavailable` for those.
+- **Permission to read a file is an interrupt, not a conversation.** The
+  assistant asks by calling the read tool; the Allow / Deny card appears, the
+  turn stands still at it, and the button answers it — the same turn goes on
+  with the contents or a refusal, and nothing is typed into the chat. Before,
+  the model explained in prose that it would need permission, the click sent
+  "You may read `…`" as a message, and a second model round re-asked for the
+  file. A card that nobody answers in five minutes expires and the model goes
+  on without the file; reopened conversations show how each request ended.
+- **The assistant reads PDF, DOCX, XLSX and PPTX** through the same text
+  extractors the search index uses, instead of refusing them as "not a text
+  file".
+- **The assistant can read pictures, two ways.** `read_image_text` extracts
+  the words on a screenshot or a scanned page by OCR (needs `tesseract` on the
+  server, and says so when it is missing). `view_image` shows the model the
+  picture itself — scaled to fit, as JPEG — so it can describe a photo or read
+  a chart; it needs a model that accepts images. Both ask permission per file,
+  exactly as reading a text file does.
+- **The Filename / Content / Tags chips bind the search** rather than hinting
+  at it: Filename consults names only, Tags reads every word as a tag. Each
+  chip says what it does in a tooltip.
+- **The assistant's intro line is the empty log's placeholder**: it goes away
+  with the first message instead of staying above the conversation.
 - **The `main` drive is no longer listed under Storages.** It is the system
   drive holding the users' own files — their home — and "My files" is how it
   is reached, so the sidebar section and the Home page cards now show only the

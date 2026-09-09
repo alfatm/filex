@@ -396,6 +396,11 @@ export interface ApprovalCard {
   path: string;
   /** Why the assistant wants it, in its own words. */
   reason?: string;
+  /**
+   * How it ended, once it has. The turn stands still at the card until the person answers or the server stops
+   * waiting (`expired`); a card without one is still in front of the person.
+   */
+  decision?: 'allowed' | 'denied' | 'expired';
 }
 
 /**
@@ -464,6 +469,25 @@ export interface AssistantConversation {
   granted: string[];
 }
 
+/**
+ * Why a turn did not finish. `failed` is the ordinary case — try again; the other three say who has to act instead:
+ * `quota`, the provider account is out of credit (an administrator's); `unavailable`, the assistant was switched off
+ * or its provider no longer answers for it; `timeout`, the server said nothing for a minute and the app gave up.
+ */
+export type AssistantFailure = 'failed' | 'quota' | 'unavailable' | 'timeout';
+
+/**
+ * A document a tool wrote for the person — a list of files, a search's results, a written report — kept with the
+ * answer and downloadable as text or CSV. The rows are the shape of search results, so the panel draws and opens
+ * them the same way; they are the files as the server found them, not as the model remembered them.
+ */
+export interface AssistantReport {
+  title: string;
+  /** Markdown: the report itself, or a note above the list. */
+  text?: string;
+  rows: SearchHit[];
+}
+
 export interface AssistantMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -471,11 +495,13 @@ export interface AssistantMessage {
   /** ISO timestamp. */
   at: string;
   hits?: SearchHit[];
+  /** Documents the tools wrote for the person during this turn. */
+  reports?: AssistantReport[];
   /** Questions this turn raised for the person: permission to open a file, or a plan to approve. They survive a
    * reload, because the question is still waiting. */
   cards?: AssistantCard[];
-  /** The stream failed while this message was open; the text so far stays. */
-  error?: boolean;
+  /** The stream failed while this message was open, and how; the text so far stays. */
+  error?: AssistantFailure;
   /** The stream was stopped (panel closed) while this message was open. */
   aborted?: boolean;
 }
@@ -490,12 +516,15 @@ export type AssistantEvent =
   | { type: 'meta'; conversationId: string }
   | { type: 'text'; delta: string }
   | { type: 'hits'; hits: SearchHit[] }
+  /** A tool wrote a document for the person; it attaches to the open message like `hits` do. */
+  | { type: 'report'; report: AssistantReport }
   /** A tool is running: what it is doing, so twenty seconds of looking around does not read as a stall. */
   | { type: 'tool'; tool: string; target?: string }
   /** Something for the person to decide: permission to open one file, or a plan of work. */
   | { type: 'card'; card: AssistantCard }
   /** The server named this conversation, so the chat list can say so without refetching it. */
   | { type: 'title'; title: string }
-  /** The model call failed part-way. Whatever was streamed before it stays on screen and in the log. */
-  | { type: 'error'; message: string }
+  /** The model call failed part-way. Whatever was streamed before it stays on screen and in the log. `code` is
+   * present only when the failure is one the person can act on. */
+  | { type: 'error'; message: string; code?: 'quota' | 'unavailable' }
   | { type: 'done' };

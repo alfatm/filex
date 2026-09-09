@@ -12,6 +12,7 @@ package assistant
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -144,6 +145,17 @@ func anthropicMessages(messages []Message) []anthropicMessage {
 		switch {
 		case m.Role == RoleTool:
 			block := map[string]any{"type": "tool_result", "tool_use_id": m.ToolCallID, "content": m.Content}
+			if len(m.Images) > 0 {
+				// A result with a picture is a list of blocks: the text, then
+				// each image as base64 — this protocol takes them right here.
+				parts := []any{map[string]any{"type": "text", "text": m.Content}}
+				for _, img := range m.Images {
+					parts = append(parts, map[string]any{"type": "image", "source": map[string]any{
+						"type": "base64", "media_type": img.Mime, "data": base64.StdEncoding.EncodeToString(img.Data),
+					}})
+				}
+				block["content"] = parts
+			}
 			if n := len(out); n > 0 && out[n-1].Role == RoleUser {
 				if blocks, ok := out[n-1].Content.([]any); ok {
 					out[n-1].Content = append(blocks, block)

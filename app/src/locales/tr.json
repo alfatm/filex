@@ -440,7 +440,13 @@
     "modeLabel": "Arama modu",
     "placeholder": "Dosya bulmamı isteyin…",
     "send": "Gönder",
-    "error": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
+    "failure": {
+      "failed": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
+      "quota": "Asistan sağlayıcısının hesabında kredi kalmadı. Yöneticiden bakiye yüklemesini isteyin.",
+      "unavailable": "Asistan artık kullanılamıyor: kapatıldı ya da sağlayıcısı yanıt vermeyi bıraktı.",
+      "timeout": "Bir dakika boyunca yanıt gelmedi, istek bırakıldı. Tekrar deneyin."
+    },
+    "thinking": "Düşünüyorum…",
     "stopped": "Durduruldu",
     "more": "Daha fazla",
     "sessions": "Sohbetler",
@@ -463,15 +469,24 @@
       "title": "Bu dosyayı açabilir miyim?",
       "allow": "Bu dosyaya izin ver",
       "deny": "Bu değil",
-      "approved": "Bu dosyaya izin verdiniz",
-      "allowedPrompt": "`{path}` dosyasını okuyabilirsin.",
-      "deniedPrompt": "`{path}` dosyasını okuma."
+      "allowed": "Bu dosyaya izin verdiniz",
+      "denied": "Bu dosyaya izin vermediniz",
+      "expired": "Yanıt gelmedi, asistan onsuz devam etti"
     },
     "tools": {
       "list_storages": "Sürücülere bakılıyor",
       "list_folder": "Klasöre bakılıyor:",
       "search_files": "Aranıyor:",
-      "read_file": "Okunuyor:"
+      "read_file": "Okunuyor:",
+      "read_image_text": "Metni okunuyor:",
+      "view_image": "Bakılıyor:",
+      "write_report": "Rapor yazılıyor"
+    },
+    "report": {
+      "files": "{count} dosya | {count} dosya",
+      "expand": "Raporu tam boyutta aç",
+      "downloadText": "Metin olarak indir",
+      "downloadCsv": "CSV olarak indir"
     },
     "plan": {
       "title": "Önerilen değişiklikler",
@@ -509,6 +524,11 @@
       "expand": "Planı tam boyutta aç",
       "copy": "Planı kopyala",
       "copied": "Plan kopyalandı"
+    },
+    "modeHint": {
+      "filename": "Yalnızca dosya ve klasör adlarında ara",
+      "content": "Adların yanı sıra dosyaların içindeki metinde ara",
+      "tags": "Her sözcük bir etiket: o etiketi taşıyan dosyaları bul"
     }
   },
   "settings": {

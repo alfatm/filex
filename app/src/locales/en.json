@@ -440,7 +440,13 @@
     "modeLabel": "Search mode",
     "placeholder": "Ask to find files…",
     "send": "Send",
-    "error": "Something went wrong. Please try again.",
+    "failure": {
+      "failed": "Something went wrong. Please try again.",
+      "quota": "The assistant's provider account is out of credit. Ask an administrator to top it up.",
+      "unavailable": "The assistant is no longer available: it was switched off, or its provider stopped answering for it.",
+      "timeout": "No answer came for a minute, so the request was dropped. Try again."
+    },
+    "thinking": "Thinking…",
     "stopped": "Stopped",
     "more": "More",
     "sessions": "Chats",
@@ -463,15 +469,24 @@
       "title": "May I open this file?",
       "allow": "Allow this file",
       "deny": "Not this one",
-      "approved": "You allowed this file",
-      "allowedPrompt": "You may read `{path}`.",
-      "deniedPrompt": "Do not read `{path}`."
+      "allowed": "You allowed this file",
+      "denied": "You did not allow this file",
+      "expired": "No answer came, so the assistant went on without it"
     },
     "tools": {
       "list_storages": "Looking at the drives",
       "list_folder": "Looking in",
       "search_files": "Searching for",
-      "read_file": "Reading"
+      "read_file": "Reading",
+      "read_image_text": "Reading the text in",
+      "view_image": "Looking at",
+      "write_report": "Writing a report"
+    },
+    "report": {
+      "files": "{count} file | {count} files",
+      "expand": "Open the report in full",
+      "downloadText": "Download as text",
+      "downloadCsv": "Download as CSV"
     },
     "plan": {
       "title": "Proposed changes",
@@ -509,6 +524,11 @@
       "expand": "Open the plan in full",
       "copy": "Copy the plan",
       "copied": "Plan copied"
+    },
+    "modeHint": {
+      "filename": "Search file and folder names only",
+      "content": "Search the text inside files as well as names",
+      "tags": "Every word is a tag: find files tagged with it"
     }
   },
   "settings": {

@@ -68,6 +68,15 @@ describe('mock assistantAsk', () => {
     expect(none.some((e) => e.type === 'hits')).toBe(false);
   });
 
+  it('puts every match into one report card when the prompt asks for a report, with no hit cards', async () => {
+    const events = await collect('design report', 'content');
+    expect(text(events)).toBe('I put 4 files into a report you can download.');
+    expect(events.some((e) => e.type === 'hits')).toBe(false);
+    const report = events.find((e) => e.type === 'report');
+    expect(report?.type === 'report' && [report.report.title, report.report.rows.length]).toEqual(['Files about design', 4]);
+    expect(events.at(-1)).toEqual({ type: 'done' });
+  });
+
   it('understands the "Search by tag: design" suggestion in Filename mode', async () => {
     const events = await collect('Search by tag: design');
     expect(text(events)).toBe('I found 3 matching files.');

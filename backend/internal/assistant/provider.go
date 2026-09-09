@@ -44,6 +44,13 @@ const (
 	RoleTool = "tool"
 )
 
+// Image is a picture a tool result shows the model, as bytes the model's
+// protocol will carry base64-encoded. Only RoleTool messages carry them.
+type Image struct {
+	Mime string
+	Data []byte
+}
+
 // Message is one turn of conversation, in the provider-neutral form.
 type Message struct {
 	Role    string
@@ -53,6 +60,11 @@ type Message struct {
 	ToolCalls []ToolCall
 	// ToolCallID names the call a RoleTool message answers.
 	ToolCallID string
+	// Images are what the tool result SHOWS, beside what it says. Each
+	// protocol carries them where it allows a picture: Anthropic inside the
+	// tool_result block, the openai-compatible dialect in a user turn right
+	// after the result, since its tool role takes text only.
+	Images []Image
 }
 
 // Request is one model call.
@@ -98,6 +110,21 @@ func NewProvider(cfg Config, client *http.Client) (Provider, error) {
 // caller sees — the provider said the answer is complete.
 var errStop = errors.New("assistant: end of stream")
 
+// ProviderError is a non-2xx answer from the model provider, with the status
+// kept beside the quoted body so a handler can tell the person WHICH kind of
+// failure it was rather than only that one happened.
+type ProviderError struct {
+	Status int
+	Detail string
+}
+
+func (e *ProviderError) Error() string {
+	if e.Detail == "" {
+		return fmt.Sprintf("assistant: provider returned %d", e.Status)
+	}
+	return fmt.Sprintf("assistant: provider returned %d: %s", e.Status, e.Detail)
+}
+
 // checkStatus turns a non-2xx response into an error a person can act on. The
 // provider's own message is the useful part ("model not found", "insufficient
 // quota"), so it is quoted rather than replaced with a generic failure.
@@ -106,11 +133,50 @@ func checkStatus(resp *http.Response) error {
 		return nil
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
-	detail := strings.TrimSpace(string(body))
-	if detail == "" {
-		return fmt.Errorf("assistant: provider returned %s", resp.Status)
+	return &ProviderError{Status: resp.StatusCode, Detail: strings.TrimSpace(string(body))}
+}
+
+// The two failures a person can do something about — and neither is "try
+// again". They travel on the turn's error event as `code`; anything else is
+// a generic failure and carries none.
+const (
+	// ErrorCodeQuota: the provider account is out of credit. An administrator
+	// has to top it up; retrying only produces the same answer.
+	ErrorCodeQuota = "quota"
+	// ErrorCodeUnavailable: the assistant cannot answer at all any more — it
+	// was switched off, its key was revoked, or the model is gone.
+	ErrorCodeUnavailable = "unavailable"
+)
+
+// quotaWords is how the providers spell "out of credit". OpenAI answers 429
+// with `insufficient_quota` — the same status as a rate limit, which is why
+// the body is read and not only the status — and Anthropic answers 400 with
+// "credit balance is too low".
+var quotaWords = []string{"insufficient_quota", "credit balance", "billing", "quota"}
+
+// ErrorCode classifies a failed turn for the person. "" is the ordinary
+// failure: a provider hiccup, a network error, a malformed stream.
+func ErrorCode(err error) string {
+	if errors.Is(err, ErrNotConfigured) {
+		return ErrorCodeUnavailable
 	}
-	return fmt.Errorf("assistant: provider returned %s: %s", resp.Status, detail)
+	var pe *ProviderError
+	if !errors.As(err, &pe) {
+		return ""
+	}
+	detail := strings.ToLower(pe.Detail)
+	for _, word := range quotaWords {
+		if strings.Contains(detail, word) {
+			return ErrorCodeQuota
+		}
+	}
+	switch pe.Status {
+	case http.StatusPaymentRequired:
+		return ErrorCodeQuota
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return ErrorCodeUnavailable
+	}
+	return ""
 }
 
 // scanSSE reads a server-sent event stream and calls handle for each event.

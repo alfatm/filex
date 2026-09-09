@@ -115,10 +115,11 @@ export interface Repository {
   /** The turns of one conversation, plus the files it has been given permission to open. */
   assistantMessages(id: string): Promise<AssistantConversation>;
   /**
-   * Records permission to read ONE file in this conversation. There is no form of this call that approves a folder,
-   * a pattern or everything — that is the rule it exists to keep.
+   * Answers the request to read ONE file in this conversation: the turn waiting at the card goes on with the
+   * contents or with a refusal. There is no form of this call that approves a folder, a pattern or everything —
+   * that is the rule it exists to keep.
    */
-  approveAssistantRead(id: string, path: string): Promise<void>;
+  decideAssistantRead(id: string, path: string, allow: boolean): Promise<void>;
   /**
    * Runs a plan the person approved, or drops it. The call carries no work: everything that will happen is already
    * in the plan the server stored, so there is nothing here for a compromised client to rewrite.

@@ -3,13 +3,13 @@ import { createPinia, setActivePinia } from 'pinia';
 import { nextTick } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AssistantEvent, AssistantMode } from '@/data/types';
+import type { AssistantEvent, AssistantMode, SearchHit } from '@/data/types';
 import { i18n } from '@/i18n';
 import AssistantPanel from './AssistantPanel.vue';
 import { useAssistantStore } from './assistantStore';
 
 const calls: { prompt: string; mode: AssistantMode }[] = [];
-const approvals: { id: string; path: string }[] = [];
+const approvals: { id: string; path: string; allow: boolean }[] = [];
 const decisions: { id: string; planId: string; approve: boolean }[] = [];
 let script: AssistantEvent[] = [];
 let release: (() => void) | null = null;
@@ -37,8 +37,8 @@ vi.mock('@/data', () => ({
     async createAssistantSession() {
       return { id: 's1', title: '', titleManual: false, messageCount: 0, lastActiveAt: '', createdAt: '' };
     },
-    async approveAssistantRead(id: string, path: string) {
-      approvals.push({ id, path });
+    async decideAssistantRead(id: string, path: string, allow: boolean) {
+      approvals.push({ id, path, allow });
     },
     async decideAssistantPlan(id: string, planId: string, approve: boolean) {
       decisions.push({ id, planId, approve });
@@ -163,20 +163,44 @@ describe('AssistantPanel', () => {
     expect(radios(wrapper)[2].attributes('tabindex')).toBe('0');
   });
 
-  it('renders the error and stopped hints', async () => {
+  it('renders the error and stopped hints, and says who has to act on the failures that are not "try again"', async () => {
     const { wrapper, store } = await setup();
     cleanup = () => wrapper.unmount();
     store.seed([
       { id: 'a', role: 'user', text: 'q', at: '2026-07-10T10:24:00' },
       { id: 'b', role: 'assistant', text: 'partial', at: '2026-07-10T10:24:00', aborted: true },
-      { id: 'c', role: 'assistant', text: '', at: '2026-07-10T10:24:00', error: true },
+      { id: 'c', role: 'assistant', text: '', at: '2026-07-10T10:24:00', error: 'failed' },
+      { id: 'd', role: 'assistant', text: '', at: '2026-07-10T10:24:00', error: 'quota' },
+      { id: 'e', role: 'assistant', text: '', at: '2026-07-10T10:24:00', error: 'unavailable' },
+      { id: 'f', role: 'assistant', text: '', at: '2026-07-10T10:24:00', error: 'timeout' },
     ]);
     await nextTick();
     expect(wrapper.text()).toContain('Stopped');
     expect(wrapper.text()).toContain('Something went wrong. Please try again.');
+    expect(wrapper.text()).toContain('out of credit. Ask an administrator');
+    expect(wrapper.text()).toContain('The assistant is no longer available');
+    expect(wrapper.text()).toContain('No answer came for a minute');
   });
 
-  it('asks for one file at a time, and says the permission out loud in the chat', async () => {
+  // The model's first word can be many seconds away; a panel showing nothing for them reads as a request that
+  // never left.
+  it('says it is thinking from the question until the first word arrives', async () => {
+    script = [{ type: 'text', delta: 'Hello' }, { type: 'done' }];
+    const { wrapper, store } = await setup();
+    cleanup = () => wrapper.unmount();
+    const turn = store.send('q');
+    await flushPromises();
+    expect(wrapper.text()).toContain('Thinking…');
+
+    release!();
+    await flushPromises();
+    expect(wrapper.text()).toContain('Hello');
+    expect(wrapper.text()).not.toContain('Thinking…');
+    release!();
+    await turn;
+  });
+
+  it('asks for one file at a time, and the answer goes to the waiting turn — nothing is typed into the chat', async () => {
     script = [{ type: 'done' }];
     const { wrapper, store } = await setup();
     cleanup = () => wrapper.unmount();
@@ -197,14 +221,95 @@ describe('AssistantPanel', () => {
     expect(wrapper.text()).toContain('main://Docs/pay.csv');
     expect(wrapper.text()).toContain('to total the salaries');
 
+    const before = calls.length;
     const allow = wrapper.findAll('button').find((b) => b.text() === 'Allow this file');
     await allow!.trigger('click');
     await flushPromises();
-    // The grant is recorded for that one path, and the conversation records that it was given.
-    expect(approvals).toEqual([{ id: 's1', path: 'main://Docs/pay.csv' }]);
-    expect(calls.at(-1)?.prompt).toBe('You may read `main://Docs/pay.csv`.');
+    // The answer is recorded for that one path; no message is sent for it.
+    expect(approvals).toEqual([{ id: 's1', path: 'main://Docs/pay.csv', allow: true }]);
+    expect(calls).toHaveLength(before);
     await nextTick();
     expect(wrapper.text()).toContain('You allowed this file');
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Allow this file')).toBe(false);
+  });
+
+  it('draws a report as a card with the count and downloads it as text or CSV, built in the browser', async () => {
+    const saved: { name: string; type: string }[] = [];
+    vi.stubGlobal('URL', { ...URL, createObjectURL: (blob: Blob) => `blob:${blob.type}`, revokeObjectURL: () => {} });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      saved.push({ name: this.download, type: this.href.slice('blob:'.length) });
+    });
+    const { wrapper, store } = await setup();
+    cleanup = () => {
+      wrapper.unmount();
+      click.mockRestore();
+      vi.unstubAllGlobals();
+    };
+    const row = (id: string, name: string) => ({ node: { id, name, kind: 'file' as const, size: 1 }, storageId: 'main', folderPath: 'Docs' }) as SearchHit;
+    store.seed([
+      {
+        id: 'm2',
+        role: 'assistant',
+        text: 'The list is in the report.',
+        at: '2026-07-01T10:00:01Z',
+        reports: [{ title: 'Q1 files', rows: [row('main://Docs/a.pdf', 'a.pdf'), row('main://Docs/b.pdf', 'b.pdf')] }],
+      },
+    ]);
+    await nextTick();
+
+    expect(wrapper.text()).toContain('Q1 files');
+    expect(wrapper.text()).toContain('2 files');
+    // The rows themselves stay off the panel: that is what the card is for.
+    expect(wrapper.text()).not.toContain('main://Docs/a.pdf');
+
+    const buttons = () => wrapper.findAll('button');
+    await buttons().find((b) => b.text() === 'Download as text')!.trigger('click');
+    await buttons().find((b) => b.text() === 'Download as CSV')!.trigger('click');
+    expect(saved).toEqual([
+      { name: 'Q1 files.txt', type: 'text/plain;charset=utf-8' },
+      { name: 'Q1 files.csv', type: 'text/csv;charset=utf-8' },
+    ]);
+  });
+
+  it('draws a card that was refused, or that nobody answered, as such', async () => {
+    const { wrapper, store } = await setup();
+    cleanup = () => wrapper.unmount();
+    store.seed([
+      {
+        id: 'm2',
+        role: 'assistant',
+        text: 'Two files.',
+        at: '2026-07-01T10:00:01Z',
+        cards: [
+          { kind: 'approval', path: 'main://Docs/a.csv', decision: 'denied' },
+          { kind: 'approval', path: 'main://Docs/b.csv', decision: 'expired' },
+        ],
+      },
+    ]);
+    await nextTick();
+    expect(wrapper.text()).toContain('You did not allow this file');
+    expect(wrapper.text()).toContain('No answer came, so the assistant went on without it');
+    expect(wrapper.findAll('button').some((b) => b.text() === 'Allow this file')).toBe(false);
+  });
+
+  // The intro is the empty log's placeholder, not a heading over the conversation.
+  it('shows the intro only while the log is empty', async () => {
+    const { wrapper, store } = await setup();
+    cleanup = () => wrapper.unmount();
+    expect(wrapper.text()).toContain('Find files by content, filename, or tags.');
+    store.seed([{ id: 'a', role: 'user', text: 'q', at: '2026-07-10T10:24:00' }]);
+    await nextTick();
+    expect(wrapper.text()).not.toContain('Find files by content, filename, or tags.');
+  });
+
+  it('says on each mode chip what it does to the search', async () => {
+    const { wrapper } = await setup();
+    cleanup = () => wrapper.unmount();
+    expect(radios(wrapper).map((r) => r.attributes('title'))).toEqual([
+      'Search file and folder names only',
+      'Search the text inside files as well as names',
+      'Every word is a tag: find files tagged with it',
+    ]);
   });
 
   it('shows a plan item by item before anything happens, and reports what actually did', async () => {

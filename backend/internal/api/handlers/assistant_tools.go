@@ -26,12 +26,22 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/jpeg"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	// The formats view_image can decode; registered by import, as image.Decode wants.
+	_ "image/gif"
+	_ "image/png"
+
+	"golang.org/x/image/draw"
+	_ "golang.org/x/image/webp"
 
 	"github.com/brf-tech/filex/backend/internal/acl"
 	"github.com/brf-tech/filex/backend/internal/assistant"
@@ -40,6 +50,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/pathkey"
 	"github.com/brf-tech/filex/backend/internal/search"
+	"github.com/brf-tech/filex/backend/internal/search/extract"
 	"github.com/brf-tech/filex/backend/internal/share"
 	"github.com/brf-tech/filex/backend/internal/storage"
 	"github.com/brf-tech/filex/backend/internal/tenanturl"
@@ -94,6 +105,16 @@ type assistantTools struct {
 	// is EXECUTED, because that is the only moment a request is in hand and
 	// the only moment a link exists; empty while the model is merely proposing.
 	origin string
+	// mode is the panel's chip for this turn — filename, content or tags —
+	// and it binds search_files rather than advising the model: a hint in the
+	// question was read as a suggestion, and the chip did nothing visible.
+	mode string
+	// ask puts an approval card in front of the person and returns their
+	// decision — the turn handler sets it, because the turn is what holds
+	// the stream the card goes out on. The tool call blocks on it: to the
+	// model, permission is a slow read, not a conversation. Nil (no turn in
+	// hand) leaves the old behaviour, a refusal carrying the card.
+	ask func(ctx context.Context, card assistant.Card) string
 }
 
 // newAssistantTools binds the file surface to one conversation.
@@ -232,11 +253,36 @@ func (t *assistantTools) Specs() []assistant.ToolSpec {
 		},
 		{
 			Name:        "read_file",
-			Description: "Read a text file's contents. REQUIRES the person's permission for that exact file: if they have not approved it, this returns a refusal and they are shown the request. Ask before you call it, prefer metadata, and never call it to work around a refusal.",
+			Description: "Read a file's contents as text: plain text and source files as they are; PDF, DOCX, XLSX and PPTX through text extraction. Not for images — read_image_text and view_image are. REQUIRES the person's permission for that exact file, and CALLING THIS IS HOW YOU ASK: the call shows them a card with the file, your reason and Allow / Deny buttons, waits for their answer, and returns the contents or a refusal. Do not ask in prose first. Prefer metadata, and never call it to work around a refusal.",
 			Schema: object(map[string]any{
 				"path":   str("The file, as `<drive>://<path>`."),
 				"reason": str("Why you need the contents, in one short sentence. The person sees this when deciding."),
 			}, []string{"path", "reason"}),
+		},
+		{
+			Name:        "read_image_text",
+			Description: "Extract the TEXT in an image (PNG, JPEG, WebP, TIFF) by OCR — a screenshot, a scanned page, a photo of a document. Returns the words, not what the picture shows; for that, view_image. Permission works exactly as for read_file: the call asks the person and waits.",
+			Schema: object(map[string]any{
+				"path":   str("The image, as `<drive>://<path>`."),
+				"reason": str("Why you need the text, in one short sentence. The person sees this when deciding."),
+			}, []string{"path", "reason"}),
+		},
+		{
+			Name:        "view_image",
+			Description: "LOOK at an image (PNG, JPEG, GIF, WebP): the picture is attached to the result for you to see — describe a photo, read a chart, check a design. Needs a model that accepts images. Permission works exactly as for read_file: the call asks the person and waits.",
+			Schema: object(map[string]any{
+				"path":   str("The image, as `<drive>://<path>`."),
+				"reason": str("Why you need to see it, in one short sentence. The person sees this when deciding."),
+			}, []string{"path", "reason"}),
+		},
+		{
+			Name:        "write_report",
+			Description: "Put a list of files, a search's results or a written report into a card the person can open and download as text or CSV. Use it instead of naming more than 20 files in an answer. Each path is resolved to the file's current name, size and date, so give only addresses you have seen; unknown ones are reported back as missing. This changes nothing and needs no approval. Afterwards name only the files that matter — do not repeat the list.",
+			Schema: object(map[string]any{
+				"title": str("What the report is, in a few words. It is the card's heading and the downloaded file's name."),
+				"text":  str("The report itself, or a note above the list, in Markdown. Optional when there are paths."),
+				"paths": arr("The files and folders to list, each as `<drive>://<path>`. Optional when there is text.", str("")),
+			}, []string{"title"}),
 		},
 	}
 }
@@ -254,6 +300,10 @@ func (t *assistantTools) Run(ctx context.Context, call assistant.ToolCall) assis
 		return t.searchFiles(ctx, call.Args)
 	case "read_file":
 		return t.readFile(ctx, call.Args)
+	case "read_image_text":
+		return t.readImageText(ctx, call.Args)
+	case "view_image":
+		return t.viewImage(ctx, call.Args)
 	case "list_versions":
 		return t.listVersions(ctx, call.Args)
 	case "list_shares":
@@ -272,6 +322,8 @@ func (t *assistantTools) Run(ctx context.Context, call assistant.ToolCall) assis
 		return t.planEmptyTrash(ctx, call.Args)
 	case "plan_move":
 		return t.planMove(ctx, call.Args)
+	case "write_report":
+		return t.writeReport(ctx, call.Args)
 	}
 	return failure("there is no tool called %q", call.Name)
 }
@@ -289,6 +341,12 @@ type searchArgs struct {
 type readArgs struct {
 	Path   string `json:"path"`
 	Reason string `json:"reason"`
+}
+
+type reportArgs struct {
+	Title string   `json:"title"`
+	Text  string   `json:"text"`
+	Paths []string `json:"paths"`
 }
 
 // listStorages answers with the drives the caller can see — the same rule the
@@ -340,14 +398,27 @@ func (t *assistantTools) searchFiles(ctx context.Context, raw string) assistant.
 	if strings.TrimSpace(args.Query) == "" {
 		return failure("a search needs something to look for")
 	}
-	hits, err := mcpSearch(ctx, t.ops, t.index, args.Path, args.Query, true)
+	query, withContent := args.Query, true
+	switch t.mode {
+	case "filename":
+		withContent = false
+	case "tags":
+		query, withContent = asTagQuery(query), false
+	}
+	hits, err := mcpSearch(ctx, t.ops, t.index, args.Path, query, withContent)
 	if err != nil {
 		return failure("%v", err)
 	}
 	if len(hits) > assistantSearchLimit {
 		hits = hits[:assistantSearchLimit]
 	}
-	out := payload(map[string]any{"query": args.Query, "hits": hits})
+	result := map[string]any{"query": query, "hits": hits}
+	if t.mode != "" {
+		// Said back, so a search that found nothing is read as "nothing with
+		// that tag" and not as "nothing by that name".
+		result["scope"] = t.mode
+	}
+	out := payload(result)
 	// The same rows again, this time for the panel to draw as cards. The model
 	// reads them as JSON; the person gets something clickable, without waiting
 	// for the answer to name every file in prose.
@@ -357,43 +428,165 @@ func (t *assistantTools) searchFiles(ctx context.Context, raw string) assistant.
 	return out
 }
 
-// readFile is the gated one.
-func (t *assistantTools) readFile(ctx context.Context, raw string) assistant.ToolOutcome {
-	var args readArgs
+// writeReport puts a list of files, a search's results or a written report in
+// front of the person as a card they can open and download. It is the way out
+// of a long answer: the prompt caps how many files an answer may name, and
+// everything past the cap goes here instead.
+//
+// The rows are resolved again rather than taken on trust: a path the model
+// misremembered is reported back as missing, not written into a document the
+// person will download as fact. Nothing here changes anything, so there is no
+// plan and no approval.
+func (t *assistantTools) writeReport(ctx context.Context, raw string) assistant.ToolOutcome {
+	var args reportArgs
 	if err := json.Unmarshal([]byte(raw), &args); err != nil {
 		return failure("could not read the arguments: %v", err)
 	}
-	path := strings.TrimSpace(args.Path)
-	if path == "" {
-		return failure("which file?")
+	args.Title = strings.TrimSpace(args.Title)
+	args.Text = strings.TrimSpace(args.Text)
+	if args.Title == "" {
+		return failure("a report needs a title")
 	}
-	granted, err := t.store.AssistantReadGranted(ctx, t.sessionID, path)
-	if err != nil {
-		return failure("could not check the permissions for %s: %v", path, err)
+	if len(args.Paths) == 0 && args.Text == "" {
+		return failure("a report needs paths, text, or both")
 	}
-	if !granted {
-		// The model is told plainly that this is not a bug to route around, and
-		// the person gets a card naming the file and the stated reason.
-		return assistant.ToolOutcome{
-			Content: jsonString(map[string]any{
-				"refused": "the person has not given permission to read this file",
-				"path":    path,
-				"next":    "tell them what you want to open and why, and wait. Do not try another path or tool to get at these contents.",
-			}),
-			Card: &assistant.Card{Kind: assistant.CardApproval, Path: path, Reason: strings.TrimSpace(args.Reason)},
+	result := map[string]any{"title": args.Title}
+	if len(args.Paths) > assistant.MaxFilesPerListing {
+		result["truncated"] = true
+		args.Paths = args.Paths[:assistant.MaxFilesPerListing]
+	}
+	rows := make([]aiEntry, 0, len(args.Paths))
+	var missing []string
+	for _, p := range args.Paths {
+		entry, err := t.ops.Info(ctx, p)
+		if err != nil {
+			missing = append(missing, p)
+			continue
 		}
+		rows = append(rows, *entry)
 	}
-	body, mime, err := t.ops.ReadBytes(ctx, path)
+	report := map[string]any{"title": args.Title, "rows": rows}
+	if args.Text != "" {
+		report["text"] = args.Text
+	}
+	shown, err := json.Marshal(report)
 	if err != nil {
 		return failure("%v", err)
 	}
+	result["rows"] = len(rows)
+	if len(missing) > 0 {
+		result["missing"] = missing
+	}
+	result["note"] = "The report is in front of the person as a card they can open and download as text or CSV. Do not repeat its rows in the answer."
+	out := payload(result)
+	out.Report = shown
+	return out
+}
+
+// asTagQuery reads every plain word of a query as a tag — `design invoices`
+// becomes `tag:design tag:invoices` — for the Tags chip. A query that already
+// names its tags is left alone.
+func asTagQuery(query string) string {
+	if parsed := search.ParseQuery(query); len(parsed.Tags) > 0 || len(parsed.ExcludeTags) > 0 {
+		return query
+	}
+	words := search.NormWords(query)
+	for i, w := range words {
+		words[i] = "tag:" + w
+	}
+	return strings.Join(words, " ")
+}
+
+// permitRead is the gate every tool that opens a file's contents goes through:
+// the path and reason from the call, the grant check, and the card when there
+// is no grant yet. It returns the bytes and their mime type, or the outcome
+// the model has to read instead — a refusal, a bad argument, a read error.
+func (t *assistantTools) permitRead(ctx context.Context, raw string) (path string, body []byte, mime string, refused *assistant.ToolOutcome) {
+	var args readArgs
+	if err := json.Unmarshal([]byte(raw), &args); err != nil {
+		return "", nil, "", ptr(failure("could not read the arguments: %v", err))
+	}
+	path = strings.TrimSpace(args.Path)
+	if path == "" {
+		return "", nil, "", ptr(failure("which file?"))
+	}
+	granted, err := t.store.AssistantReadGranted(ctx, t.sessionID, path)
+	if err != nil {
+		return "", nil, "", ptr(failure("could not check the permissions for %s: %v", path, err))
+	}
+	if !granted {
+		card := assistant.Card{Kind: assistant.CardApproval, Path: path, Reason: strings.TrimSpace(args.Reason)}
+		if t.ask == nil {
+			// The model is told plainly that this is not a bug to route
+			// around, and the person gets a card naming the file and the
+			// stated reason.
+			return "", nil, "", &assistant.ToolOutcome{
+				Content: jsonString(map[string]any{
+					"refused": "the person has not given permission to read this file",
+					"path":    path,
+					"next":    "tell them what you want to open and why, and wait. Do not try another path or tool to get at these contents.",
+				}),
+				Card: &card,
+			}
+		}
+		// The question is asked here and answered here: the call returns when
+		// the person has pressed a button, or stopped answering. Either way the
+		// model reads a result, never a "pending".
+		switch t.ask(ctx, card) {
+		case assistant.DecisionAllowed:
+		case assistant.DecisionDenied:
+			return "", nil, "", ptr(payload(map[string]any{
+				"refused": "the person did not allow reading this file",
+				"path":    path,
+				"next":    "go on without its contents and do not ask for this file again. If the question cannot be answered without it, say so in one sentence.",
+			}))
+		default:
+			return "", nil, "", ptr(payload(map[string]any{
+				"refused": "the person did not answer the request in time",
+				"path":    path,
+				"next":    "go on without its contents. They can ask again when they are ready.",
+			}))
+		}
+	}
+	body, mime, err = t.ops.ReadBytes(ctx, path)
+	if err != nil {
+		return "", nil, "", ptr(failure("%v", err))
+	}
+	return path, body, mime, nil
+}
+
+func ptr(o assistant.ToolOutcome) *assistant.ToolOutcome { return &o }
+
+// readFile is the gated one.
+func (t *assistantTools) readFile(ctx context.Context, raw string) assistant.ToolOutcome {
+	path, body, mime, refused := t.permitRead(ctx, raw)
+	if refused != nil {
+		return *refused
+	}
+	if strings.HasPrefix(mime, "image/") {
+		return failure("%s is an image: read_image_text extracts the text in it, view_image lets you look at it", path)
+	}
 	text := string(body)
-	if !utf8.ValidString(text) {
+	out := map[string]any{"path": path, "mime": mime}
+	// A PDF or an office document is read the way the search index reads it:
+	// through the extractor for its format. A text file is handed over as it
+	// is — the text extractor would only do the same, and it knows fewer
+	// formats than a model can read. One past the cap, so the cut is noticed.
+	if e := extract.For(mime, extensionOf(path)); e != nil && !strings.HasPrefix(mime, "text/") {
+		var err error
+		text, err = e.Extract(ctx, bytes.NewReader(body), int64(assistantReadBytes)+1)
+		if err != nil {
+			return failure("%s could not be read: %v", path, err)
+		}
+		if strings.TrimSpace(text) == "" {
+			return failure("%s (%s) has no text to extract — a scanned document, an image, or empty", path, mime)
+		}
+		out["extracted_from"] = mime
+	} else if !utf8.ValidString(text) {
 		// Handing a model the bytes of a JPEG spends the context window on
 		// nothing and tells it nothing.
 		return failure("%s is not a text file (%s); its contents cannot be read here", path, mime)
 	}
-	out := map[string]any{"path": path, "mime": mime}
 	if len(text) > assistantReadBytes {
 		text = text[:assistantReadBytes]
 		out["truncated"] = true
@@ -401,6 +594,89 @@ func (t *assistantTools) readFile(ctx context.Context, raw string) assistant.Too
 	}
 	out["content"] = text
 	return payload(out)
+}
+
+// readImageText is OCR: the words in a picture, through the same tesseract
+// extractor the search index uses — which is optional, and its absence is a
+// plain answer rather than "no text found".
+func (t *assistantTools) readImageText(ctx context.Context, raw string) assistant.ToolOutcome {
+	path, body, mime, refused := t.permitRead(ctx, raw)
+	if refused != nil {
+		return *refused
+	}
+	if !strings.HasPrefix(mime, "image/") {
+		return failure("%s is not an image (%s); read_file reads it", path, mime)
+	}
+	if extract.TesseractBin() == "" {
+		return failure("OCR is not installed on this server (tesseract); view_image lets you look at %s instead", path)
+	}
+	e := extract.For(mime, extensionOf(path))
+	if e == nil {
+		return failure("%s (%s) is not a format OCR reads; view_image lets you look at it instead", path, mime)
+	}
+	text, err := e.Extract(ctx, bytes.NewReader(body), int64(assistantReadBytes)+1)
+	if err != nil {
+		return failure("%s could not be read: %v", path, err)
+	}
+	if strings.TrimSpace(text) == "" {
+		return failure("no text was found in %s; view_image lets you look at it instead", path)
+	}
+	out := map[string]any{"path": path, "mime": mime, "ocr": true}
+	if len(text) > assistantReadBytes {
+		text = text[:assistantReadBytes]
+		out["truncated"] = true
+		out["shown_bytes"] = assistantReadBytes
+	}
+	out["content"] = text
+	return payload(out)
+}
+
+// visionMaxEdge is the longest side a picture is sent at. Larger buys the
+// model nothing it can use and costs context at every later turn.
+const visionMaxEdge = 1568
+
+// viewImage hands the picture itself to the model, scaled to fit and
+// re-encoded as JPEG so an 8 MiB photo does not travel as 8 MiB of base64.
+func (t *assistantTools) viewImage(ctx context.Context, raw string) assistant.ToolOutcome {
+	path, body, mime, refused := t.permitRead(ctx, raw)
+	if refused != nil {
+		return *refused
+	}
+	if !strings.HasPrefix(mime, "image/") {
+		return failure("%s is not an image (%s); read_file reads it", path, mime)
+	}
+	src, _, err := image.Decode(bytes.NewReader(body))
+	if err != nil {
+		return failure("%s (%s) could not be decoded as a picture: %v", path, mime, err)
+	}
+	bounds := src.Bounds()
+	width, height := bounds.Dx(), bounds.Dy()
+	fitted := src
+	if longest := max(width, height); longest > visionMaxEdge {
+		scaled := image.NewRGBA(image.Rect(0, 0, width*visionMaxEdge/longest, height*visionMaxEdge/longest))
+		draw.CatmullRom.Scale(scaled, scaled.Bounds(), src, bounds, draw.Over, nil)
+		fitted = scaled
+	}
+	var encoded bytes.Buffer
+	if err := jpeg.Encode(&encoded, fitted, &jpeg.Options{Quality: 85}); err != nil {
+		return failure("%s could not be encoded for the model: %v", path, err)
+	}
+	out := payload(map[string]any{
+		"path": path, "mime": mime, "width": width, "height": height,
+		"note": "the picture is attached to this result; describe what you see in it",
+	})
+	out.Images = []assistant.Image{{Mime: "image/jpeg", Data: encoded.Bytes()}}
+	return out
+}
+
+// extensionOf is the extension `extract.For` wants: after the last dot of the
+// last segment, without the dot; "" when there is none.
+func extensionOf(p string) string {
+	name := p[strings.LastIndex(p, "/")+1:]
+	if at := strings.LastIndex(name, "."); at >= 0 {
+		return name[at+1:]
+	}
+	return ""
 }
 
 // assistantHiddenNames are filex's own bookkeeping, not the person's files:

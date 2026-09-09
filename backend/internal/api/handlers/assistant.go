@@ -42,6 +42,9 @@ type Assistant struct {
 	// Tools is the file surface the assistant may look at (assistant_tools.go).
 	// Nil leaves the model with no tools at all.
 	Tools *AssistantToolDeps
+	// desk is where a turn waiting on a read permission meets the click that
+	// answers it (assistant_turn.go).
+	desk approvalDesk
 }
 
 // NewAssistant constructs the handler.
@@ -153,6 +156,9 @@ func (h *Assistant) Messages(w http.ResponseWriter, r *http.Request) {
 		}
 		if hits := storedHits(m.PayloadJSON); len(hits) > 0 {
 			row["hits"] = hits
+		}
+		if reports := storedReports(m.PayloadJSON); len(reports) > 0 {
+			row["reports"] = reports
 		}
 		out = append(out, row)
 	}
@@ -280,6 +286,21 @@ func storedHits(payload string) []json.RawMessage {
 	return stored.Hits
 }
 
+// storedReports reads back the documents the tools wrote for the person, as
+// they were stored — like storedHits, the shape belongs to the panel.
+func storedReports(payload string) []json.RawMessage {
+	if payload == "" || payload == "{}" {
+		return nil
+	}
+	var stored struct {
+		Reports []json.RawMessage `json:"reports"`
+	}
+	if json.Unmarshal([]byte(payload), &stored) != nil {
+		return nil
+	}
+	return stored.Reports
+}
+
 // hydratePlans replaces each stored plan card with the plan's current state.
 // A card whose plan is gone (the row was removed) is dropped rather than shown
 // as a button that would 404.
@@ -287,7 +308,11 @@ func hydratePlans(cards []assistant.Card, plans map[string]map[string]any) []map
 	out := make([]map[string]any, 0, len(cards))
 	for _, card := range cards {
 		if card.Kind != assistant.CardPlan {
-			out = append(out, map[string]any{"kind": card.Kind, "path": card.Path, "reason": card.Reason})
+			row := map[string]any{"kind": card.Kind, "path": card.Path, "reason": card.Reason}
+			if card.Decision != "" {
+				row["decision"] = card.Decision
+			}
+			out = append(out, row)
 			continue
 		}
 		view, ok := plans[card.PlanID]

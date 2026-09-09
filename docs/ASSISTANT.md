@@ -83,7 +83,10 @@ special.
 | `list_versions` | the stored revisions of one file, with their ids |
 | `list_shares` | the public links on one item, with their ids — ⚠ never the link token itself |
 | `list_trash` | what is in the trash, with sizes and deletion dates |
-| `read_file` | a text file's contents — **gated**, see below |
+| `read_file` | a text file's contents — plain text as it is, PDF / DOCX / XLSX / PPTX through the search index's extractors — **gated**, see below |
+| `read_image_text` | the words in a picture, by OCR (`tesseract`, when installed) — **gated** the same way |
+| `view_image` | the picture itself, scaled to fit and attached to the result for the model to see; needs a model that accepts images — **gated** the same way |
+| `write_report` | puts a list of files, a search's results or a written report in front of the person as a **card** they can open and download as text or CSV. The prompt caps an answer at 20 named files; anything longer goes here. Each path is resolved again — a path the model made up is reported back as missing, not written into the document. Changes nothing, needs no approval |
 
 Listings are capped (200 entries by default, 1000 at most) and say so when they
 truncate, so a model cannot walk a large tree into the context window by
@@ -93,9 +96,34 @@ marker — is hidden from the assistant too.
 ## Reading a file needs permission for that file
 
 `read_file` refuses unless the person has approved **that exact path in that
-conversation**. The refusal is not a scolding; it hands the model a short
-instruction to say what it wants to open and why, and to wait. The panel then
-shows a card with the path and the reason, and one button.
+conversation** — and the call is how the model asks. It is served the way an
+interrupt is: the card (path, the model's reason, Allow / Deny) goes down the
+stream, the turn stands still, the button answers it on another connection,
+and the same tool call returns — the contents, or a refusal telling the model
+to go on without the file and not ask again. Nothing is typed into the chat
+for it, and no second model round is spent on a "you may read" message. A
+person who does not answer within five minutes gets an `expired` card and the
+model goes on without the file; they can ask again when they are back.
+
+The card comes down the stream twice — once to ask, once decided — and is
+stored with the answer carrying its `decision` (`allowed`, `denied`,
+`expired`), so a reopened conversation shows how each request ended.
+
+PDF, DOCX, XLSX and PPTX are read through the same extractors the search
+index uses (`internal/search/extract`), so the model gets the text layer and
+never the bytes; a scanned document with no text layer is a refusal saying so.
+
+Pictures have two tools, because "read this image" means two different
+things. `read_image_text` is OCR: the words on a screenshot or a scanned page,
+through the same optional `tesseract` extractor the index uses — and a server
+without it says so instead of answering "no text". `view_image` shows the model
+the picture: decoded (PNG, JPEG, GIF, WebP), scaled to at most 1568 px on the
+long side, re-encoded as JPEG and attached to the tool result — inside the
+`tool_result` block for Anthropic, as a user turn of `image_url` parts right
+after the tool message for the openai-compatible dialect, whose tool role takes
+text only. It needs a model that accepts images; one that does not answers
+with a provider error. `read_file` refuses images and names both tools. All
+three go through the one gate, one file per card.
 
 The approval is a row in `assistant_read_grants`, unique on `(session_id,
 path)`. There is no wildcard, no per-folder form and no "approve everything" —
@@ -318,6 +346,7 @@ chat list is right without refetching anything.
 | Tool rounds per turn | 8 | a model that has not finished looking after eight rounds is told to answer with what it has |
 | History replayed to the model | last 40 messages | trimmed so a turn never opens on an assistant message |
 | Listing entries | 200 default, 1000 max | truncation is reported, not hidden |
+| Files named in one answer | 20, prompt only | a longer list goes to a report card the person downloads; the rows of one report are capped at 1000 |
 | Naming calls | one per conversation | a second small call the first time a conversation is answered, and never again once it has a name |
 
 ## The wire
@@ -329,8 +358,8 @@ Everything is under `/api/assistant`, cookie-authenticated as the person.
 | `GET /api/assistant/status` | whether an assistant exists here, and which model |
 | `POST /api/assistant/sessions` · `GET` · `PATCH /{id}` · `DELETE /{id}` | conversations |
 | `GET /api/assistant/sessions/{id}` | its messages — owner only |
-| `POST /api/assistant/sessions/{id}/turn` | ask; answers as SSE. The body is `{"prompt", "mode", "context"}` — `mode` is the panel's scope chip, `context` what the person has on screen (`page`, the open `folder`, the `selected` addresses, the search page's `search`). Both are appended to that one question as hints for the model; neither is stored or replayed |
-| `POST /api/assistant/sessions/{id}/approvals` | `{"path":"drive://…"}` — permission to read that one file |
+| `POST /api/assistant/sessions/{id}/turn` | ask; answers as SSE. The body is `{"prompt", "mode", "context"}` — `mode` is the panel's scope chip, `context` what the person has on screen (`page`, the open `folder`, the `selected` addresses, the search page's `search`). Both are appended to that one question as hints for the model; neither is stored or replayed. `mode` also BINDS `search_files` for the turn — `filename` consults names only, `tags` reads every term as a tag — so the chip does something whether or not the model reads the hint |
+| `POST /api/assistant/sessions/{id}/approvals` | `{"path":"drive://…","decision":"allow"\|"deny"}` — the answer to a request to read that one file; the turn waiting at the card goes on with it |
 | `POST /api/assistant/sessions/{id}/plans/{planID}/approve` \| `/cancel` | decide a plan |
 | `GET`/`PUT /api/admin/assistant/provider`, `POST …/test` | operator: provider, model, key (write-only), limits |
 | `GET`/`DELETE /api/admin/assistant/sessions[/{id}]` | operator: history as metadata only |
@@ -342,19 +371,35 @@ payload rather than in an SSE `event:` line, so a client has one parser:
 {"type":"meta","conversation_id":"7"}          once, first
 {"type":"tool","tool":"list_folder","target":"main://Reports"}
 {"type":"hits","hits":[{"path":"main://Reports/q1.pdf","name":"q1.pdf","type":"file","snippet":"the «invoice» for March"}]}
+{"type":"report","report":{"title":"Q1 files","text":"…","rows":[{"path":"main://Reports/q1.pdf","name":"q1.pdf","type":"file","size":12,"last_modified":1788800115455}]}}
 {"type":"text","delta":"…"}                    repeatedly
 {"type":"card","kind":"approval","path":"…","reason":"…"}
 {"type":"card","kind":"plan","plan_id":"3","plan_kind":"tags","summary":"…","items":[…],"status":"pending"}
 {"type":"title","title":"Counting last quarter's files"}   once, if it was named
-{"type":"error","message":"…"}                 at most once, instead of the rest
+{"type":"error","message":"…","code":"quota"}  at most once, instead of the rest
 {"type":"done"}                                once, last
 ```
+
+`error` quotes the provider's own words in `message`. `code` is present only
+when the failure is one the person can act on — and neither is "try again":
+`quota` means the provider account is out of credit (an administrator's
+problem), `unavailable` means the assistant is gone — switched off, its key
+revoked, or the model no longer exists. A 429 is read for `insufficient_quota`
+before it is taken for a rate limit, because OpenAI answers both with the same
+status. Everything else — an overloaded provider, a network error — carries no
+code and is the ordinary failure.
 
 `tool` frames exist so the panel can say what is happening while it happens — a
 panel that shows nothing through twenty seconds of tool calls looks broken.
 `hits` carries what a search found, in the same rows the model is reading, so
 the person gets clickable results rather than a paragraph describing them; they
 are stored with the answer and redrawn when the conversation is reopened.
+`report` is a document `write_report` wrote for the person — a title, optional
+Markdown text, and rows in the same shape as `hits`. The panel draws it as a
+card with the count and Download buttons; the text and CSV files are built in
+the browser from those rows, there is no file on the server and no route to
+fetch. Reports are stored with the answer like `hits` are and come back as
+`reports` on the message.
 
 The turn request may also carry `mode` — the scope chip the person had selected
 (`filename` / `content` / `tags`). The server turns it into one sentence

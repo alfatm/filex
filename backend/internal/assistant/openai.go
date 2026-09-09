@@ -12,6 +12,7 @@ package assistant
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -36,8 +37,10 @@ type openAIToolCall struct {
 }
 
 type openAIMessage struct {
-	Role      string           `json:"role"`
-	Content   string           `json:"content"`
+	Role string `json:"role"`
+	// Content is a string, or — on the user turn that carries a tool result's
+	// picture — a list of parts.
+	Content   any              `json:"content"`
 	ToolCalls []openAIToolCall `json:"tool_calls,omitempty"`
 	// ToolCallID is set on a tool result and matches the call it answers.
 	ToolCallID string `json:"tool_call_id,omitempty"`
@@ -82,14 +85,13 @@ type openAIChunk struct {
 	} `json:"error"`
 }
 
-// Stream sends the conversation and emits each text delta.
+// openAIMessages renders the conversation as this protocol wants it.
 //
-// ⚠ No max_tokens is sent. The field is spelled differently across current
-// OpenAI models (max_tokens vs max_completion_tokens) and several servers
-// reject the one they do not know, which would turn a working deployment into
-// a 400 on the first question. The answer length is bounded by the model's own
-// default and by the panel it is read in.
-func (p *openAIProvider) Stream(ctx context.Context, req Request, onText func(string) error) ([]ToolCall, error) {
+// A tool result's picture cannot ride on the tool message — this dialect's
+// tool role takes text only — so it follows as a user turn of parts, right
+// after the result it belongs to, which every openai-compatible server that
+// sees images at all accepts.
+func openAIMessages(req Request) []openAIMessage {
 	messages := make([]openAIMessage, 0, len(req.Messages)+1)
 	if req.System != "" {
 		messages = append(messages, openAIMessage{Role: "system", Content: req.System})
@@ -103,9 +105,29 @@ func (p *openAIProvider) Stream(ctx context.Context, req Request, onText func(st
 			out.ToolCalls = append(out.ToolCalls, one)
 		}
 		messages = append(messages, out)
+		if m.Role != RoleTool || len(m.Images) == 0 {
+			continue
+		}
+		parts := []any{map[string]any{"type": "text", "text": "The image returned by tool call " + m.ToolCallID + ":"}}
+		for _, img := range m.Images {
+			url := "data:" + img.Mime + ";base64," + base64.StdEncoding.EncodeToString(img.Data)
+			parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]any{"url": url}})
+		}
+		messages = append(messages, openAIMessage{Role: RoleUser, Content: parts})
 	}
+	return messages
+}
+
+// Stream sends the conversation and emits each text delta.
+//
+// ⚠ No max_tokens is sent. The field is spelled differently across current
+// OpenAI models (max_tokens vs max_completion_tokens) and several servers
+// reject the one they do not know, which would turn a working deployment into
+// a 400 on the first question. The answer length is bounded by the model's own
+// default and by the panel it is read in.
+func (p *openAIProvider) Stream(ctx context.Context, req Request, onText func(string) error) ([]ToolCall, error) {
 	body, err := json.Marshal(openAIRequest{
-		Model: req.Model, Stream: true, Messages: messages, Tools: openAITools(req.Tools),
+		Model: req.Model, Stream: true, Messages: openAIMessages(req), Tools: openAITools(req.Tools),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("assistant: encode request: %w", err)

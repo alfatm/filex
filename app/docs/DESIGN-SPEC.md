@@ -318,10 +318,23 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
   radius 12 padding 16): "May I open this file?" 14/500, the full address 14
   gray (breaks anywhere — an address is longer than the panel), the assistant's
   own stated reason 13 gray, then two 36px pill buttons — primary "Allow this
-  file", outlined "Not this one". Once given, both are replaced by a green 13
-  line. **Not in the reference**, which was drawn before the assistant could
-  open anything. One card per file, always: there is no button anywhere in this
-  flow that approves more than the one file it names.
+  file", outlined "Not this one". Once answered, both are replaced by a 13
+  line: green "You allowed this file", gray "You did not allow this file" or
+  "No answer came, so the assistant went on without it". **Not in the
+  reference**, which was drawn before the assistant could open anything. One
+  card per file, always: there is no button anywhere in this flow that approves
+  more than the one file it names.
+- **The card is an interrupt, not a message.** The turn stands still at it on
+  the server; the buttons stay enabled while the answer streams (they are what
+  it is waiting for), the click goes to the approvals endpoint and the same
+  turn goes on — nothing is typed into the chat, the activity line shows no
+  "Thinking…" while the card is open, and the silence watchdog is held until
+  it is answered. The first version sent "You may read `…`" as a message,
+  which cost a model round and read as the person talking to the assistant
+  about permissions.
+- Mode chips carry a tooltip saying what each does to the search ("Search file
+  and folder names only", …): the chip binds the search tool on the server,
+  and a control whose effect is invisible reads as decoration.
 - Plan card (ref: the "Move 9 .webp files" mockup): radius 16, `--c-bg-muted`,
   border 1px `--c-border-soft`, padding 16. Header: `Sparkles` 22 primary, the
   assistant's summary 15/500, then two 28px icon buttons — `Copy` 16 (the plan
@@ -353,10 +366,26 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
 - Activity line (13 gray with a spinning `Loader2` 14, under the last message
   while a tool runs): "Looking in main://Docs", "Reading …". Also not in the
   reference. It exists because a turn that lists a folder, searches and then
-  answers is twenty silent seconds otherwise, which reads as a stall.
+  answers is twenty silent seconds otherwise, which reads as a stall. The same
+  line says "Thinking…" from the moment the question is sent until the first
+  word or tool arrives — the model's first token can be many seconds away, and
+  a panel showing nothing for them reads as a request that never left.
+- **A turn that says nothing for a minute is dropped.** No word, no tool, no
+  error in 60 s is a hung connection, not a slow answer: the server says what
+  it is doing when it is doing something. The app closes the connection and
+  the answer gets the line "No answer came for a minute, so the request was
+  dropped. Try again." — not "Stopped", which is what the person does.
+- **Failure lines say who has to act.** Under a failed answer, 14 `--c-danger`:
+  "Something went wrong. Please try again." for the ordinary case; "The
+  assistant's provider account is out of credit. Ask an administrator to top it
+  up." when the turn's error frame carries `code: quota`; "The assistant is no
+  longer available: it was switched off, or its provider stopped answering for
+  it." on `code: unavailable` or a 503 from the turn route. Trying again
+  changes neither of the last two, so they are not worded as if it would.
 - Intro 15 `--c-text-3` line-height 1.5: "Find files by content, filename, or
   tags. I can also summarize files, answer questions, and help you organize
-  your work."
+  your work." It is the empty log's placeholder, drawn inside the log area and
+  gone with the first message — not a heading the conversation scrolls under.
 - User message: bubble bg `--c-primary-soft` radius 14 padding 12 16, text 15,
   timestamp 12 gray below inside bubble; avatar 36 "D" at right; bubble max-w
   270, right-aligned.
@@ -385,6 +414,15 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
   so reopening the conversation redraws them. The snippet's matched words
   arrive wrapped in « » and are turned into highlight ranges, never shown as
   those characters.
+- Report card (full width, border 1px `--c-border-soft` radius 16 padding 16,
+  muted bg, same box as a plan card): `FileText` 22 primary, title 15/500,
+  "N files" 13 gray, `Maximize2` 28 top-right opens the full list in a modal
+  (720 wide, rows name 14/500 + address 13 gray + size + date). Optional
+  Markdown text below the title, then two outline buttons with `Download` 16:
+  "Download as text", "Download as CSV" (the CSV one only when there are rows).
+  Drawn from the `report` frame `write_report` sends; the rows never appear in
+  the panel itself — that is the point of the card, an answer names at most 20
+  files. The files are built in the browser from the rows; nothing is fetched.
 - Follow-up line 15 + timestamp 12.
 - Mode chips h 38 pill: "Filename" active primary bg white text with `File`
   16; "Content" (`Search`), "Tags" (`Tag`) bordered; gap 10.

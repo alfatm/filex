@@ -26,6 +26,9 @@ export const refHits: SearchHit[] = [
   refHit('readme-md', 'Matched content: “design system”'),
 ];
 
+/** A prompt that asks for a report gets every match as a downloadable card, not five cards in the chat. */
+const REPORT_WORDS = /\b(report|отч[её]т|rapor)\b/i;
+
 const SCOPE_BY_MODE: Record<AssistantMode, SearchScope> = { filename: 'paths', content: 'content', tags: 'tags' };
 
 interface ParsedPrompt {
@@ -119,10 +122,19 @@ export async function* assistantAsk(
     yield { type: 'done' };
     return;
   }
-  const parsed = parsePrompt(prompt);
+  const asReport = REPORT_WORDS.test(prompt);
+  const parsed = parsePrompt(asReport ? prompt.replace(REPORT_WORDS, ' ') : prompt);
   const month = parsed.month;
   const found = search(promptQuery(parsed, mode)).hits;
-  const hits = (month === null ? found : found.filter((hit) => inMonth(hit, month, now))).slice(0, MAX_HITS);
+  const matched = month === null ? found : found.filter((hit) => inMonth(hit, month, now));
+  if (asReport) {
+    yield* words(matched.length ? `I put ${matched.length} ${matched.length === 1 ? 'file' : 'files'} into a report you can download.` : 'I found nothing to report.', signal);
+    if (signal.aborted) return;
+    if (matched.length) yield { type: 'report', report: { title: parsed.text ? `Files about ${parsed.text}` : 'All files', rows: matched } };
+    yield { type: 'done' };
+    return;
+  }
+  const hits = matched.slice(0, MAX_HITS);
   yield* words(hits.length ? `I found ${hits.length} matching ${hits.length === 1 ? 'file' : 'files'}.` : 'I found no matching files.', signal);
   if (signal.aborted) return;
   if (hits.length) yield { type: 'hits', hits };

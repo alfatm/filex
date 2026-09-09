@@ -192,7 +192,12 @@ func (s *Service) Ask(ctx context.Context, cfg Config, box Toolbox, history []Me
 					return err
 				}
 			}
-			req.Messages = append(req.Messages, Message{Role: RoleTool, ToolCallID: call.ID, Content: outcome.Content})
+			if len(outcome.Report) > 0 {
+				if err := emit(Event{Type: EventReport, Report: outcome.Report}); err != nil {
+					return err
+				}
+			}
+			req.Messages = append(req.Messages, Message{Role: RoleTool, ToolCallID: call.ID, Content: outcome.Content, Images: outcome.Images})
 		}
 	}
 }
