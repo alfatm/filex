@@ -7,6 +7,8 @@ import type { ThumbnailKind } from '@/data/types';
 defineProps<{ kind: ThumbnailKind; duration?: string; src?: string }>();
 // Several thumbnails render on one page; an SVG gradient id must be unique in the document.
 const skyId = useId();
+const figId = useId();
+const CARD_SHADOW = 'filter: drop-shadow(0 1.5px 2px rgba(76, 29, 149, 0.12))';
 const failed = ref(false);
 </script>
 
@@ -50,11 +52,81 @@ const failed = ref(false);
       </div>
     </div>
 
-    <svg v-else-if="kind === 'figma'" viewBox="0 0 236 108" class="h-full w-full bg-[#f5f3ff]" aria-hidden="true">
-      <rect x="28" y="24" width="56" height="60" rx="8" fill="#a259ff" />
-      <circle cx="132" cy="54" r="26" fill="#1abcfe" />
-      <rect x="172" y="30" width="40" height="48" rx="6" fill="#f24e1e" />
-      <rect x="92" y="70" width="60" height="14" rx="7" fill="#0acf83" />
+    <!-- A design canvas: the tool's layer panel wired to the frame it edits, with the swatches and the empty slot beside it. -->
+    <svg v-else-if="kind === 'figma'" viewBox="0 0 236 108" class="h-full w-full" aria-hidden="true">
+      <defs>
+        <linearGradient :id="figId" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#c4b5fd" />
+          <stop offset="1" stop-color="#8b5cf6" />
+        </linearGradient>
+      </defs>
+      <rect width="236" height="108" fill="#f5f3ff" />
+
+      <!-- Out-of-focus ground: the blobs and the layout guides the frames are snapped to. -->
+      <g>
+        <circle cx="8" cy="98" r="46" fill="#c4b5fd" opacity="0.45" />
+        <circle cx="72" cy="14" r="30" fill="#ddd6fe" opacity="0.75" />
+        <circle cx="216" cy="4" r="26" fill="#fecdd3" opacity="0.75" />
+        <circle cx="226" cy="102" r="34" fill="#bfdbfe" opacity="0.6" />
+      </g>
+      <g stroke="#c4b5fd" stroke-width="0.7" stroke-dasharray="4 3" opacity="0.35">
+        <line x1="49" y1="0" x2="49" y2="108" />
+        <line x1="137" y1="0" x2="137" y2="108" />
+        <line x1="0" y1="66" x2="236" y2="66" />
+      </g>
+
+      <!-- Layer panel: the Figma mark above three layer rows. -->
+      <g :style="CARD_SHADOW">
+        <rect x="12" y="20" width="30" height="68" rx="6" fill="#ffffff" />
+        <path d="M27 26h-1.75a1.75 1.75 0 0 0 0 3.5H27Z" fill="#f24e1e" />
+        <path d="M27 26h1.75a1.75 1.75 0 0 1 0 3.5H27Z" fill="#ff7262" />
+        <path d="M27 29.5h-1.75a1.75 1.75 0 0 0 0 3.5H27Z" fill="#a259ff" />
+        <circle cx="28.75" cy="31.25" r="1.75" fill="#1abcfe" />
+        <path d="M27 33h-1.75a1.75 1.75 0 0 0 0 3.5H27Z" fill="#0acf83" />
+        <g fill="#e5e7eb">
+          <circle v-for="i in 3" :key="`fl${i}`" cx="21" :cy="46 + (i - 1) * 11" r="3" />
+          <rect v-for="i in 3" :key="`fb${i}`" x="28" :y="44.5 + (i - 1) * 11" width="9" height="3" rx="1.5" />
+        </g>
+      </g>
+
+      <!-- The wire from the panel to the frame it drives. -->
+      <path d="M40 44c8 0 3 18 12 18" fill="none" stroke="#7c3aed" stroke-width="1.6" />
+      <circle cx="40" cy="44" r="2.6" fill="#ffffff" stroke="#7c3aed" stroke-width="1.6" />
+      <circle cx="52" cy="62" r="2.6" fill="#7c3aed" stroke="#ffffff" stroke-width="1.2" />
+
+      <!-- The frame under edit. -->
+      <g :style="CARD_SHADOW">
+        <rect x="58" y="12" width="74" height="84" rx="8" fill="#ffffff" />
+        <circle cx="67" cy="22" r="4" fill="#e5e7eb" />
+        <rect x="75" y="20" width="22" height="4" rx="2" fill="#e5e7eb" />
+        <rect x="64" y="31" width="62" height="28" rx="5" fill="#ddd6fe" />
+        <polygon points="69,56 81,41 90,51 96,44 107,56" fill="#ffffff" opacity="0.9" />
+        <circle cx="111" cy="40" r="4" fill="#ffffff" opacity="0.9" />
+        <rect x="64" y="64" width="62" height="4" rx="2" fill="#e5e7eb" />
+        <rect x="64" y="71" width="44" height="4" rx="2" fill="#e5e7eb" />
+        <rect x="64" y="80" width="62" height="10" rx="5" fill="#7c3aed" />
+        <rect x="84" y="83.5" width="22" height="3" rx="1.5" fill="#ffffff" opacity="0.55" />
+      </g>
+
+      <!-- Component card, colour styles, and the slot the next one drops into. -->
+      <g :style="CARD_SHADOW">
+        <rect x="142" y="22" width="76" height="24" rx="6" fill="#ffffff" />
+        <rect x="148" y="27" width="14" height="14" rx="4" :fill="`url(#${figId})`" />
+        <rect x="167" y="29" width="44" height="4" rx="2" fill="#e5e7eb" />
+        <rect x="167" y="37" width="30" height="4" rx="2" fill="#e5e7eb" />
+
+        <rect x="142" y="54" width="76" height="20" rx="8" fill="#ffffff" />
+        <circle cx="154" cy="64" r="6" fill="#7c3aed" />
+        <circle cx="170" cy="64" r="6" fill="#0ea5e9" />
+        <circle cx="186" cy="64" r="6" fill="#f24e1e" />
+        <circle cx="202" cy="64" r="6" fill="#10b981" />
+
+        <rect x="150" y="80" width="60" height="22" rx="6" fill="none" stroke="#c4b5fd" stroke-width="1.4" stroke-dasharray="5 4" />
+        <g stroke="#a78bfa" stroke-width="1.6" stroke-linecap="round">
+          <line x1="176" y1="91" x2="184" y2="91" />
+          <line x1="180" y1="87" x2="180" y2="95" />
+        </g>
+      </g>
     </svg>
 
     <svg v-else-if="kind === 'spreadsheet'" viewBox="0 0 236 108" class="h-full w-full bg-white" aria-hidden="true">

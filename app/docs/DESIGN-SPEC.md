@@ -128,10 +128,10 @@ open); §3/§4 are authoritative where an earlier draft said "padding 28 32".
   separate advanced search. When the AI panel is open the box ends at x 962.
 - Right cluster (icons 22px `--c-text-2`, hit area 40×40, gap 8): `Sparkles`
   (opens the AI assistant; hidden while the panel is open so the bar keeps the
-  reference width), `LayoutGrid` (view/apps), the theme button, `Settings`,
-  `HelpCircle`, then avatar 36 circle bg `--c-primary-soft` letter 15/600
-  primary, then `ChevronDown` 16. Apps / Help are inert for now
-  (`aria-disabled`, tooltip "Coming soon", no dimming).
+  reference width), the theme button, `Settings`, `HelpCircle`, then avatar 36
+  circle bg `--c-primary-soft` letter 15/600 primary, then `ChevronDown` 16.
+  Help is inert for now (`aria-disabled`, tooltip "Coming soon", no dimming).
+  The ref's `LayoutGrid` (view/apps) is dropped: it led nowhere.
 - Theme button (product addition, not in the ref; it takes 48px, so the icons
   start at x 1352 rather than 1400): one control cycling light → system → dark,
   its icon the state it IS — `Sun` / `Monitor` / `Moon`. A menu would be three
@@ -181,7 +181,9 @@ Content column x 309..1297 when the details panel is open (panel x 1322..1640).
 on the left). The ref draws a 320 panel at x 1322 with white to its right; here
 the panel is flush right and 364 wide so the content column still ends at
 x 1297 (4 × 236 + 3 × 14 from x 309), and the extra left padding keeps the
-labels at x 1342 / values at x 1440 below.
+labels at x 1342 / values at x 1440 below. 364 is the default: the same 4px
+handle as the assistant's (§6) drags it between 320 and 720, remembered with
+the other layout choices. **Not in the reference.**
 - Header y 100: `Folder` icon 52×44 amber, name 20/600, meta "Folder • 8 items"
   14 `--c-text-3`; `X` 22 at top-right.
 - Tabs y 190..236: "Details" | "Activity", each 50%, 16/500, active primary with
@@ -674,6 +676,7 @@ Owner "You" everywhere; user "D" (demo). Thumbnails: images and the video
 render the real files of the demo asset tree (`drive-demo-assets/demo`, see
 DEMO-ASSETS.md — generator, `DEMO_ASSETS_DIR`, the `REF_OVERRIDES` table that
 pins the 16 root entries to the values above); the SVG/CSS placeholders
-(mountain, beach, code block, doc page, spreadsheet, figma shapes, video
-gradient) stay as the fallback when the assets are not served. demo.mp4 shows
+(mountain, beach, code block, doc page, spreadsheet, the figma design canvas —
+layer panel wired to the frame it edits, component card, colour styles and an
+empty slot — video gradient) stay as the fallback when the assets are not served. demo.mp4 shows
 the real duration (00:30) once the browser reads it.

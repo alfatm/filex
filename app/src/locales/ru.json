@@ -202,7 +202,6 @@
   "topbar": {
     "searchPlaceholder": "Поиск в {storage}…",
     "advancedSearch": "Расширенный поиск",
-    "apps": "Приложения",
     "settings": "Настройки",
     "help": "Справка",
     "assistant": "ИИ-ассистент",
@@ -271,6 +270,7 @@
   },
   "panel": {
     "close": "Закрыть",
+    "resize": "Изменить ширину панели деталей",
     "tabDetails": "Сведения",
     "tabActivity": "Активность",
     "folderMeta": "Папка • {count} элемент | Папка • {count} элемента | Папка • {count} элементов",

@@ -202,7 +202,6 @@
   "topbar": {
     "searchPlaceholder": "Search in {storage}…",
     "advancedSearch": "Advanced search",
-    "apps": "Apps",
     "settings": "Settings",
     "help": "Help",
     "assistant": "AI assistant",
@@ -271,6 +270,7 @@
   },
   "panel": {
     "close": "Close",
+    "resize": "Resize details panel",
     "tabDetails": "Details",
     "tabActivity": "Activity",
     "folderMeta": "Folder • {count} item | Folder • {count} items",

@@ -202,7 +202,6 @@
   "topbar": {
     "searchPlaceholder": "{storage} içinde ara…",
     "advancedSearch": "Gelişmiş arama",
-    "apps": "Uygulamalar",
     "settings": "Ayarlar",
     "help": "Yardım",
     "assistant": "Yapay zekâ asistanı",
@@ -271,6 +270,7 @@
   },
   "panel": {
     "close": "Kapat",
+    "resize": "Ayrıntı panelinin genişliğini değiştir",
     "tabDetails": "Ayrıntılar",
     "tabActivity": "Etkinlik",
     "folderMeta": "Klasör • {count} öğe",

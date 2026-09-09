@@ -14,6 +14,9 @@ export const SORT_KEYS: readonly SortKey[] = ['name', 'modified', 'size'];
 const SORT_DIRS: SortDir[] = ['asc', 'desc'];
 /** Spec §6 draws the assistant at 432; the drag handle keeps it between a readable minimum and half a laptop screen. */
 export const ASSISTANT_WIDTH = { min: 320, default: 432, max: 720 } as const;
+/** Spec §3 draws the details panel at 364; the ref's own 320 is the narrowest its two-column facts still fit. */
+export const DETAILS_WIDTH = { min: 320, default: 364, max: 720 } as const;
+type WidthLimits = { min: number; default: number; max: number };
 
 /**
  * The details panel is session-only: a reload (or a `?panel=` screenshot link) must not restore it. The assistant
@@ -25,8 +28,9 @@ interface Persisted {
   sortDir: SortDir;
   /** The sidebar's rail mode: a layout choice, so it outlives the session unlike the right panels. */
   sidebarCollapsed: boolean;
-  /** Assistant panel width in px: a layout choice like the rail. */
+  /** Panel widths in px: layout choices like the rail. */
   assistantWidth: number;
+  detailsWidth: number;
   assistantOpen: boolean;
 }
 
@@ -36,12 +40,13 @@ const DEFAULTS: Persisted = {
   sortDir: 'desc',
   sidebarCollapsed: false,
   assistantWidth: ASSISTANT_WIDTH.default,
+  detailsWidth: DETAILS_WIDTH.default,
   assistantOpen: false,
 };
 
-function clampAssistantWidth(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return ASSISTANT_WIDTH.default;
-  return Math.round(Math.min(ASSISTANT_WIDTH.max, Math.max(ASSISTANT_WIDTH.min, value)));
+function clampWidth(value: unknown, limits: WidthLimits): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return limits.default;
+  return Math.round(Math.min(limits.max, Math.max(limits.min, value)));
 }
 
 function pick<T>(value: unknown, allowed: readonly T[], fallback: T): T {
@@ -62,7 +67,8 @@ function load(): Persisted {
     sortKey: pick(saved.sortKey, SORT_KEYS, DEFAULTS.sortKey),
     sortDir: pick(saved.sortDir, SORT_DIRS, DEFAULTS.sortDir),
     sidebarCollapsed: typeof saved.sidebarCollapsed === 'boolean' ? saved.sidebarCollapsed : DEFAULTS.sidebarCollapsed,
-    assistantWidth: clampAssistantWidth(saved.assistantWidth),
+    assistantWidth: clampWidth(saved.assistantWidth, ASSISTANT_WIDTH),
+    detailsWidth: clampWidth(saved.detailsWidth, DETAILS_WIDTH),
     assistantOpen: typeof saved.assistantOpen === 'boolean' ? saved.assistantOpen : DEFAULTS.assistantOpen,
   };
 }
@@ -74,16 +80,18 @@ export const useViewStore = defineStore('view', () => {
   const sortDir = ref<SortDir>(saved.sortDir);
   const sidebarCollapsed = ref(saved.sidebarCollapsed);
   const assistantWidth = ref(saved.assistantWidth);
+  const detailsWidth = ref(saved.detailsWidth);
   const detailsOpen = ref(true);
   const assistantOpen = ref(saved.assistantOpen);
 
-  watch([mode, sortKey, sortDir, sidebarCollapsed, assistantWidth, assistantOpen], () => {
+  watch([mode, sortKey, sortDir, sidebarCollapsed, assistantWidth, detailsWidth, assistantOpen], () => {
     const data: Persisted = {
       mode: mode.value,
       sortKey: sortKey.value,
       sortDir: sortDir.value,
       sidebarCollapsed: sidebarCollapsed.value,
       assistantWidth: assistantWidth.value,
+      detailsWidth: detailsWidth.value,
       assistantOpen: assistantOpen.value,
     };
     try {
@@ -106,9 +114,13 @@ export const useViewStore = defineStore('view', () => {
     }
   }
 
-  /** The drag handle reports raw pointer math; the limits live here so the stored value is always sane. */
+  /** The drag handles report raw pointer math; the limits live here so the stored values are always sane. */
   function setAssistantWidth(px: number) {
-    assistantWidth.value = clampAssistantWidth(px);
+    assistantWidth.value = clampWidth(px, ASSISTANT_WIDTH);
+  }
+
+  function setDetailsWidth(px: number) {
+    detailsWidth.value = clampWidth(px, DETAILS_WIDTH);
   }
 
   function togglePanel(panel: RightPanel) {
@@ -122,11 +134,13 @@ export const useViewStore = defineStore('view', () => {
     sortDir,
     sidebarCollapsed,
     assistantWidth,
+    detailsWidth,
     detailsOpen,
     assistantOpen,
     toggleSortDir,
     setSortKey,
     setAssistantWidth,
+    setDetailsWidth,
     togglePanel,
   };
 });

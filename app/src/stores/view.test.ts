@@ -44,6 +44,7 @@ describe('view store persistence', () => {
       sortDir: 'asc',
       sidebarCollapsed: false,
       assistantWidth: 432,
+      detailsWidth: 364,
       assistantOpen: false,
     });
   });
@@ -84,6 +85,20 @@ describe('view store persistence', () => {
     view.setAssistantWidth(500.4);
     await nextTick();
     expect(JSON.parse(backing.get(KEY) ?? '{}').assistantWidth).toBe(500);
+  });
+
+  it('clamps the details width on load and on set, and persists it', async () => {
+    localStorage.setItem(KEY, JSON.stringify({ detailsWidth: 9000 }));
+    expect(useViewStore().detailsWidth).toBe(720);
+    setActivePinia(createPinia());
+    localStorage.setItem(KEY, JSON.stringify({ detailsWidth: null }));
+    const view = useViewStore();
+    expect(view.detailsWidth).toBe(364);
+    view.setDetailsWidth(100);
+    expect(view.detailsWidth).toBe(320);
+    view.setDetailsWidth(400.6);
+    await nextTick();
+    expect(JSON.parse(backing.get(KEY) ?? '{}').detailsWidth).toBe(401);
   });
 
   it('toggles the two right panels independently', () => {

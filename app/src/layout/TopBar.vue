@@ -5,7 +5,6 @@ import { useRoute, useRouter } from 'vue-router';
 import {
   ChevronDown,
   HelpCircle,
-  LayoutGrid,
   LogOut,
   Monitor,
   Moon,
@@ -155,7 +154,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
       <IconButton v-if="!view.assistantOpen && capabilities.can.assistant" :label="t('topbar.assistant')" @click="view.assistantOpen = true">
         <Sparkles :size="22" :stroke-width="1.75" />
       </IconButton>
-      <IconButton :label="t('topbar.apps')" :disabled-hint="t('common.comingSoon')"><LayoutGrid :size="22" :stroke-width="1.75" /></IconButton>
       <IconButton :label="themeLabel" @click="settings.settings.theme = nextTheme">
         <component :is="THEME_ICONS[theme]" :size="22" :stroke-width="1.75" />
       </IconButton>

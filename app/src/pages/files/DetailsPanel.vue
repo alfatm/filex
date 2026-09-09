@@ -8,6 +8,7 @@ import { useFormat } from '@/composables/useFormat';
 import { useFileActions } from '@/features/files/useFileActions';
 import { sharedDriveOf } from '@/features/files/owner';
 import { useFilesStore } from '@/stores/files';
+import { useViewStore } from '@/stores/view';
 import { Avatar, Button, IconButton, SidePanel, Tabs } from '@/ui';
 import FileTypeTile from './FileTypeTile.vue';
 import FolderIcon from './FolderIcon.vue';
@@ -18,6 +19,7 @@ const emit = defineEmits<{ close: [] }>();
 const { t } = useI18n();
 const { formatDateTime, formatSize } = useFormat();
 const files = useFilesStore();
+const view = useViewStore();
 const actions = useFileActions();
 
 type PanelTab = 'details' | 'activity';
@@ -98,7 +100,13 @@ function sentence(event: ActivityEvent): string {
 <template>
   <!-- Spec §3 draws a 320 panel at x 1322 with white to its right; here it is flush right (364) so the content column
        still ends at x 1297, and the extra left padding puts the labels at x 1342 / values at x 1440. -->
-  <SidePanel :width="364" class="!pl-[33px]" :aria-label="t('files.details')">
+  <SidePanel
+    :width="view.detailsWidth"
+    :resize-label="t('panel.resize')"
+    class="!pl-[33px]"
+    :aria-label="t('files.details')"
+    @resize="view.setDetailsWidth"
+  >
     <div class="flex items-start pt-2">
       <FolderIcon v-if="node.kind === 'folder'" :width="52" :height="44" :shared="node.shared" />
       <FileTypeTile v-else :type="node.fileType ?? 'other'" :size="44" />
