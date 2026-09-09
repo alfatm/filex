@@ -84,6 +84,7 @@
   },
   "nav": {
     "dashboard": "Panel",
+    "app": "Uygulama",
     "files": "Dosyalar",
     "storages": "Depolar",
     "users": "Kullanıcılar",

@@ -32,6 +32,7 @@ import {
   ArrowUpCircle,
   Cable,
   Sparkles,
+  AppWindow,
 } from 'lucide-vue-next';
 import { useI18n } from 'vue-i18n';
 import LogoMark from './LogoMark.vue';
@@ -61,7 +62,9 @@ onMounted(refreshTrash);
 watch(() => route.name, refreshTrash);
 
 interface NavItem {
-  to: { name: string };
+  /** A route inside the panel — or, with `href`, a plain link out of it. */
+  to?: { name: string };
+  href?: string;
   label: string;
   icon: Component;
   group: 'main' | 'access' | 'ops' | 'meta';
@@ -69,6 +72,8 @@ interface NavItem {
 
 const items = computed<NavItem[]>(() => [
   { to: { name: 'dashboard' }, label: t('nav.dashboard'), icon: LayoutDashboard, group: 'main' },
+  // The site root is served by the backend, not by this router: a full navigation, on purpose.
+  { href: '/', label: t('nav.app'), icon: AppWindow, group: 'main' },
   { to: { name: 'explore' }, label: t('nav.files'), icon: FolderOpen, group: 'main' },
   { to: { name: 'admin-files' }, label: t('nav.adminFiles'), icon: History, group: 'main' },
   { to: { name: 'connections' }, label: t('nav.connections'), icon: Cable, group: 'main' },
@@ -153,8 +158,9 @@ function isActive(name: string): boolean {
       <nav class="flex-1 overflow-y-auto px-2 py-3 space-y-4">
         <div v-for="(list, group) in groups" :key="group">
           <ul class="space-y-0.5">
-            <li v-for="item in list" :key="item.to.name">
+            <li v-for="item in list" :key="item.to?.name ?? item.href">
               <RouterLink
+                v-if="item.to"
                 :to="item.to"
                 :class="['nav-link', isActive(item.to.name) && 'nav-link-active']"
                 @click="emit('close')"
@@ -162,6 +168,15 @@ function isActive(name: string): boolean {
                 <component :is="item.icon" class="h-4 w-4" />
                 <span class="truncate">{{ item.label }}</span>
               </RouterLink>
+              <a
+                v-else
+                :href="item.href"
+                class="nav-link"
+                @click="emit('close')"
+              >
+                <component :is="item.icon" class="h-4 w-4" />
+                <span class="truncate">{{ item.label }}</span>
+              </a>
             </li>
           </ul>
           <div
