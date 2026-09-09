@@ -23,7 +23,11 @@ export function useFileActions() {
     if (node.deletedAt) return;
     if (node.kind === 'file') return preview(node, siblings);
     const chain = await repository.getPath(node.id);
-    await router.push(filesRoute([...chain.slice(1), node].map((n) => n.name)));
+    // The chain opens at the drive ROOT, so the drive is a lookup rather than a guess from the id — the two
+    // repositories spell an id differently (`main://Docs` over HTTP, `docs` in the mock) and only the root matches.
+    const drive = files.storages.find((s) => s.rootId === chain[0]?.id) ?? files.storage;
+    if (!drive) return;
+    await router.push(filesRoute(drive.id, [...chain.slice(1), node].map((n) => n.name)));
   }
 
   /**

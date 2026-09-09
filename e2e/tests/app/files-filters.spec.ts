@@ -75,7 +75,7 @@ test.describe('Listing filters', () => {
     await page.getByRole('menu', { name: 'Type' }).getByRole('menuitemradio', { name: 'Images' }).click();
     await expect(page.getByRole('group', { name: 'Folders' })).toHaveCount(0);
 
-    await page.goto('files/Design');
+    await page.goto('files/demo/Design');
     await expect(chips(page, 'Type')).toBeVisible();
     await expect(page.getByRole('group', { name: 'Files' }).getByRole('option')).toHaveCount(8);
   });

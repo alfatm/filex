@@ -62,7 +62,7 @@ watch(() => files.revision, load);
       <RouterLink
         v-for="storage in files.storages"
         :key="storage.id"
-        :to="filesRoute([])"
+        :to="filesRoute(storage.id, [])"
         class="flex h-[100px] items-center rounded-lg border border-border bg-bg px-5 hover:border-border-hover hover:bg-hover-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
       >
         <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded bg-primary-soft text-primary">

@@ -7,6 +7,7 @@ import type {
   AssistantEvent,
   AuthMethods,
   AssistantMode,
+  Branding,
   Capabilities,
   ListingFilter,
   Node,
@@ -88,6 +89,8 @@ export interface Repository {
   revokeSession(id: string): Promise<void>;
   /** Feature snapshot for this user; read once at start-up. */
   capabilities(): Promise<Capabilities>;
+  /** The operator's name, mark and accent for this installation; read once at start-up. */
+  branding(): Promise<Branding>;
   search(query: SearchQuery): Promise<SearchResult>;
   /**
    * Streams the assistant's answer to `prompt`; aborting `signal` ends the stream early. `conversationId` is the

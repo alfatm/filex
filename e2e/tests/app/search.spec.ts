@@ -69,6 +69,7 @@ test.describe('Search', () => {
   });
 
   test('Cancel and Esc close the modal', async ({ page }) => {
+    // Closing the modal navigates nowhere, so the address stays the one the test opened — no drive segment in it.
     let dialog = await openAdvancedSearch(page, 'design');
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     await expect(dialog).toBeHidden();

@@ -9,7 +9,7 @@ import { useDragStore } from '@/features/files/dragStore';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
 import { useListingKeyboard } from '@/features/files/useListingKeyboard';
 import { useUploadStore } from '@/features/files/uploadStore';
-import { joinPath, segments } from '@/lib/path';
+import { splitRoute } from '@/lib/path';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
 import { Button, IconButton } from '@/ui';
@@ -59,11 +59,15 @@ function onPageDrop(event: DragEvent) {
 
 const FILTERS: FilterId[] = ['type', 'people', 'modified', 'size'];
 
-// The folder follows the URL (`/files/:path*`); the storage is bootstrapped by App.vue, so wait for it too.
+// Drive AND folder follow the URL (`/files/<drive>/<path…>`). It waits on `files.ready` rather than on the drive
+// list being non-empty: `openPath` has to tell an unknown drive from one that has not loaded, and a server that
+// never answered from a drive list that is genuinely empty.
 watch(
-  () => [joinPath(segments(route.params.path)), files.storage] as const,
-  async ([path, storage]) => {
-    if (storage && route.name === 'files') await files.openPath(path);
+  () => [route.params.path, files.ready] as const,
+  async ([param, ready]) => {
+    if (!ready || route.name !== 'files') return;
+    const { drive, path } = splitRoute(param);
+    await files.openPath(drive, path);
   },
   { immediate: true },
 );

@@ -52,7 +52,7 @@ async function open(address: string) {
       // The parent is gone as well; the folder page below says so in its own words.
     }
   }
-  await router.push(filesRoute(path));
+  await router.push(filesRoute(parsed.drive, path));
 }
 </script>
 

@@ -24,7 +24,7 @@ test.describe('My files — grid view', () => {
 
   test('opening Design lists the 8 files of the demo asset tree with real thumbnails', async ({ page }) => {
     await page.getByRole('group', { name: 'Folders' }).getByRole('option', { name: /^Design\b/ }).dblclick();
-    await expect(page).toHaveURL(/\/app\/files\/Design$/);
+    await expect(page).toHaveURL(/\/app\/files\/demo\/Design$/);
     await expect(page.getByRole('heading', { name: 'Design', level: 1 })).toBeVisible();
     await expect(page.getByRole('group', { name: 'Folders' })).toHaveCount(0);
     const files = page.getByRole('group', { name: 'Files' }).getByRole('option');
@@ -46,7 +46,7 @@ test.describe('My files — grid view', () => {
     expect(await thumbs.first().evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0);
 
     await page.getByRole('button', { name: 'Home' }).click();
-    await expect(page).toHaveURL(/\/app\/files$/);
+    await expect(page).toHaveURL(/\/app\/files\/demo$/);
     await expect(page.getByRole('group', { name: 'Folders' }).getByRole('option')).toHaveCount(FOLDER_COUNT);
   });
 

@@ -35,7 +35,7 @@ test.describe('Drag and drop', () => {
   });
 
   test('a breadcrumb above the open folder accepts a drop', async ({ page }) => {
-    await page.goto('files/Design');
+    await page.goto('files/demo/Design');
     const crumb = page.getByRole('navigation', { name: 'Location' }).getByRole('button', { name: 'demo', exact: true });
     await page.getByRole('option', { name: /^logo\.svg/ }).dragTo(crumb);
     await expect(page.getByText('“logo.svg” moved to demo')).toBeVisible();
@@ -43,7 +43,7 @@ test.describe('Drag and drop', () => {
   });
 
   test('files dropped from the OS upload into the open folder', async ({ page }) => {
-    await page.goto('files/Design');
+    await page.goto('files/demo/Design');
     const data = await osFiles(page, 'dropped.txt');
     const main = page.locator('main');
 

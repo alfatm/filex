@@ -593,6 +593,16 @@ describe('HttpRepository', () => {
     expect(await new HttpRepository().shareLink('main://Docs/notes.md')).toBeNull();
   });
 
+  it('reads branding, and drops the two fields the public pages own', async () => {
+    routes = [['/api/branding', { name: 'Acme Drive', logo_url: '/brand.svg', accent: '#c0392b', footer_text: 'Acme Inc.', hide_powered_by: true }]];
+    expect(await new HttpRepository().branding()).toEqual({ name: 'Acme Drive', logoUrl: '/brand.svg', accent: '#c0392b' });
+  });
+
+  it('reads an unbranded install as empty rather than undefined', async () => {
+    routes = [['/api/branding', {}]];
+    expect(await new HttpRepository().branding()).toEqual({ name: '', logoUrl: '', accent: '' });
+  });
+
   it('sends the optional profile fields only when they were edited', async () => {
     routes = [['/api/auth/profile', { id: 3, email: 'ada@filex.test', display_name: 'Ada', full_name: 'Ada Lovelace', job_title: 'Analyst' }]];
     const repo = new HttpRepository();

@@ -20,9 +20,11 @@ import {
   Upload,
   Users,
 } from 'lucide-vue-next';
+import { filesRoute } from '@/lib/path';
 import { useModalsStore } from '@/features/files/modalsStore';
 import { useUploadStore } from '@/features/files/uploadStore';
 import { useFormat } from '@/composables/useFormat';
+import { useBrandingStore } from '@/stores/branding';
 import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
@@ -35,6 +37,8 @@ const { formatSize } = useFormat();
 const route = useRoute();
 const files = useFilesStore();
 const capabilities = useCapabilitiesStore();
+// The operator's mark and name stand in for filex's own when this installation is branded.
+const branding = useBrandingStore();
 const view = useViewStore();
 const modals = useModalsStore();
 const uploads = useUploadStore();
@@ -135,8 +139,8 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
         class="ml-6 flex items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
         @click="reload"
       >
-        <img :src="`${baseUrl}logo.svg`" alt="" class="h-8 w-8" />
-        <span class="ml-4 text-22 font-semibold leading-none">{{ t('app.name') }}</span>
+        <img :src="branding.logoUrl || `${baseUrl}logo.svg`" alt="" class="h-8 w-8 object-contain" />
+        <span class="ml-4 text-22 font-semibold leading-none">{{ branding.name || t('app.name') }}</span>
       </button>
     </div>
 
@@ -186,10 +190,14 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
       <!-- The caption's place in rail mode: a rule, so the groups stay apart without a label. -->
       <div v-else class="mx-auto mt-[22px] h-px w-8 bg-border" />
       <ul class="mt-2 flex flex-col gap-px" :class="view.sidebarCollapsed ? 'items-center' : 'pl-[14px] pr-5'">
+        <!--
+          Active is the drive the listing is actually in, not "some files route": the condition used to be the
+          route name alone, so with a second drive on the sidebar BOTH rows painted themselves active.
+        -->
         <li v-for="storage in files.storages" :key="storage.id">
           <RouterLink
-            :to="{ name: 'storage', params: { id: storage.id } }"
-            :class="[linkClass, route.name === 'files' && activeClass]"
+            :to="filesRoute(storage.id, [])"
+            :class="[linkClass, route.name === 'files' && files.storage?.id === storage.id && activeClass]"
             :title="view.sidebarCollapsed ? storage.name : undefined"
           >
             <HardDrive :size="20" :stroke-width="1.75" class="shrink-0" />

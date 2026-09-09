@@ -68,6 +68,27 @@ export interface Capabilities {
   connections: boolean;
 }
 
+/**
+ * What the operator has branded this installation with (`GET /api/branding`, public).
+ *
+ * Every field is optional in the sense that an unbranded install answers with empty strings; the app then keeps
+ * its own name, mark and accent. `footerText` and `hidePoweredBy` are not carried: they exist for the public
+ * share and drop pages, and this app has no footer to put them in.
+ */
+export interface Branding {
+  /** Shown beside the mark, in the browser tab, and in place of "filex". */
+  name: string;
+  /** http(s), site-relative, or a `data:image/…` URI. */
+  logoUrl: string;
+  /** `#rgb` or `#rrggbb`; anything else is dropped by the server before it reaches here. */
+  accent: string;
+}
+
+/** An unbranded install: the app's own name, mark and accent stand. */
+export function noBranding(): Branding {
+  return { name: '', logoUrl: '', accent: '' };
+}
+
 /** Everything off: what an unreachable or older server is assumed to offer until it answers. */
 export function noCapabilities(): Capabilities {
   return {

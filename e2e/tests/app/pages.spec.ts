@@ -34,7 +34,7 @@ test.describe('Pages', () => {
     await expect(starred.getByRole('option', { name: /UI Design\.fig/ })).toBeVisible();
 
     await storage.click();
-    await expect(page).toHaveURL(/\/app\/files$/);
+    await expect(page).toHaveURL(/\/app\/files\/demo$/);
   });
 
   // Home's cards were display-only: the click selected nothing, so the panel had no node to describe.

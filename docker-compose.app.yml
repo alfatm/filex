@@ -27,6 +27,14 @@
 # are throwaway volumes, and the app on a dev server. `docker compose -f
 # docker-compose.app.yml down -v` erases the lot and gives a fresh install on
 # the next `up`.
+#
+# Every `${VAR:-default}` below is also read from a `.env` next to this file —
+# the same one `docker-compose.yml` uses, so `cp .env.example .env` and the
+# "App stand" block in it is the whole setup. Compose takes the file from the
+# directory of this compose file, not from the shell's cwd, and a variable
+# exported in the shell still wins over the file. To keep the stand's values
+# apart from a production `.env`, point at another file:
+#   docker compose -f docker-compose.app.yml --env-file .env.app up --build
 
 name: filex-app
 
@@ -49,7 +57,7 @@ services:
       # seeding only ever creates ONE drive, so this one is added by hand:
       # Storages → New → local, path /srv/demo, read-only. Skip it and the
       # stack still works — the writable drive above just starts empty.
-      - ${DEMO_ASSETS_DIR:-../drive-demo-assets/demo}:/srv/demo:ro
+      - ${DEMO_ASSETS_DIR:-./storage-data}:/srv/demo:rw
     environment:
       FILEX_PUBLIC_URL: http://localhost:${FILEX_PORT:-5212}
       FILEX_LISTEN: 0.0.0.0:5212
@@ -77,8 +85,9 @@ services:
       # The default is a fixed string, which means anyone holding this file can
       # read the secrets of an instance that kept it. That is fine for a machine
       # only you reach and wrong the moment it is not, so it is overridable:
-      # export FILEX_SECRET_KEY before `up`. Changing it later makes the secrets
-      # already stored unreadable — they are re-entered, not migrated.
+      # set FILEX_SECRET_KEY in `.env` (or export it) before `up`. Changing it
+      # later makes the secrets already stored unreadable — they are re-entered,
+      # not migrated.
       FILEX_SECRET_KEY: ${FILEX_SECRET_KEY:-app-stand-not-a-real-key}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5212/healthz"]

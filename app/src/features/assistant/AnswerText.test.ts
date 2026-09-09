@@ -65,7 +65,8 @@ describe('AnswerText', () => {
     const wrapper = await setup('Look in main://Docs');
     await wrapper.get('button').trigger('click');
     await flushPromises();
-    expect(router.currentRoute.value.path).toBe('/files/Docs');
+    // `main://Docs` in the answer becomes `/files/main/Docs` — the address the span named, drive and all.
+    expect(router.currentRoute.value.path).toBe('/files/main/Docs');
   });
 
   // One drive is all the app can navigate today; a link that cannot lead anywhere is not a link.

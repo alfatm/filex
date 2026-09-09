@@ -287,7 +287,7 @@ test.describe('File actions', () => {
 test.describe('Listing menu', () => {
   test('right-click on empty surface offers the listing actions', async ({ page }) => {
     // Design holds 8 rows in list view, so the lower half of the page is bare surface.
-    await page.goto('files/Design?view=list');
+    await page.goto('files/demo/Design?view=list');
     const bare = { button: 'right' as const, position: { x: 400, y: 700 } };
     await page.locator('main').click(bare);
     const menu = page.getByRole('menu', { name: 'Listing actions' });

@@ -63,7 +63,7 @@ function open(hit: SearchHit) {
   // Files preview in place, ← → walking the result rows; `folderPath` is relative to the storage root, which is
   // what the files route's segments are.
   if (hit.node.kind === 'file') actions.preview(hit.node, store.hits.map((h) => h.node));
-  else void router.push(filesRoute([...segments(hit.folderPath), hit.node.name]));
+  else void router.push(filesRoute(hit.storageId, [...segments(hit.folderPath), hit.node.name]));
 }
 </script>
 

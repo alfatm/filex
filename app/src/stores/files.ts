@@ -23,8 +23,15 @@ export const useFilesStore = defineStore('files', () => {
   const t = i18n.global.t;
 
   const storages = ref<Storage[]>([]);
-  /** The active storage; the UI shows one storage until multi-storage navigation lands. */
-  const storage = computed(() => storages.value[0] ?? null);
+  /**
+   * The drive the folder view is in, by id.
+   *
+   * Null until navigation names one, which is what makes the first drive the default: `/files` with no drive in
+   * it, and the flat listings (recent, starred, shared, trash), which span every drive and name none.
+   */
+  const storageId = ref<string | null>(null);
+  /** The open drive, or the first one while nothing has been opened. A drive that is gone falls back the same way. */
+  const storage = computed(() => storages.value.find((s) => s.id === storageId.value) ?? storages.value[0] ?? null);
   const user = ref<User | null>(null);
   /** Current folder in the folder view; null on the flat listings. */
   const folder = ref<Node | null>(null);
@@ -41,14 +48,16 @@ export const useFilesStore = defineStore('files', () => {
   const listing = ref<Listing | null>(null);
   /** True while the newest load is in flight; the pages show a skeleton instead of an empty listing. */
   const loading = ref(false);
+  /** Whether `bootstrap` has settled — either way. A page must not read an empty drive list as "no drives yet". */
+  const ready = ref(false);
   /** i18n key under `error.` when the last load failed, so the page can offer a retry instead of a blank listing. */
   const error = ref<'notFound' | 'load' | null>(null);
   /** Bumped after every mutation; pages that keep their own data (Home, Search) reload on it. */
   const revision = ref(0);
   // Out-of-order guard: only the newest `load` may publish its result.
   let loadSeq = 0;
-  /** Path of the last `openPath`, so a retry can resolve it again. */
-  let lastPath: string | null = null;
+  /** Drive and path of the last `openPath`, so a retry can resolve the same address again. */
+  let lastAddress: { drive: string | null; path: string } | null = null;
 
   const sorted = computed(() => {
     // Recent is a timeline: its day groups only make sense newest-first.
@@ -165,30 +174,53 @@ export const useFilesStore = defineStore('files', () => {
     await load({ kind: 'folder', folderId });
   }
 
-  /** Opens the folder at `path` (slash-separated, relative to the active storage root). */
-  async function openPath(folderPath: string) {
-    if (!storage.value) throw new Error('storage not loaded');
-    lastPath = folderPath;
+  /**
+   * Opens the folder at `path` (slash-separated, relative to the drive root) on the drive named by `driveId`.
+   *
+   * The drive is switched BEFORE the folder is resolved, so the sidebar, the quota block and the search
+   * placeholder move together with the listing instead of lagging a navigation behind. A drive nobody has heard
+   * of is the same answer as a folder nobody has heard of — the not-found state, not a silent fallback that would
+   * open somebody else's files under the URL they typed.
+   */
+  async function openPath(driveId: string | null, folderPath: string) {
+    // A drive nobody has heard of is the same answer as a folder nobody has heard of. The active drive is left
+    // where it was rather than moved to a name that does not resolve, so the sidebar keeps saying where you are.
+    lastAddress = { drive: driveId, path: folderPath };
+    if (driveId && !storages.value.some((s) => s.id === driveId)) {
+      showNotFound();
+      return;
+    }
+    storageId.value = driveId;
+    // No drives at all means the list never arrived; that is the server's failure, not a wrong address.
+    if (!storage.value) {
+      showNotFound();
+      error.value = 'load';
+      return;
+    }
     let node: Node;
     try {
       node = await repository.resolvePath(storage.value.id, folderPath);
     } catch {
-      // A URL naming a folder that is gone: say so and offer a retry, rather than leaving a blank page behind.
-      loadSeq++;
-      selection.clear();
-      items.value = [];
-      folder.value = null;
-      path.value = [];
-      listing.value = null;
-      loading.value = false;
-      error.value = 'notFound';
+      showNotFound();
       return;
     }
     await open(node.id);
   }
 
+  /** A URL naming something that is gone: say so and offer a retry, rather than leaving a blank page behind. */
+  function showNotFound() {
+    loadSeq++;
+    selection.clear();
+    items.value = [];
+    folder.value = null;
+    path.value = [];
+    listing.value = null;
+    loading.value = false;
+    error.value = 'notFound';
+  }
+
   async function openListing(kind: ListingKind) {
-    lastPath = null;
+    lastAddress = null;
     selection.clear();
     selection.focusedId.value = null;
     await load({ kind });
@@ -196,7 +228,11 @@ export const useFilesStore = defineStore('files', () => {
 
   /** Runs the failed load again: the folder behind the URL, else the open listing. */
   async function retry() {
-    if (lastPath !== null) return openPath(lastPath);
+    if (!storages.value.length) {
+      await bootstrap();
+      if (error.value) return;
+    }
+    if (lastAddress) return openPath(lastAddress.drive, lastAddress.path);
     if (listing.value) return load(listing.value);
   }
 
@@ -205,12 +241,27 @@ export const useFilesStore = defineStore('files', () => {
     if (listing.value) await load(listing.value);
   }
 
+  /**
+   * The drive list, the account and the people filter — everything a page needs before it can ask for anything.
+   *
+   * A failure here is the server being unreachable, and it MUST land in `error`: without this the rejection went
+   * nowhere, `storages` stayed empty, and the folder page drew its "Drop files here" empty state — which reads as
+   * "your drive is empty" when the truth is "nobody answered". `ready` is what lets a page tell the two apart from
+   * the moment before the answer arrives.
+   */
   async function bootstrap() {
-    [storages.value, user.value, filterPeople.value] = await Promise.all([
-      repository.listStorages(),
-      repository.currentUser(),
-      repository.listFilterPeople(),
-    ]);
+    try {
+      [storages.value, user.value, filterPeople.value] = await Promise.all([
+        repository.listStorages(),
+        repository.currentUser(),
+        repository.listFilterPeople(),
+      ]);
+      error.value = null;
+    } catch {
+      error.value = 'load';
+    } finally {
+      ready.value = true;
+    }
   }
 
   /** A chip changed: reload the listing through the repository rather than narrowing what is already in memory. */
@@ -370,6 +421,7 @@ export const useFilesStore = defineStore('files', () => {
   return {
     storages,
     storage,
+    ready,
     user,
     folder,
     path,

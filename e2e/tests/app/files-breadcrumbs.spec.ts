@@ -16,18 +16,18 @@ async function createAndEnter(page: Page, name: string) {
 
 test.describe('Breadcrumbs', () => {
   test('the chain names every folder above the open one and each crumb navigates', async ({ page }) => {
-    await page.goto('files/Design');
+    await page.goto('files/demo/Design');
     const bar = crumbs(page);
     await expect(bar.getByRole('heading', { name: 'Design', level: 1 })).toBeVisible();
 
     // The parent is a button, the open folder is the heading.
     await bar.getByRole('button', { name: 'demo', exact: true }).click();
-    await expect(page).toHaveURL(/\/app\/files$/);
+    await expect(page).toHaveURL(/\/app\/files\/demo$/);
     await expect(bar.getByRole('heading', { name: 'demo', level: 1 })).toBeVisible();
 
     await page.getByRole('group', { name: 'Folders' }).getByRole('option', { name: /^Design\b/ }).dblclick();
     await bar.getByRole('button', { name: 'Home' }).click();
-    await expect(page).toHaveURL(/\/app\/files$/);
+    await expect(page).toHaveURL(/\/app\/files\/demo$/);
   });
 
   test('the trailing chevron descends into a subfolder, and says so when there is none', async ({ page }) => {
@@ -36,7 +36,7 @@ test.describe('Breadcrumbs', () => {
     const menu = page.getByRole('menu', { name: 'Subfolders' });
     await expect(menu.getByRole('menuitem', { name: 'Photos' })).toBeVisible();
     await menu.getByRole('menuitem', { name: 'Design', exact: true }).click();
-    await expect(page).toHaveURL(/\/app\/files\/Design$/);
+    await expect(page).toHaveURL(/\/app\/files\/demo\/Design$/);
 
     // Design holds files only.
     await crumbs(page).getByRole('button', { name: 'Subfolders' }).click();
@@ -44,7 +44,7 @@ test.describe('Breadcrumbs', () => {
   });
 
   test('a long chain folds its middle behind a menu', async ({ page }) => {
-    await page.goto('files/Design');
+    await page.goto('files/demo/Design');
     await createAndEnter(page, 'Nested');
     await createAndEnter(page, 'Deeper');
 
@@ -57,7 +57,7 @@ test.describe('Breadcrumbs', () => {
 
     await bar.getByRole('button', { name: 'More folders' }).click();
     await page.getByRole('menu', { name: 'More folders' }).getByRole('menuitem', { name: 'Design' }).click();
-    await expect(page).toHaveURL(/\/app\/files\/Design$/);
+    await expect(page).toHaveURL(/\/app\/files\/demo\/Design$/);
     await expect(bar.getByRole('heading', { name: 'Design', level: 1 })).toBeVisible();
   });
 });

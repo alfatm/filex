@@ -37,7 +37,7 @@ const tail = computed(() => (folded.value.length ? crumbs.value.slice(-KEEP_TAIL
 
 function go(parts: string[]) {
   menu.value = null;
-  void router.push(filesRoute(parts));
+  if (files.storage) void router.push(filesRoute(files.storage.id, parts));
 }
 
 function openFolded(event: MouseEvent) {

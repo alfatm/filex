@@ -28,7 +28,7 @@ async function setup() {
   mount(Host, { global: { plugins: [router, i18n] } });
   const files = useFilesStore();
   await files.bootstrap();
-  await files.openPath('');
+  await files.openPath(null, '');
   return { keyboard, files, modals: useModalsStore(), clipboard: useClipboardStore(), undo: useUndoStore(), router };
 }
 
@@ -81,7 +81,7 @@ describe('useListingKeyboard', () => {
     expect(enter.defaultPrevented).toBe(true);
     await router.isReady();
     await new Promise((r) => setTimeout(r, 0));
-    expect(router.currentRoute.value.params.path).toEqual([files.ordered[0].name]);
+    expect(router.currentRoute.value.params.path).toEqual([files.storage!.id, files.ordered[0].name]);
 
     const inButton = key('Delete', document.createElement('button'));
     keyboard.onKeydown(inButton);

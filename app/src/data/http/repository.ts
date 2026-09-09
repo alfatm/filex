@@ -1,7 +1,7 @@
 import { DUPLICATE_NAME, OPERATION_PENDING, WRONG_PASSWORD, type Repository } from '../repository';
 import { matchesFilter, MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
-import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantConversation, type AssistantMode, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
+import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantConversation, type AssistantMode, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type Branding, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
 import { HttpError, putChunk, request, streamJSON } from './client';
 import {
   fromFileNode,
@@ -176,6 +176,13 @@ const NOTIFY_EVENTS = { shared: 'share.created', comments: 'comment.added', uplo
 interface WireNotifySettings {
   in_app_enabled?: boolean;
   muted_events?: string[];
+}
+
+/** `GET /api/branding`; the two footer fields it also carries have no home in this app. */
+interface WireBranding {
+  name?: string;
+  logo_url?: string;
+  accent?: string;
 }
 
 const UPLOAD = '/api/files/upload';
@@ -629,6 +636,18 @@ export class HttpRepository implements Repository {
       // `/api/tokens` and the guides' own endpoints are mounted unconditionally and open to every account.
       connections: true,
     };
+  }
+
+  /**
+   * The operator's branding. Public and pre-session on the server — the admin login page reads it before anyone
+   * has signed in — so it is asked for like anything else and simply comes back empty on an unbranded install.
+   *
+   * `footer_text` and `hide_powered_by` are ignored: they dress the public share and drop pages, and this app is
+   * the signed-in surface, which has no footer to put them in.
+   */
+  async branding(): Promise<Branding> {
+    const wire = await request<WireBranding>('/api/branding');
+    return { name: wire.name ?? '', logoUrl: wire.logo_url ?? '', accent: wire.accent ?? '' };
   }
 
   // ── the folder tree ─────────────────────────────────────────────────────────

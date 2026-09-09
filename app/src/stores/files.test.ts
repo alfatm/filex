@@ -15,11 +15,60 @@ async function setup() {
   setActivePinia(createPinia());
   const files = useFilesStore();
   await files.bootstrap();
-  await files.openPath('');
+  await files.openPath(null, '');
   return files;
 }
 
 const names = (files: ReturnType<typeof useFilesStore>) => files.selected.map((n) => n.name);
+
+describe('an unreachable server', () => {
+  // Without this the rejection went nowhere and the folder page drew "Drop files here" — which reads as "your
+  // drive is empty" when the truth is that nobody answered.
+  it('lands in the error state rather than looking like an empty drive', async () => {
+    resetMock();
+    setActivePinia(createPinia());
+    const spy = vi.spyOn(repository, 'listStorages').mockRejectedValue(new Error('offline'));
+    const files = useFilesStore();
+    await files.bootstrap();
+    spy.mockRestore();
+
+    expect(files.ready).toBe(true);
+    expect(files.error).toBe('load');
+    expect(files.storages).toEqual([]);
+
+    // Try again, with the server back: the same button recovers the whole start-up, not just the listing.
+    await files.retry();
+    expect(files.error).toBeNull();
+    expect(files.storages.length).toBeGreaterThan(0);
+  });
+});
+
+describe('the open drive', () => {
+  it('follows the drive the address names, and defaults to the first without one', async () => {
+    const files = await setup();
+    const first = files.storages[0];
+    expect(files.storage?.id).toBe(first.id);
+
+    // A second drive, so "the open one" stops being the only one.
+    files.storages = [...files.storages, { ...first, id: 'other', name: 'other', rootId: 'other://' }];
+    await files.openPath('other', '');
+    expect(files.storage?.id).toBe('other');
+
+    // No drive in the address — `/files`, and the flat listings — means the first one, not the last one opened.
+    await files.openPath(null, '');
+    expect(files.storage?.id).toBe(first.id);
+  });
+
+  // Silently opening somebody else's drive under the address you typed would be the worse answer.
+  it('says not found for a drive nobody has heard of, and stays where it was', async () => {
+    const files = await setup();
+    const here = files.storage?.id;
+    await files.openPath('nope', 'Design');
+    expect(files.error).toBe('notFound');
+    expect(files.storage?.id).toBe(here);
+    expect(files.items).toEqual([]);
+  });
+});
 
 describe('files store', () => {
   it('bootstraps the first storage and the user, then opens the root by path', async () => {
@@ -29,7 +78,7 @@ describe('files store', () => {
     expect(files.folder?.id).toBe('demo');
     expect(files.path).toEqual([]);
     expect(files.ordered).toHaveLength(17);
-    await files.openPath('Design');
+    await files.openPath(null, 'Design');
     expect(files.folder?.name).toBe('Design');
     expect(files.path.map((n) => n.id)).toEqual(['demo']);
     // Default sort is modified desc: the children are dated hourly below the folder's date, in tree order.
@@ -44,7 +93,7 @@ describe('files store', () => {
       'wireframe.png',
     ]);
     // A path that resolves to nothing is a page state, not a rejection: the page shows it and offers a retry.
-    await files.openPath('Nope');
+    await files.openPath(null, 'Nope');
     expect(files.error).toBe('notFound');
     expect(files.ordered).toEqual([]);
     expect(files.loading).toBe(false);
@@ -204,7 +253,7 @@ describe('files store', () => {
 
   it('leave() drops the folder so New / uploads target the root, and stale loads never overwrite the newest one', async () => {
     const files = await setup();
-    await files.openPath('Design');
+    await files.openPath(null, 'Design');
     files.select('design');
     files.leave();
     expect(files.folder).toBeNull();

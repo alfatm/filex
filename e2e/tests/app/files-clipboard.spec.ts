@@ -11,7 +11,7 @@ test.describe('Cut and paste', () => {
 
     await page.getByRole('navigation', { name: 'Location' }).getByRole('button', { name: 'Subfolders' }).click();
     await page.getByRole('menu', { name: 'Subfolders' }).getByRole('menuitem', { name: 'Design', exact: true }).click();
-    await expect(page).toHaveURL(/\/app\/files\/Design$/);
+    await expect(page).toHaveURL(/\/app\/files\/demo\/Design$/);
 
     await page.getByRole('grid').click();
     await page.keyboard.press('ControlOrMeta+v');
@@ -20,7 +20,7 @@ test.describe('Cut and paste', () => {
   });
 
   test('the menus offer Cut and Paste, and Paste waits for something to paste', async ({ page }) => {
-    await page.goto('files/Design?view=list');
+    await page.goto('files/demo/Design?view=list');
     const bare = { button: 'right' as const, position: { x: 400, y: 700 } };
 
     await page.locator('main').click(bare);
@@ -56,7 +56,7 @@ test.describe('Cut and paste', () => {
   });
 
   test('Ctrl+C then Ctrl+V duplicates in place, and the copy is named after the original', async ({ page }) => {
-    await page.goto('files/Design?view=list');
+    await page.goto('files/demo/Design?view=list');
     const rows = page.getByRole('grid').locator('tbody tr');
     await rows.filter({ hasText: 'logo.svg' }).click();
     await page.keyboard.press('ControlOrMeta+c');
@@ -70,7 +70,7 @@ test.describe('Cut and paste', () => {
   });
 
   test('Ctrl+Z takes back the paste and the trash, Ctrl+Shift+Z puts them back', async ({ page }) => {
-    await page.goto('files/Design?view=list');
+    await page.goto('files/demo/Design?view=list');
     const rows = page.getByRole('grid').locator('tbody tr');
 
     // Paste, then undo it: the copy goes to the trash it came from nowhere into.
@@ -104,7 +104,7 @@ test.describe('Cut and paste', () => {
   });
 
   test('the bare R key refreshes the listing without reloading the page', async ({ page }) => {
-    await page.goto('files/Design?view=list');
+    await page.goto('files/demo/Design?view=list');
     await page.evaluate(() => ((window as unknown as { __kept: boolean }).__kept = true));
     await page.getByRole('grid').click();
     await page.keyboard.press('r');

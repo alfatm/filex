@@ -26,7 +26,7 @@ async function setup() {
   mount(Host, { global: { plugins: [router, i18n] } });
   const files = useFilesStore();
   await files.bootstrap();
-  await files.openPath('');
+  await files.openPath(null, '');
   return { actions, files, modals: useModalsStore(), router };
 }
 
@@ -67,7 +67,8 @@ describe('useFileActions', () => {
     expect(modals.active).toMatchObject({ kind: 'share', node: { name: 'Code' } });
 
     await actions.run('open', byName(files, 'Design'));
-    expect(router.currentRoute.value.params.path).toEqual(['Design']);
+    // The drive leads the address now: `/files/demo/Design` is `demo://Design`.
+    expect(router.currentRoute.value.params.path).toEqual(['demo', 'Design']);
   });
 
   it('open / preview on a file opens the preview over the listing files in their sort order', async () => {

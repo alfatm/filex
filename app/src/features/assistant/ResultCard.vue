@@ -35,8 +35,8 @@ function onSelect(id: string) {
   const folder = segments(props.hit.folderPath);
   // Files preview in place (one card, so no ← → neighbours); folders open themselves.
   if (id === 'open' && props.hit.node.kind === 'file') actions.preview(props.hit.node, [props.hit.node]);
-  else if (id === 'open') void router.push(filesRoute([...folder, props.hit.node.name]));
-  else if (id === 'showInFolder') void router.push(filesRoute(folder));
+  else if (id === 'open') void router.push(filesRoute(props.hit.storageId, [...folder, props.hit.node.name]));
+  else if (id === 'showInFolder') void router.push(filesRoute(props.hit.storageId, folder));
 }
 </script>
 

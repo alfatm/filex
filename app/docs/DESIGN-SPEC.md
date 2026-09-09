@@ -63,7 +63,21 @@ open); §3/§4 are authoritative where an earlier draft said "padding 28 32".
 
 **Sidebar** (w 280, bg `--c-bg-sidebar`, border-right 1px):
 - Row 1 (h 72): burger icon 22px at x 40 center (collapses the sidebar, see §7b); logo mark 32×32 radius 8
-  primary with white folder glyph at x 84; word "filex" 22/600 at x 132.
+  primary with white folder glyph at x 84; word "filex" 22/600 at x 132. Mark
+  and word are one button and reload the app.
+- **Branding** (`GET /api/branding`, public and pre-session, read once at
+  start-up): `name` replaces "filex" here and in the tab title, `logo_url`
+  replaces the mark (`object-contain`, so an operator's own aspect ratio is not
+  stretched into the 32×32 box), and `accent` repaints the five `--c-primary`
+  tokens. The accent mirrors the server's rule for its public pages — the
+  colour itself, hover at ×0.85, a 14% wash — and adds ring at 45% and tint at
+  7%, which the server has no counterpart for. Four of the five are
+  translucent, which is what lets one hex serve both themes; only hover is
+  opaque and so goes through `light-dark()`. `footer_text` and
+  `hide_powered_by` are NOT read: they dress the public share and drop pages,
+  and this app has no footer. An unbranded install answers with empty strings
+  and a failed request is swallowed — branding is decoration and must never
+  keep the app from opening.
 - **New** button: x 14, y 82, w 180, h 52, radius 12, primary bg, white
   `Plus` 20px + "New" 18/600, the two centred in the button as the ref draws
   them (not aligned to the nav columns below). A 44px `ChevronDown` cell closes
@@ -74,7 +88,18 @@ open); §3/§4 are authoritative where an earlier draft said "padding 28 32".
   icon 20px. Active item: bg `--c-primary-soft`, radius 10, extends x 14..260.
   Items: Home, My files, Shared with me, Recent, Starred, Trash.
 - Caption "STORAGES" at y 438 (12/600 uppercase, `--c-text-3`, x 26); storage
-  items same geometry as nav (icon `HardDrive`), active state identical.
+  items same geometry as nav (icon `HardDrive`), active state identical. Active
+  is the drive the LISTING is in, not "some files route" — the condition was the
+  route name alone, and a second drive made every row light up at once.
+- **Drive in the address.** The files route is `/files/<drive>/<path…>`: the
+  drive is the first segment, so the URL says what a node id says
+  (`/files/main/Docs` is `main://Docs`). It has to be there — without it a
+  reload or a pasted link can only guess, and guessing opens somebody else's
+  drive under the address you typed. `/files` with no drive, and the flat
+  listings, mean the first drive. A drive that does not resolve gets the
+  not-found state and leaves the sidebar saying where you still are; no drives
+  at all is the server failing, not the address, and gets the `load` state with
+  its retry — which re-runs start-up, not just the listing.
 - Caption "CONNECTIONS" at y 530; items "How to connect" (`Cable`, `/connect`)
   and "API keys" (`KeyRound`, `/api-keys`), same geometry and active state as
   the nav above. Both pages mount shared `@brftech/filex-core` components —

@@ -1,6 +1,6 @@
 import { segments } from '@/lib/path';
 import { DUPLICATE_NAME, MIN_PASSWORD_LENGTH, WRONG_PASSWORD, type Repository } from '../repository';
-import type { AssistantMessage, AssistantSession, ListingFilter, Node, NotifyPrefs, Session, User } from '../types';
+import { noBranding, type AssistantMessage, type AssistantSession, type ListingFilter, type Node, type NotifyPrefs, type Session, type User } from '../types';
 import { fileTypeOf, filterPeople, indexedOnly, live, nodes, storages, TYPE_THUMBNAILS, user } from './dataset';
 import * as history from './history';
 import { assistantAsk } from './assistant';
@@ -288,6 +288,11 @@ export const mockRepository: Repository = {
       // The connection guides and the token manager read the live deployment; a mock has no host to name.
       connections: false,
     };
+  },
+
+  // Nothing branded: the demo runs as filex itself, with its own name, mark and accent.
+  async branding() {
+    return noBranding();
   },
   async search(query) {
     return search(query);

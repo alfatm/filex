@@ -8,6 +8,7 @@ import UploadTray from './features/files/UploadTray.vue';
 import AppShell from './layout/AppShell.vue';
 import { useSettingsStore } from './features/settings/settingsStore';
 import { LOCALES, setLocale, type Locale } from './i18n';
+import { useBrandingStore } from './stores/branding';
 import { useCapabilitiesStore } from './stores/capabilities';
 import { useFilesStore } from './stores/files';
 import { useUploadStore } from './features/files/uploadStore';
@@ -26,6 +27,11 @@ void files.bootstrap().then(() => {
   if (account.timeZone) settings.apply({ ...settings.settings, timeZone: account.timeZone });
 });
 void useCapabilitiesStore().load();
+// The operator's name, mark and accent. Public and pre-session on the server, so it does not wait on the account;
+// the tab title follows it, which is the one piece of branding with nowhere else to show.
+const branding = useBrandingStore();
+void branding.load();
+watch(() => branding.name, (name) => (document.title = name || 'filex'), { immediate: true });
 // A reload leaves the server holding whatever a transfer had staged. Asking about those sessions is what turns
 // them back into rows the person can carry on or throw away, instead of bytes that sit there until they expire.
 void useUploadStore().restore();

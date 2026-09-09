@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Logo', () => {
   test('reloads the app, and says so in the reader\'s language', async ({ page }) => {
-    await page.goto('files/Design');
+    await page.goto('files/demo/Design');
     const logo = page.getByRole('button', { name: 'filex', exact: true });
     await expect(logo).toHaveAttribute('title', 'Reload');
 
@@ -50,7 +50,7 @@ test.describe('Sidebar rail', () => {
 
 test.describe('Load failures', () => {
   test('a URL naming a folder that is gone offers a retry instead of a blank page', async ({ page }) => {
-    await page.goto('files/Nowhere');
+    await page.goto('files/demo/Nowhere');
     await expect(page.getByText('Folder not found')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
     // The shell stays usable around the failed listing.

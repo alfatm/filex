@@ -19,8 +19,8 @@ export const routes = [
   { path: '/recent', name: 'recent', component: RecentPage },
   { path: '/starred', name: 'starred', component: StarredPage },
   { path: '/trash', name: 'trash', component: TrashPage },
-  // One storage for now: its entry is the files root (the sidebar marks it active on every files route).
-  { path: '/storage/:id', name: 'storage', redirect: '/files' },
+  // The drive's own entry: its root on the files route, where the drive is the first path segment.
+  { path: '/storage/:id', name: 'storage', redirect: (to: { params: Record<string, unknown> }) => `/files/${to.params.id}` },
   { path: '/search', name: 'search', component: SearchPage },
   // The two connection screens. Both mount shared components that talk to the server directly, so the sidebar
   // only links them when there is one (see `Capabilities.connections`).

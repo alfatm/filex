@@ -10,7 +10,7 @@ async function setup() {
   setActivePinia(createPinia());
   const files = useFilesStore();
   await files.bootstrap();
-  await files.openPath('');
+  await files.openPath(null, '');
   return { files, uploads: useUploadStore() };
 }
 
@@ -77,7 +77,7 @@ describe('upload store', () => {
     expect(files.ordered.map((n) => n.name).sort()).toEqual(['b.txt', 'c.txt']);
 
     // A second upload into the same tree reuses both folders instead of failing on the duplicate name.
-    await files.openPath('');
+    await files.openPath(null, '');
     await uploads.start([inFolder('Trip/raw/d.txt')]);
     await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS);
     expect(files.ordered.filter((n) => n.name === 'Trip')).toHaveLength(1);
@@ -106,7 +106,7 @@ describe('upload store', () => {
     const { files, uploads } = await setup();
     await uploads.start([inFolder('Trip/a.txt')]);
     await vi.advanceTimersByTimeAsync(MOCK_UPLOAD_MS);
-    await files.openPath('');
+    await files.openPath(null, '');
 
     const listed = vi.spyOn(repository, 'listFolder');
     await uploads.start([inFolder('Trip/b.txt')]);
