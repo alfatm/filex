@@ -1,4 +1,5 @@
-# The image builds from: the pnpm manifests, packages/, web/, app/, backend/.
+# Build context for docker/Dockerfile.local. BuildKit prefers this file over
+# the root .dockerignore when that Dockerfile is the one being built.
 .git
 .github
 .gitlab
@@ -11,11 +12,9 @@ node_modules
 **/.turbo
 **/.vite
 
-# Host build output. Excluded without exception: the image builds its own, and
-# a stale host bundle must never reach it. docker/Dockerfile.local, which does
-# consume the host dists on purpose, carries its own
-# docker/Dockerfile.local.dockerignore.
-**/dist
+# Host build output is the POINT of this recipe: it copies web/dist,
+# packages/webcomponent/dist and app/dist straight from the host tree, so
+# unlike the root .dockerignore this file does NOT exclude them.
 
 # Workspace projects and trees the image does not build.
 desktop

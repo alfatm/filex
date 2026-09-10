@@ -5,6 +5,7 @@ import { Copy, Link, Star, X } from 'lucide-vue-next';
 import { repository } from '@/data';
 import type { ActivityEvent, Node, Person, User } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
+import { reportUnhandled } from '@/lib/errors';
 import { useOperationsStore } from '@/features/files/operationsStore';
 import { useFileActions } from '@/features/files/useFileActions';
 import { sharedDriveOf } from '@/features/files/owner';
@@ -67,7 +68,18 @@ watch(
   [() => props.node.id, () => files.revision, tab] as const,
   async ([id, , current]) => {
     if (current !== 'activity') return;
-    const list = await repository.listActivity(id);
+    let list: ActivityEvent[];
+    try {
+      list = await repository.listActivity(id);
+    } catch (e) {
+      // Two things the rejection used to cost. The feed kept the PREVIOUS node's events, so they were shown under
+      // this node's name — the same trap the store's focus watcher already guards against. And nobody was told:
+      // the only reason a toast appeared at all was Vue routing the rejected watcher callback to the sink by
+      // itself, which a catch here would have swallowed. So the sink is called on purpose.
+      if (props.node.id === id) activity.value = [];
+      reportUnhandled(e);
+      return;
+    }
     if (props.node.id === id) activity.value = list;
   },
   { immediate: true },

@@ -1,12 +1,19 @@
-# filex full image (~250 MB) — slim base + ffmpeg, ghostscript, libreoffice for full thumbnail support
-FROM brftech/filex:slim
+# filex full image — a slim image plus the programs the thumbnailer shells out
+# to. BASE_IMAGE must be an image built from backend/Dockerfile (or the `slim`
+# target of docker/Dockerfile):
+#   docker build -f Dockerfile.full --build-arg BASE_IMAGE=filex:slim .
+ARG BASE_IMAGE=filex:slim
+FROM ${BASE_IMAGE}
 USER root
 RUN apk --no-cache add \
     ffmpeg \
-    vips-tools \
+    imagemagick \
     ghostscript \
+    poppler-utils \
     libreoffice \
     openjdk17-jre-headless \
-    poppler-utils \
-    fonts-liberation \
-    fonts-dejavu
+    rsvg-convert \
+    ttf-liberation \
+    ttf-dejavu \
+    font-noto \
+    font-noto-cjk

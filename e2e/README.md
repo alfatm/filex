@@ -164,8 +164,8 @@ DEMO_ASSETS_DIR=/path/to/demo pnpm --filter filex-e2e test:app
 `app/docs/DEMO-ASSETS.md` has the full story, including the generator that
 rewrites `tree.json` from the directory.
 
-⚠ **The dev server, and it has to be — even though the demo stand no longer uses
-one.** `docker-compose.app.yml` serves a BUILT bundle (`vite preview`) on
+⚠ **The dev server, and it has to be — even though the live suite no longer uses
+one.** `playwright.app.live.config.ts` serves a BUILT bundle (`vite preview`) on
 purpose: the query hooks below live behind `import.meta.env.DEV` and would let a
 stand pointed at a real filex show rows the server never sent. This suite drives
 those same hooks, so it needs the build that has them. Measured rather than

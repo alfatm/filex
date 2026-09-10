@@ -161,8 +161,8 @@ function requireApiTarget(): Plugin {
 
 /**
  * Same rewriting for `vite` and `vite preview`: the app is one origin from the browser's side either way, so the
- * session cookie rides along and nothing needs CORS. The target moves with the deployment — docker-compose.app.yml
- * points it at the `filex` service; a plain local backend is the default.
+ * session cookie rides along and nothing needs CORS. The target moves with the deployment; a plain local
+ * backend is the default.
  */
 const apiProxy = {
   '/api': process.env.FILEX_API_PROXY ?? 'http://localhost:5212',
@@ -200,7 +200,7 @@ export default defineConfig({
     hmr: process.env.VITE_HMR_CLIENT_PORT ? { clientPort: Number(process.env.VITE_HMR_CLIENT_PORT) } : undefined,
     proxy: apiProxy,
   },
-  // `vite preview` serves `dist/`, which is what docker-compose.app.yml runs: a stand pointed at a real server
+  // `vite preview` serves `dist/`, which is what the live e2e suite runs: a stand pointed at a real server
   // has to show what a BUILD does, and the dev server's screenshot/e2e hooks (src/dev/screenshotQuery.ts, behind
   // `import.meta.env.DEV`) are not in one. Same port and host as the dev server so the stand's mapping is the same.
   preview: {

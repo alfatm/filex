@@ -49,15 +49,23 @@ with a stated reason — not a crash and not a silent failure.
 ### Build locally
 
 ```bash
-docker build -t brftech/filex:full -f docker/Dockerfile .
-docker build -t brftech/filex:slim -f docker/Dockerfile.slim .
+docker build -t filex:full -f docker/Dockerfile --target full .
+docker build -t filex:slim -f docker/Dockerfile --target slim .
 ```
 
-Both Dockerfiles are multi-stage:
+Or through Compose, which is the same recipe with the tag and target read from
+`.env`:
+
+```bash
+docker compose up --build              # server + admin SPA + end-user app
+BUILD_APP=0 docker compose up --build  # skip the app; the apex serves /admin/
+```
+
+Both targets come from one multi-stage Dockerfile:
 1. `frontend-build` — node 20 + pnpm, builds packages, the admin UI and the end-user app (`/app/`)
 2. `embed-prep` — stages the dist files
 3. `backend-build` — golang 1.25, builds with `//go:embed` consuming the staged dist
-4. runtime — `alpine:3.20`; this is the only stage where slim and full differ
+4. runtime — `alpine:3.20`; `runtime` is shared, `runtime-full` adds the thumbnail toolchain, and the `slim`/`full` targets are those two plus the binary
 
 Pass build-args to embed version metadata into the binary:
 ```bash
@@ -76,8 +84,7 @@ docker build \
 
 | Service       | Profile      | Notes |
 |---------------|--------------|-------|
-| `filex`       | (default)    | Slim image, SQLite + local storage |
-| `filex-full`  | `full`       | Full image with thumbnail tools |
+| `filex`       | (default)    | SQLite + local storage; `FILEX_IMAGE` picks slim or full |
 | `onlyoffice`  | `onlyoffice` | OnlyOffice Document Server |
 | `postgres`    | `postgres`   | Postgres 16 (set `FILEX_DB_DRIVER=postgres`) |
 | `minio`       | `minio`      | S3-compatible blob store |
@@ -109,15 +116,22 @@ After that the switch, the mode and the address live on *Settings → Protection
 Bring up with:
 
 ```bash
-docker compose up                                     # filex slim only
-docker compose --profile full up                      # filex with thumb tools
+docker compose up                                     # filex alone
 docker compose --profile onlyoffice up                # filex + OnlyOffice
 docker compose --profile postgres --profile minio up  # full self-hosted stack
 ```
 
 You can mix profiles freely:
 ```bash
-docker compose --profile full --profile onlyoffice --profile postgres --profile minio up -d
+docker compose --profile onlyoffice --profile postgres --profile minio up -d
+```
+
+Thumbnails are not a profile — one service cannot be two images. Point
+`FILEX_IMAGE` at the full tag in `.env` instead:
+
+```bash
+FILEX_IMAGE=ghcr.io/brf-tech/filex:full
+FILEX_THUMBS_ENABLED=true
 ```
 
 ### `.env`

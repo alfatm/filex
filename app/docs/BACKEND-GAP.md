@@ -20,7 +20,7 @@ What carries it:
 |---|---|
 | `//go:embed all:admin all:web all:app` | `backend/embed/embed.go` |
 | `/` + the root catch-all, wired LAST in `wireStatic` | `backend/internal/api/routes.go` |
-| built + staged into `embed/app` | `docker/Dockerfile`, `docker/Dockerfile.slim` |
+| built + staged into `embed/app` | `docker/Dockerfile` |
 | built + copied for the goreleaser binaries | `.github/workflows/release.yml` (`binaries`) |
 | built + copied for a local `pnpm run build:all` | `scripts/sync-embed.mjs`, `package.json` |
 | `.keep` placeholder so a CLI-only build compiles | `desktop/scripts/fetch-cli.mjs` |
@@ -54,11 +54,15 @@ Four properties of that wiring are deliberate:
 `base` lives in `app/vite.config.ts` and the router reads it back through
 `import.meta.env.BASE_URL`, so the two cannot drift.
 
-`docker-compose.app.yml` is still the dev stand (now on `:5175/` rather than
-`:5175/app/`): it serves a BUILD, not the dev server, so the screenshot/e2e
-hooks in `src/dev/screenshotQuery.ts` cannot fake answers against a real
-backend; and a production `vite build` without `VITE_FILEX_API` fails instead
-of quietly shipping the mock repository.
+The app ships inside the image: `docker/Dockerfile` builds it and stages it
+into `embed/app`, so `docker compose up --build` serves it at the apex with no
+second container. `BUILD_APP=0` leaves it out and gives the `/` → `/admin/`
+redirect above. The stand that used to run it on `:5175` behind `vite preview`
+is gone; what survives of that arrangement is the live e2e suite
+(`node e2e/run.mjs app --build`), which serves a BUILD rather than the dev
+server so the screenshot/e2e hooks in `src/dev/screenshotQuery.ts` cannot fake
+answers against a real backend. A production `vite build` without
+`VITE_FILEX_API` still fails instead of quietly shipping the mock repository.
 
 ## Repository ↔ API
 
@@ -78,7 +82,7 @@ of quietly shipping the mock repository.
 | `listVersions`, `restoreVersion` | `GET /api/files/versions?node_id`, `POST /api/files/versions/restore` | ✅ | both are guarded (≥viewer to list, ≥editor to restore — see the security row below), and the client now says what a row MEANS: filex snapshots the live bytes **before** a destructive write, so every row holds contents the file used to have and the live file has no row of its own. `Version.current` is gone — it marked the newest row, which labelled the previous contents as the present ones and withheld Restore from the one revision a rollback actually wants — so every row offers Restore, `restoreVersion` keeps sending `snapshot_current` (which is what makes a rollback itself undoable, and why the list grows by a row), and `mock/history.ts` models the same order rather than the opposite one |
 | `listStarred`, `setStarred` | `GET /manager/star/list`, `POST /manager/star` per node | ✅ | loop per id |
 | `listShared` | `GET /manager/shared-with-me` | ✅ | the page draws **Shared by** and **Shared on** and filled neither against a live server. **Both are on the wire now**: `shared_at` (the grant's `created_at`, epoch ms) always was, and `shared_by` / `shared_by_name` were added from the grant's `created_by` — the display name only, never the e-mail an account has instead of one. `HttpRepository.listShared` reads both off the grant rows and fills `sharedBy` / `sharedAt`; an account the server named no display name for gets the neutral `files.sharedByUnknown`, never an address |
-| `listTrash` | `GET /manager/trash` paged, per storage, `ttl_days`, and `top_level_only=1` for one row per deletion | ⚠️ | **added to the backend**: the flat listing showed a deleted folder AND every file inside it, each offering a Restore only the folder's own restore performs. The app passes the flag. Both extra fields are read now: `fromTrashEntry` takes the kind off `type` (a deleted FOLDER used to arrive as a file, with an icon picked by extension and a byte count where a dash belongs) and carries `ttl_days` as `Node.ttlDays`, which the trash banner turns back into the install's retention — the days left plus the days already served — instead of the literal "30 days" it printed on every install. ⚠ What is left: the move-to-trash confirmation in `DeleteModal.vue` still says "within 30 days", because nothing is in the trash yet at that point and no route states the policy to a non-admin |
+| `listTrash` | `GET /manager/trash` paged, per storage, `ttl_days`, and `top_level_only=1` for one row per deletion | ✅ | **added to the backend**: the flat listing showed a deleted folder AND every file inside it, each offering a Restore only the folder's own restore performs. The app passes the flag. Both extra fields are read now: `fromTrashEntry` takes the kind off `type` (a deleted FOLDER used to arrive as a file, with an icon picked by extension and a byte count where a dash belongs) and carries `ttl_days` as `Node.ttlDays`, which the trash banner turns back into the install's retention — the days left plus the days already served — instead of the literal "30 days" it printed on every install. The move-to-trash confirmation in `DeleteModal.vue` names no term at all — nothing is in the trash yet at that point and no route states the policy to a non-admin, so it says "until it is deleted forever" rather than a number it cannot know. |
 | `restore` | `POST /manager/restore {node_id}` | ✅ | loop per id |
 | `deleteForever`, `emptyTrash` | `DELETE /manager/trash/{id}` and `POST /manager/trash/empty` | ✅ | **added to the backend**: the trash was a room the user could put things into and never take anything out of. Both are scoped to what the caller could have deleted (confinement + ≥editor on the original path); `empty` purges top-level rows in bounded rounds and reports `more`, which `HttpRepository.emptyTrash` loops on while it is still making progress |
 | `createFolder`, `rename` | `POST /manager action=newfolder|rename` path-based, 409 on conflict | ✅ | **the 409 was added to the backend**: both verbs now Stat the target name first and refuse an occupied one, where `newfolder` used to `MkdirAll` over somebody else's folder and answer 200 and `rename` went straight to `os.Rename`, which on Linux silently replaces the file already sitting there. 409 becomes `DUPLICATE_NAME`, which is the error the modals already show |

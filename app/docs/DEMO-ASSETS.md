@@ -2,7 +2,10 @@
 
 The mock repository (`src/data/mock/`) lists a real directory of demo files instead of a hand-written
 list. The directory lives in a sibling repository, `drive-demo-assets`, whose `demo/` tree was built to
-match the reference screenshots (spec §8): eight folders and eight files at the root, 142 files in all.
+match the reference screenshots (spec §8): eight folders and nine files at the root, 143 files in all.
+The snapshot `src/data/mock/tree.json` is the authority on those counts — it is regenerated from the
+directory, and the numbers here go stale the moment it is. The e2e suite counts them from it rather than
+repeating them (`e2e/helpers/mockTree.ts`).
 
 ## Location
 

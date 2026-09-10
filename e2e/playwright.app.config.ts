@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { entries } from './helpers/mockTree';
 
 const E2E_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_DIR = path.resolve(E2E_DIR, '../app');
@@ -28,7 +29,7 @@ if (!existsSync(DEMO_ASSETS_DIR)) {
       `      git clone <drive-demo-assets> ${path.resolve(APP_DIR, '../..')}/drive-demo-assets\n` +
       `  • or point at a copy you already have:\n` +
       `      DEMO_ASSETS_DIR=/path/to/demo pnpm --filter filex-e2e test:app\n\n` +
-      `Without them the mock repository still lists its 142 nodes, but every file's bytes 404: previews, ` +
+      `Without them the mock repository still lists its ${entries.length} nodes, but every file's bytes 404: previews, ` +
       `downloads and thumbnails have nothing to show and all 15 visual baselines mismatch. See ` +
       `app/docs/DEMO-ASSETS.md.`,
   );

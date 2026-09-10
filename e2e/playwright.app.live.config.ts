@@ -27,7 +27,7 @@ const APP_DIR = path.resolve(E2E_DIR, '../app');
  * ⚠ The BUILT bundle over `vite preview`, never the dev server — the opposite of the mock suite's choice, and for
  * the same reason. `app/src/dev/screenshotQuery.ts` monkeypatches the repository, forges capabilities and posts
  * mock rows; it is behind `import.meta.env.DEV`, so a dev server pointed at a real backend can be made to assert
- * things the server never said. A build has none of it. `docker-compose.app.yml` serves the stand the same way.
+ * things the server never said. A build has none of it.
  *
  * ⚠ baseURL ends in `/`, as in the mock suite: navigate with `page.goto('files')`, not `page.goto('/files')`.
  */

@@ -42,7 +42,17 @@ async function load() {
   }
   people.value = access.people;
   canManage.value = access.canManage;
-  // The details panel shows the same list.
+}
+
+/**
+ * The listing row and the details panel show the node's shared state, and a grant changes it.
+ *
+ * Only a change pays for it: `load` used to re-read the whole listing itself, so merely OPENING the modal cost a
+ * full folder read plus — through `focusNode` — another people-and-location round trip for the focused node, for
+ * data nothing had touched.
+ */
+async function reload() {
+  await load();
   await files.refresh();
 }
 
@@ -60,7 +70,7 @@ async function invite() {
     return;
   }
   email.value = '';
-  await load();
+  await reload();
 }
 
 async function changeRole(person: Person, next: string) {
@@ -69,9 +79,12 @@ async function changeRole(person: Person, next: string) {
     await repository.setPersonRole(props.node.id, person.id, next as Person['role']);
   } catch (e) {
     error.value = errorMessage(e);
+    // A refused change must not leave the row showing the role the server did not give — but nothing outside this
+    // modal changed, so the listing is not re-read.
+    await load();
+    return;
   }
-  // Either way: a refused change must not leave the row showing the role the server did not give.
-  await load();
+  await reload();
 }
 
 async function revoke(person: Person) {
@@ -82,7 +95,7 @@ async function revoke(person: Person) {
     error.value = errorMessage(e);
     return;
   }
-  await load();
+  await reload();
 }
 </script>
 

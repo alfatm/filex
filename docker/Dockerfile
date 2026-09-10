@@ -1,74 +1,75 @@
-# filex default image (~510 MB) — published as :latest and :full
-# - Pure Go binary (CGO=0, modernc.org/sqlite)
-# - + ffmpeg (video thumbs)
-# - + ghostscript + poppler-utils (PDF → JPEG, page 1)
-# - + libreoffice (headless soffice for .doc/.xls/.ppt/.odt/.ods/.odp → PDF → JPEG)
-# - + ttf-liberation + ttf-dejavu + font-noto so libreoffice/Ghostscript don't tofu non-ASCII glyphs
+# filex image — two targets from one recipe:
 #
-# Image size grew from ~43 MB (no thumb deps) to ~510 MB; the bulk is libreoffice.
-# Trade-off accepted: every advertised thumbnail format actually works at runtime.
-# The lean variant IS kept, and is built from docker/Dockerfile.slim (~43 MB,
-# frontend + Go binary only) — from v0.31.0, when the :slim TAG stopped being
-# built from this recipe. The older docker/Dockerfile.full is what was merged
-# into this one.
+#   docker build -f docker/Dockerfile --target slim -t filex:slim .
+#   docker build -f docker/Dockerfile --target full -t filex:full .   # default
 #
-# Build (from repo root):
-#   docker build -t brftech/filex:latest -f docker/Dockerfile .
+# slim carries the Go binary and nothing else. Image thumbnails are produced in
+# pure Go (internal/thumb/image.go) and work there; every thumbnail that shells
+# out to another program needs `full`. filex probes for each tool at start
+# (internal/capability) and reports what it found on /api/files/capabilities, so
+# a missing one is a disabled feature with a reason, not a crash.
 #
 # Run:
-#   docker run -p 5212:5212 -v $(pwd)/data:/data brftech/filex:latest
-
+#   docker run -p 5212:5212 -v $(pwd)/data:/data filex:full
+#
 # Multi-arch: build stages are pinned to $BUILDPLATFORM so the Node/Go work
 # always runs natively on the build host; the Go stage cross-compiles via
-# TARGETOS/TARGETARCH (CGO=0 makes this free). Only the final runtime stage
-# (apk installs) runs per-target-arch, under QEMU when cross-building.
+# TARGETOS/TARGETARCH (CGO=0 makes this free). Only the runtime stages (apk
+# installs) run per-target-arch, under QEMU when cross-building.
 #   docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile .
 
 # ---------------------------------------------------------------------------
-# Stage 1: Build npm packages (filex-core, webcomponent, react) + admin UI
+# Stage 1: npm packages (core, webcomponent, react) + admin UI + end-user app
 # ---------------------------------------------------------------------------
 FROM --platform=$BUILDPLATFORM node:20-alpine AS frontend-build
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /src
 
-# Copy lockfiles + workspace manifests first so Docker layer cache survives
-# source code edits when only deps haven't changed.
-COPY package.json pnpm-workspace.yaml ./
-COPY pnpm-lock.yaml* ./
+# Manifests first so the dep layer survives source edits.
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/core/package.json ./packages/core/
 COPY packages/webcomponent/package.json ./packages/webcomponent/
 COPY packages/react/package.json ./packages/react/
 COPY web/package.json ./web/
 COPY app/package.json ./app/
 
-# Install all workspace deps (core/webcomponent/react/web). Use --no-frozen-lockfile
-# in dev images that don't ship a lockfile yet; CI ships a lockfile so it's frozen.
-# vue-tsc OOMs the default 1.7 GB Node heap once we pull in
-# @brftech/filex-core (workspace dep with code-split viewers). Bump
-# the budget to 4 GB for every Node process during the build.
+# vue-tsc OOMs the default 1.7 GB Node heap once the workspace core package
+# (code-split viewers) is pulled in. 4 GB for every Node process in the build.
 ENV NODE_OPTIONS=--max-old-space-size=4096
 
-RUN pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
+RUN pnpm install --frozen-lockfile
 
-# Copy sources after install for max cache hit.
 COPY packages/ ./packages/
 COPY web/ ./web/
 COPY app/ ./app/
 
-# Build npm packages first (web depends on them transitively for type imports
-# and the webcomponent dist gets embedded into the Go binary).
+# Packages first: web imports their types, and the webcomponent dist is embedded
+# into the Go binary.
 RUN pnpm -r --filter='./packages/*' build
 RUN pnpm --filter='./web' build
 
-# The end-user app (mounted at /app/ by the Go server). VITE_FILEX_API is read
-# at BUILD time and app/vite.config.ts REFUSES a production build without it,
-# rather than shipping the mock repository behind a real-looking UI. "1" is the
-# same-origin form: the app is served by the binary that answers /api.
+# The end-user app, which the binary serves at the apex (wireStatic in
+# backend/internal/api/routes.go).
+#
+# VITE_FILEX_API is read at BUILD time and app/vite.config.ts refuses a
+# production build without it, rather than shipping the mock repository behind a
+# real-looking UI. "1" is the same-origin form: the app is served by the binary
+# that answers /api.
+#
+# BUILD_APP=0 skips this build and leaves embed/app holding only a `.keep`.
+# That is a supported shape, not a broken one: wireStatic probes for
+# index.html, finds none, and serves the admin console at the apex instead.
+# The placeholder is required — `//go:embed all:app` fails on an EMPTY dir.
+ARG BUILD_APP=1
 ENV VITE_FILEX_API=1
-RUN pnpm --filter='./app' build
+RUN if [ "$BUILD_APP" = "1" ]; then \
+        pnpm --filter='./app' build; \
+    else \
+        rm -rf app/dist && mkdir -p app/dist && touch app/dist/.keep; \
+    fi
 
 # ---------------------------------------------------------------------------
-# Stage 2: Stage embed assets in /tmp for the Go build to consume
+# Stage 2: stage embed assets for the Go build to consume
 # ---------------------------------------------------------------------------
 FROM frontend-build AS embed-prep
 RUN mkdir -p /tmp/embed/admin /tmp/embed/web /tmp/embed/app && \
@@ -77,80 +78,85 @@ RUN mkdir -p /tmp/embed/admin /tmp/embed/web /tmp/embed/app && \
     cp -r /src/app/dist/. /tmp/embed/app/
 
 # ---------------------------------------------------------------------------
-# Stage 3: Build the Go binary with embedded assets
+# Stage 3: the Go binary with embedded assets
 # ---------------------------------------------------------------------------
-# Bumped to 1.25 for golang.org/x/image v0.39+ (BMP/TIFF/WebP decoders we
-# import in internal/thumb/image.go register Go 1.25 toolchain features).
+# 1.25 for golang.org/x/image v0.39+ (BMP/TIFF/WebP decoders imported by
+# internal/thumb/image.go).
 FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS backend-build
 RUN apk --no-cache add git ca-certificates
 WORKDIR /src
 
-# Cache deps layer. We accept a missing go.sum (first-time build before
-# `go mod tidy` has been run locally) — `go mod download` will create one.
-COPY backend/go.mod ./
-COPY backend/go.sum* ./
-RUN go mod download || go mod tidy
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
 
-# Copy backend sources + drop in embed assets from the frontend stage.
 COPY backend/ ./
 COPY --from=embed-prep /tmp/embed/admin ./embed/admin
 COPY --from=embed-prep /tmp/embed/web   ./embed/web
 COPY --from=embed-prep /tmp/embed/app   ./embed/app
 
-# `go mod tidy` here (not just in the deps layer) because the COPY above
-# overwrites any go.sum produced earlier when the source tree didn't ship
-# one. This guarantees a complete go.sum before `go build`.
-RUN go mod tidy
-
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
-# TARGETOS/TARGETARCH are set by buildx per requested platform; empty on a
-# plain `docker build`, where Go then falls back to the host defaults.
+# TARGETOS/TARGETARCH are set by buildx per requested platform; empty on a plain
+# `docker build`, where Go falls back to the host defaults.
 ARG TARGETOS
 ARG TARGETARCH
-# ldflag symbol path must match the package var declarations in
-# internal/version/version.go — `-X main.version=...` is silently a no-op
-# because cmd/filex/main.go has no `version` symbol; the linker just skips
-# unknown -X targets, so the banner/footer falls back to "0.1.0-dev (unknown,
-# unknown)" even on tagged release builds. Use the fully-qualified package
-# path instead.
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
+# The -X symbol path must match the real module path, so it is read from go.mod
+# rather than written out here: the linker silently skips an -X it cannot
+# resolve, and the version would fall back to "0.1.0-dev (unknown, unknown)"
+# with no build error. Keeps a fork that renames the module working.
+RUN MODULE="$(go list -m)" && \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build \
     -trimpath \
     -ldflags="-s -w \
-        -X github.com/brf-tech/filex/backend/internal/version.Version=${VERSION} \
-        -X github.com/brf-tech/filex/backend/internal/version.Commit=${COMMIT} \
-        -X github.com/brf-tech/filex/backend/internal/version.Date=${DATE}" \
+        -X ${MODULE}/internal/version.Version=${VERSION} \
+        -X ${MODULE}/internal/version.Commit=${COMMIT} \
+        -X ${MODULE}/internal/version.Date=${DATE}" \
     -o /out/filex \
     ./cmd/filex
 
 # ---------------------------------------------------------------------------
-# Stage 4: Runtime with full thumbnail toolchain
+# Runtime base — shared by both targets. Metadata lives here so neither leaf
+# stage repeats it, and the binary is copied in last so a code change never
+# invalidates the apk layers below.
 # ---------------------------------------------------------------------------
-FROM alpine:3.20
+#   ca-certificates — outbound TLS (S3, WebDAV, OIDC, update checks).
+#   tzdata          — local-time rendering and scheduled jobs.
+FROM alpine:3.20 AS runtime
+RUN apk --no-cache add ca-certificates tzdata
 
-# Single apk layer — keeps the Docker layer cache friendly when nothing in
-# the dep list changes between builds.
-#   ca-certificates / tzdata / su-exec — base runtime niceties.
-#   ffmpeg                              — video thumbnails (1st keyframe).
-#   ghostscript + poppler-utils         — PDF → JPEG (page 1). gs preferred,
-#                                         pdftoppm as fallback (matches
-#                                         backend/internal/thumb/pdf.go).
-#   libreoffice                         — headless `soffice --headless --convert-to pdf`
-#                                         for office docs (matches thumb/office.go).
-#                                         Pulls in writer/calc/impress/draw.
-#   openjdk17-jre-headless              — LibreOffice's xlsx/docx pipeline calls
-#                                         out to javaldx for chart/formula
-#                                         rendering. Without a JRE present
-#                                         soffice exits 1 and the pipeline rows
-#                                         the file as state=failed. Ship the
-#                                         smallest headless JRE.
-#   font-{noto,noto-cjk} + ttf-*        — without these libreoffice and
-#                                         Ghostscript render Unicode as boxes.
+EXPOSE 5212
+VOLUME ["/data"]
+
+ENV FILEX_DATA_DIR=/data \
+    FILEX_LISTEN=0.0.0.0:5212 \
+    FILEX_THUMBS_ENABLED=true
+
+# /healthz is mounted unauthenticated by the server.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q --spider http://127.0.0.1:5212/healthz || exit 1
+
+ENTRYPOINT ["/usr/local/bin/filex"]
+CMD ["serve"]
+
+# ---------------------------------------------------------------------------
+# Runtime base + the programs the thumbnailer shells out to.
+# ---------------------------------------------------------------------------
+#   ffmpeg                 — video thumbnails (1st keyframe).
+#   imagemagick            — probed as `magick`/`convert` (capability/service.go).
+#   ghostscript + poppler  — PDF -> JPEG (page 1). gs preferred, pdftoppm as
+#                            fallback (thumb/pdf.go).
+#   libreoffice            — headless `soffice --convert-to pdf` for office docs
+#                            (thumb/office.go). Pulls writer/calc/impress/draw.
+#   openjdk17-jre-headless — LibreOffice's xlsx/docx pipeline calls javaldx for
+#                            chart/formula rendering; without a JRE soffice
+#                            exits 1 and the file lands as state=failed.
+#   rsvg-convert           — SVG rasterisation.
+#   fonts                  — without them libreoffice and Ghostscript render
+#                            non-ASCII as boxes.
+# This layer is most of the image size; keep it out of the slim target.
+FROM runtime AS runtime-full
 RUN apk --no-cache add \
-        ca-certificates \
-        tzdata \
-        su-exec \
         ffmpeg \
         imagemagick \
         ghostscript \
@@ -161,21 +167,14 @@ RUN apk --no-cache add \
         ttf-liberation \
         ttf-dejavu \
         font-noto \
-        font-noto-cjk \
-    && addgroup -S filex && adduser -S -G filex filex
+        font-noto-cjk
 
+# ---------------------------------------------------------------------------
+# Targets
+# ---------------------------------------------------------------------------
+FROM runtime AS slim
 COPY --from=backend-build /out/filex /usr/local/bin/filex
 
-EXPOSE 5212
-VOLUME ["/data"]
-
-ENV FILEX_DATA_DIR=/data \
-    FILEX_LISTEN=0.0.0.0:5212 \
-    FILEX_THUMBS_ENABLED=true
-
-# Healthcheck — assumes /healthz is mounted unauthenticated by the server.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -q --spider http://127.0.0.1:5212/healthz || exit 1
-
-ENTRYPOINT ["/usr/local/bin/filex"]
-CMD ["serve"]
+# Last stage = the default target of a plain `docker build`.
+FROM runtime-full AS full
+COPY --from=backend-build /out/filex /usr/local/bin/filex

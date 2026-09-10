@@ -1,10 +1,12 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * The app has no language switcher in its UI yet. `app/src/i18n/index.ts` reads
- * the locale from `localStorage['filex.app.locale']` (en | ru | tr) and falls
- * back to `navigator.language`, so the locale is set through storage before
- * the first navigation — the same thing a switcher would persist.
+ * The switcher lives in Settings → Preferences → Language, and `setLocale`
+ * persists the choice to `localStorage['filex.app.locale']` (en | ru | tr);
+ * `app/src/i18n/index.ts` reads that key on start and falls back to
+ * `navigator.language`. What is under test here is the locale the FIRST render
+ * picks up — which is what a reload after switching gives — so the tests seed
+ * the key the switcher writes instead of driving the modal.
  */
 const LOCALE_KEY = 'filex.app.locale';
 

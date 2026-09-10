@@ -86,8 +86,8 @@ jobs:
       # through that package's `exports`, which point at `dist/` — and `dist/`
       # is git-ignored. On a fresh checkout nothing that imports core resolves
       # until this has run, so `type-check` would fail on missing modules and
-      # report it as the app's own type errors. The same trap bit the demo
-      # stand (docker-compose.app.yml builds core for exactly this reason).
+      # report it as the app's own type errors. The image build hits the same
+      # trap, which is why docker/Dockerfile builds the packages first too.
       - name: Build @brftech/filex-core (app resolves it through dist/)
         env:
           NODE_OPTIONS: "--max-old-space-size=4096"

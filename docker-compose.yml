@@ -1,23 +1,43 @@
 # filex — self-hosted file manager stack.
 #
-# Profiles let you mix-and-match optional services. Defaults to the slim
-# filex image only (~43 MB, no thumbnail toolchain), with SQLite + local
-# storage. Bring up extras as needed:
+# Defaults to the slim filex image (no thumbnail toolchain), with SQLite +
+# local storage. Profiles bring up optional services:
 #
-#   docker compose up                                            # filex slim only
-#   docker compose --profile full up                             # filex + thumbnail tools
-#   docker compose --profile onlyoffice up                       # filex + OnlyOffice editor
-#   docker compose --profile postgres --profile minio up         # full self-hosted stack
-#   docker compose --profile full --profile onlyoffice --profile postgres up
+#   docker compose up                                     # filex only
+#   docker compose --profile onlyoffice up                # + OnlyOffice editor
+#   docker compose --profile postgres --profile minio up  # + Postgres and S3
+#
+# Thumbnails are not a profile — one service cannot be two images. The programs
+# the thumbnailer shells out to live in the `full` image, so set BOTH in `.env`:
+#   FILEX_IMAGE=ghcr.io/brf-tech/filex:full
+#   FILEX_THUMBS_ENABLED=true
+#
+# Building from source instead of pulling:
+#
+#   docker compose up --build                    # server + admin SPA + app
+#   BUILD_APP=0 docker compose up --build        # skip the end-user app
 #
 # Copy `.env.example` -> `.env` and edit before going to prod.
 
 services:
   # ---------------------------------------------------------------------
-  # filex (slim) — default
+  # filex — set FILEX_IMAGE to the `full` tag if you want thumbnails.
   # ---------------------------------------------------------------------
   filex:
     image: ${FILEX_IMAGE:-ghcr.io/brf-tech/filex:slim}
+    # `docker compose up` pulls the image above. `up --build` builds it from
+    # this tree instead — the admin SPA, the end-user app and the Go binary,
+    # all embedded. Keep FILEX_BUILD_TARGET in step with the tag in
+    # FILEX_IMAGE; BUILD_APP=0 drops the end-user app from the build.
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ${FILEX_BUILD_TARGET:-slim}
+      args:
+        BUILD_APP: ${BUILD_APP:-1}
+    # Without this, some Compose versions build on a plain `up` when the image
+    # is not already local — a ten-minute surprise for someone who wanted a pull.
+    pull_policy: missing
     container_name: filex
     restart: unless-stopped
     ports:
@@ -50,8 +70,24 @@ services:
       FILEX_DB_DRIVER: ${FILEX_DB_DRIVER:-sqlite}
       FILEX_DB_DSN: ${FILEX_DB_DSN:-/data/filex.db}
 
+      # --- First boot ---
+      # Set both to seed an admin and skip the setup wizard; leave them unset
+      # and filex generates a password, prints it once and writes it to
+      # /data/.first-run.txt (0600).
+      FILEX_ADMIN_EMAIL: ${FILEX_ADMIN_EMAIL:-}
+      FILEX_ADMIN_PASSWORD: ${FILEX_ADMIN_PASSWORD:-}
+
+      # Encrypts the secrets filex has to read back (internal/secretbox). The
+      # assistant refuses to store a provider key without one, so no model can
+      # be configured until this is set. Changing it later makes the secrets
+      # already stored unreadable — they are re-entered, not migrated.
+      FILEX_SECRET_KEY: ${FILEX_SECRET_KEY:-}
+
       # --- Storage defaults ---
       FILEX_DEFAULT_STORAGE_DRIVER: ${FILEX_DEFAULT_STORAGE_DRIVER:-local}
+      # The drive NAME is what every node is addressed by (`home://Docs/a.pdf`).
+      FILEX_DEFAULT_STORAGE_NAME: ${FILEX_DEFAULT_STORAGE_NAME:-}
+      FILEX_DEFAULT_STORAGE_PATH: ${FILEX_DEFAULT_STORAGE_PATH:-}
 
       # --- Plug & play services (URL = enabled) ---
       FILEX_ONLYOFFICE_URL: ${FILEX_ONLYOFFICE_URL:-}
@@ -60,52 +96,6 @@ services:
 
       # --- Thumbs ---
       FILEX_THUMBS_ENABLED: ${FILEX_THUMBS_ENABLED:-false}
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5212/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    networks:
-      - filex-net
-
-  # ---------------------------------------------------------------------
-  # filex (full) — the registry's default tag; thumbnail toolchain included
-  # (~510 MB). The lean alternative is ghcr.io/brf-tech/filex:slim (~43 MB),
-  # which has the same binary and none of the programs the thumbnailer shells
-  # out to.
-  # Activate with `--profile full` and stop the `filex` service first
-  # (or change the published port via FILEX_PORT in .env).
-  # ---------------------------------------------------------------------
-  filex-full:
-    profiles: ["full"]
-    image: ${FILEX_FULL_IMAGE:-ghcr.io/brf-tech/filex:full}
-    container_name: filex-full
-    restart: unless-stopped
-    ports:
-      - "${FILEX_PORT:-5212}:5212"
-    volumes:
-      - ./data:/data
-      - ./storage-local:/var/lib/filex/local-storage
-    environment:
-      FILEX_PUBLIC_URL: ${FILEX_PUBLIC_URL:-http://localhost:5212}
-      FILEX_LISTEN: 0.0.0.0:5212
-      FILEX_AUTH_DRIVERS: ${FILEX_AUTH_DRIVERS:-local}
-
-      # --- E2E key escrow (install-time; see docs/CONFIGURATION.md) ---
-      # Unset = off. Pinned at the first boot: filex refuses to start if the
-      # key later changes or is removed, because folders created without it can
-      # never be opened by it.
-      FILEX_INSTALLATION_E2E_ESCROW_KEY: ${FILEX_INSTALLATION_E2E_ESCROW_KEY:-}
-      # Turning escrow ON later needs this as well, once. NOT retroactive:
-      # no operator action reaches a folder that already exists; its owner is
-      # offered a slot at unlock and can grant it with the folder password.
-      FILEX_INSTALLATION_E2E_ESCROW_ADOPT: ${FILEX_INSTALLATION_E2E_ESCROW_ADOPT:-}
-      FILEX_DB_DRIVER: ${FILEX_DB_DRIVER:-sqlite}
-      FILEX_DB_DSN: ${FILEX_DB_DSN:-/data/filex.db}
-      FILEX_THUMBS_ENABLED: "true"
-      FILEX_ONLYOFFICE_URL: ${FILEX_ONLYOFFICE_URL:-}
-      FILEX_ONLYOFFICE_JWT: ${FILEX_ONLYOFFICE_JWT:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5212/healthz"]
       interval: 30s

@@ -24,7 +24,7 @@
 
 services:
   filex:
-    image: ghcr.io/brf-tech/filex:latest
+    image: ${FILEX_IMAGE:-ghcr.io/brf-tech/filex:latest}
     restart: unless-stopped
     environment:
       FILEX_MULTI_TENANT: "1"

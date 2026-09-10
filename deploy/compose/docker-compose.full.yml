@@ -27,7 +27,7 @@
 
 services:
   filex:
-    image: ghcr.io/brf-tech/filex:latest       # full image (thumbnails included)
+    image: ${FILEX_IMAGE:-ghcr.io/brf-tech/filex:latest}   # full image (thumbnails included)
     environment:
       FILEX_PUBLIC_URL: https://${FILEX_DOMAIN}
       FILEX_DB_DRIVER: postgres

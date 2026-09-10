@@ -523,8 +523,7 @@ filemanager/
 ├── web/                            # Vue 3 admin SPA (embedded)
 ├── demo/                           # standalone HTML demos
 ├── docker/
-│   ├── Dockerfile                  # the :latest / :full image, ~510 MB
-│   ├── Dockerfile.slim             # the :slim image, ~43 MB, binary only
+│   ├── Dockerfile                  # both images: --target slim | full
 │   └── Dockerfile.local            # local hot-fix builds from a host dist
 │
 ├── scripts/

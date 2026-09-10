@@ -11,7 +11,7 @@ const AUTH_STATE = path.resolve(
 
 /**
  * The app has NO login screen — it is the signed-in surface, and the admin SPA is where an account signs in
- * (docker-compose.app.yml says the same). So the session is minted here, once, and every spec starts with it.
+ * So the session is minted here, once, and every spec starts with it.
  *
  * ⚠ Through the preview server's own origin, not the backend's. `vite preview` proxies `/api`, so the cookie is
  * set for the host the browser will send it back to; a cookie minted straight off the backend's port would carry
