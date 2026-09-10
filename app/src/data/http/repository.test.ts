@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { setUnauthorizedHandler } from './client';
 import { HttpRepository } from './repository';
 import type { WireFileNode } from './map';
 import type { AssistantReport, SearchHit } from '../types';
@@ -36,7 +37,23 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  setUnauthorizedHandler(null);
+});
+
+/*
+ * The sign-in screen asks which realms exist before anybody is signed in, and filex refuses a visitor. Reported as
+ * a lost session, that 401 raised the "your session has ended" prompt on the form itself — and the person then met
+ * it on the first screen after signing in, with nothing in the network log to explain it.
+ */
+it('does not report the sign-in screen’s own 401 as a lost session', async () => {
+  vi.stubGlobal('fetch', async () => ({ ok: false, status: 401, text: async () => '{"error":"unauthorized"}' }) as Response);
+  const lost = vi.fn();
+  setUnauthorizedHandler(lost);
+  await expect(new HttpRepository().authOptions()).rejects.toMatchObject({ status: 401 });
+  expect(lost).not.toHaveBeenCalled();
+});
 
 const row = (patch: Partial<WireFileNode>): WireFileNode => ({
   id: 1,

@@ -11,6 +11,8 @@ describe('auth store', () => {
     resetMock();
   });
   afterEach(() => vi.restoreAllMocks());
+  // The store says so in the console when it declares a session dead; the assertions below are what read it here.
+  beforeEach(() => vi.spyOn(console, 'warn').mockImplementation(() => {}));
 
   it('asks the server once and remembers the answer', async () => {
     const asked = vi.spyOn(repository, 'session');
@@ -55,8 +57,9 @@ describe('auth store', () => {
    * alive, so the shell asks `/api/auth/me` before saying anything, and says nothing when the answer is a user.
    */
   it('does not cry session over a 401 the server gives a signed-in account', async () => {
-    const asked = vi.spyOn(repository, 'session');
     const auth = useAuthStore();
+    await auth.check();
+    const asked = vi.spyOn(repository, 'session');
     auth.noteUnauthorized();
     await vi.waitFor(() => expect(asked).toHaveBeenCalled());
     expect(auth.expired).toBe(false);
@@ -67,8 +70,9 @@ describe('auth store', () => {
    * about their session — not about each of the eight calls that noticed it.
    */
   it('announces a lost session once, after asking the server', async () => {
-    const asked = vi.spyOn(repository, 'session').mockResolvedValue(null);
     const auth = useAuthStore();
+    await auth.check();
+    const asked = vi.spyOn(repository, 'session').mockResolvedValue(null);
     auth.noteUnauthorized();
     await vi.waitFor(() => expect(auth.expired).toBe(true));
     auth.dismissExpired();
@@ -78,10 +82,31 @@ describe('auth store', () => {
     expect(asked).toHaveBeenCalledTimes(1);
   });
 
+  /*
+   * The one that put the prompt on screen after a perfectly good sign-in: the form's own requests are refused to a
+   * visitor, so anything raised before the session existed is dropped when one does.
+   */
+  it('forgets a sign-out raised before this session', async () => {
+    vi.spyOn(repository, 'session').mockResolvedValue(null);
+    await repository.signOut();
+    const auth = useAuthStore();
+    auth.noteUnauthorized();
+    await vi.waitFor(() => expect(auth.expired).toBe(true));
+
+    vi.restoreAllMocks();
+    await auth.signIn({ identifier: 'demo@filex.local', password: 'demo' });
+    expect(auth.expired).toBe(false);
+    // And the new session may raise it in its turn.
+    vi.spyOn(repository, 'session').mockResolvedValue(null);
+    auth.noteUnauthorized();
+    await vi.waitFor(() => expect(auth.expired).toBe(true));
+  });
+
   /** A burst of failures is one session; the probe is not repeated per failed request. */
   it('asks once for a burst of 401s', async () => {
-    const asked = vi.spyOn(repository, 'session').mockResolvedValue(null);
     const auth = useAuthStore();
+    await auth.check();
+    const asked = vi.spyOn(repository, 'session').mockResolvedValue(null);
     auth.noteUnauthorized();
     auth.noteUnauthorized();
     auth.noteUnauthorized();

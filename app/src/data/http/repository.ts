@@ -701,7 +701,9 @@ export class HttpRepository implements Repository {
    */
   async signOut(): Promise<void> {
     try {
-      await request('/api/auth/logout', { method: 'POST' });
+      // A sign-out of a session the server has already dropped is a 401, and it is the one 401 that must not be
+      // announced: the person is on their way out, and the app is about to leave the page anyway.
+      await request('/api/auth/logout', { method: 'POST', expectUnauthorized: true });
     } catch (error) {
       // A server that could not be told is still a browser that is done with this account: the cookie is cleared
       // by the reload that follows, and refusing to sign out because the network blinked leaves the person
@@ -713,7 +715,9 @@ export class HttpRepository implements Repository {
   }
 
   async authOptions(): Promise<AuthOptions> {
-    const wire = await request<WireAuthOptions>('/api/capabilities');
+    // The sign-in screen asks this BEFORE anybody is signed in, and filex refuses a visitor: its 401 is the state
+    // of the caller, not of a session, and reporting it raised "your session has ended" on the sign-in form.
+    const wire = await request<WireAuthOptions>('/api/capabilities', { expectUnauthorized: true });
     return {
       drivers: wire.auth_drivers ?? [],
       oidcAutoRedirect: wire.oidc_auto_redirect === true,

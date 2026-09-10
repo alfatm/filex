@@ -17,7 +17,9 @@ const auth = useAuthStore();
 </script>
 
 <template>
-  <Modal v-if="auth.expired" :title="t('login.expired.title')" :close-label="t('modal.close')" @close="auth.dismissExpired()">
+  <!-- Above the other dialogs (`z-40`): a preview or the settings modal can be open when the session goes, and
+       this is the one message that must not end up underneath one of them. -->
+  <Modal v-if="auth.expired" class="!z-50" :title="t('login.expired.title')" :close-label="t('modal.close')" @close="auth.dismissExpired()">
     <p class="text-15 text-text-2">{{ t('login.expired.body') }}</p>
     <template #footer>
       <Button variant="outline" @click="auth.dismissExpired()">{{ t('login.expired.later') }}</Button>

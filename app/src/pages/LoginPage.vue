@@ -153,7 +153,7 @@ function startOidc() {
 
           <form v-if="showLocalForm" class="mt-8" @submit.prevent="submit">
             <label class="block text-14 font-semibold text-text-2" for="login-identifier">{{ t('login.identifier') }}</label>
-            <div class="mt-2 flex h-[60px] items-center rounded-lg border border-border bg-bg-muted px-5 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary">
+            <label for="login-identifier" class="mt-2 flex h-[60px] cursor-text items-center rounded-lg border border-border bg-bg-muted px-5 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary">
               <Mail :size="20" class="shrink-0 text-text-3" />
               <input
                 id="login-identifier"
@@ -163,19 +163,23 @@ function startOidc() {
                 required
                 class="ml-4 min-w-0 flex-1 bg-transparent text-16 text-text placeholder:text-text-3 focus:outline-none"
               />
-            </div>
+            </label>
 
             <label class="mt-6 block text-14 font-semibold text-text-2" for="login-password">{{ t('login.password') }}</label>
             <div class="mt-2 flex h-[60px] items-center rounded-lg border border-border bg-bg-muted px-5 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary">
-              <Lock :size="20" class="shrink-0 text-text-3" />
-              <input
-                id="login-password"
-                v-model="password"
-                :type="showPassword ? 'text' : 'password'"
-                autocomplete="current-password"
-                required
-                class="mx-4 min-w-0 flex-1 bg-transparent text-16 text-text placeholder:text-text-3 focus:outline-none"
-              />
+              <!-- The row is the target, not the text: everything but the eye is inside the label. It stops there
+                   because a <button> inside a <label> is a labelable element that is not the label's control. -->
+              <label for="login-password" class="flex h-full min-w-0 flex-1 cursor-text items-center">
+                <Lock :size="20" class="shrink-0 text-text-3" />
+                <input
+                  id="login-password"
+                  v-model="password"
+                  :type="showPassword ? 'text' : 'password'"
+                  autocomplete="current-password"
+                  required
+                  class="mx-4 min-w-0 flex-1 bg-transparent text-16 text-text placeholder:text-text-3 focus:outline-none"
+                />
+              </label>
               <button
                 type="button"
                 class="shrink-0 rounded-sm text-text-3 hover:text-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
@@ -201,7 +205,7 @@ function startOidc() {
 
             <template v-if="showTotp">
               <label class="mt-3 block text-14 font-semibold text-text-2" for="login-totp">{{ t('login.totp') }}</label>
-              <div class="mt-2 flex h-[60px] items-center rounded-lg border border-border bg-bg-muted px-5 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary">
+              <label for="login-totp" class="mt-2 flex h-[60px] cursor-text items-center rounded-lg border border-border bg-bg-muted px-5 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary">
                 <input
                   id="login-totp"
                   v-model="totp"
@@ -211,7 +215,7 @@ function startOidc() {
                   placeholder="123456"
                   class="min-w-0 flex-1 bg-transparent text-16 text-text placeholder:text-text-3 focus:outline-none"
                 />
-              </div>
+              </label>
             </template>
 
             <Checkbox v-model="remember" show-label :label="t('login.remember')" class="mt-6 !text-16" />

@@ -46,6 +46,9 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       user.value = await repository.signIn(credentials);
       checked.value = true;
+      // A new session may be lost like any other, whatever was raised about the previous one.
+      announced = false;
+      expired.value = false;
     } finally {
       pending.value = false;
     }
@@ -79,8 +82,10 @@ export const useAuthStore = defineStore('auth', () => {
    * only endpoint whose 401 means what it says, so that is what decides, and it is asked once: a screen makes
    * several requests and a lost session fails all of them, but there is one session to ask about.
    *
-   * Nothing is signed out here on purpose. Whatever the person was typing is still on screen and still theirs to
-   * copy; `reauth` is what leaves the page, and only when they ask for it.
+   * The page is not left on its own: whatever the person was typing is still on screen and still theirs to copy,
+   * and `reauth` goes to the form only when they ask for it. What the answer does change is what this store
+   * believes — so the router's guard, on the NEXT navigation, sends them to the form rather than to a screen the
+   * server would answer 401 to.
    */
   function noteUnauthorized() {
     if (announced || probing) return;
@@ -102,6 +107,9 @@ export const useAuthStore = defineStore('auth', () => {
     if (who) return;
     announced = true;
     expired.value = true;
+    // One line in the console for the same reason the modal exists: from the outside a dead session looks like a
+    // broken server, and this is what says which it was when somebody sends a screenshot of the network tab.
+    console.warn('session ended: /api/auth/me answered 401');
   }
 
   /** Dismissed. The prompt does not come back this session — `announced` stays true. */
