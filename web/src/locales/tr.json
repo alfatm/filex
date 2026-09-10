@@ -656,6 +656,8 @@
     "loading": "Yükleniyor…",
     "noStorage": "Henüz depo eklenmedi.",
     "noAccess": "Seninle henüz hiçbir şey paylaşılmadı. Erişim için sunucuyu yönetene sor.",
+    "loadFailed": "Depoların yüklenemedi. Bağlantını kontrol edip yeniden dene.",
+    "retry": "Yeniden dene",
     "addStorage": "Depo ekle",
     "gotoAdmin": "Admin paneli",
     "root": "Kök",

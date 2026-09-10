@@ -1,4 +1,4 @@
-import { ACCOUNT_DISABLED, DUPLICATE_NAME, INVALID_CREDENTIALS, OPERATION_PENDING, SIGN_IN_LIMITED, TOTP_REQUIRED, WRONG_PASSWORD, type Repository } from '../repository';
+import { ACCOUNT_DISABLED, DUPLICATE_NAME, INVALID_CREDENTIALS, NOT_FOUND, OPERATION_PENDING, SIGN_IN_LIMITED, TOTP_REQUIRED, WRONG_PASSWORD, type Repository } from '../repository';
 import { matchesFilter, MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
 import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantContext, type AssistantConversation, type AssistantMode, type AssistantReport, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type AuthOptions, type Branding, type Capabilities, type ListingFilter, type Node, type Person, type Credentials, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
@@ -881,7 +881,16 @@ export class HttpRepository implements Repository {
    */
   async resolvePath(storageId: string, path: string): Promise<Node> {
     const id = joinPath(storageId, path);
-    const { files } = await this.index(id);
+    let files: WireFileNode[];
+    try {
+      ({ files } = await this.index(id));
+    } catch (error) {
+      // Only the server SAYING there is nothing here becomes `NOT_FOUND`. Everything else — a 500, a proxy, a
+      // dropped connection — is a failure to ask, and the page has to say that instead of telling the person
+      // their folder has been deleted.
+      if (error instanceof HttpError && (error.status === 404 || error.status === 403)) throw new Error(NOT_FOUND);
+      throw error;
+    }
     this.project(files);
     return this.folderStub(id, files.length);
   }

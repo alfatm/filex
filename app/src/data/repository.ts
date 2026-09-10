@@ -41,6 +41,18 @@ export const WRONG_PASSWORD = 'wrongPassword';
  */
 export const OPERATION_PENDING = 'operationPending';
 
+/**
+ * `resolvePath` rejects with an Error carrying this when the address names nothing this account can open.
+ *
+ * It exists so the caller can tell a folder that is GONE from a server that did not answer. Without it every
+ * failure to resolve an address read as "this folder was renamed, moved or deleted" — a sentence about the
+ * user's files that a dropped connection or a 500 gives nobody the right to say.
+ *
+ * A refusal (403) is reported the same way as a miss (404), on purpose: answering differently would confirm that
+ * a folder the caller may not see exists.
+ */
+export const NOT_FOUND = 'notFound';
+
 /** filex refuses anything shorter, so the form says so before a request goes out. */
 export const MIN_PASSWORD_LENGTH = 8;
 
@@ -64,7 +76,12 @@ export interface Repository {
   getStorage(id: string): Promise<Storage>;
   /** `filter` is applied by the repository, not by the caller: the HTTP one sends it as query params. */
   listFolder(folderId: string, filter?: ListingFilter): Promise<Node[]>;
-  /** Folder at a slash-separated path relative to the storage root; "" resolves to the root. */
+  /**
+   * Folder at a slash-separated path relative to the storage root; "" resolves to the root.
+   *
+   * Rejects with `NOT_FOUND` when the address names nothing; every other rejection is a failure to reach the
+   * server and must not be reported as a missing folder.
+   */
   resolvePath(storageId: string, path: string): Promise<Node>;
   getNode(id: string): Promise<Node>;
   /** Root-to-node chain, root first, excluding the node itself. */

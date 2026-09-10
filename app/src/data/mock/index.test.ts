@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { DUPLICATE_NAME } from '../repository';
+import { DUPLICATE_NAME, NOT_FOUND } from '../repository';
 import type { ListingFilter, SearchQuery } from '../types';
 import { mockRepository as repo, resetMock } from './index';
 import { matchesFilter } from './search';
@@ -94,7 +94,7 @@ describe('mock repository mutations', () => {
     expect(names(trash)).toEqual(['Archive', 'data.csv']);
     expect(trash.every((n) => n.deletedAt && n.originalPath === '/demo')).toBe(true);
     expect((await repo.getNode('demo')).itemCount).toBe(15);
-    await expect(repo.resolvePath('demo', 'Archive')).rejects.toThrow('path not found');
+    await expect(repo.resolvePath('demo', 'Archive')).rejects.toThrow(NOT_FOUND);
 
     await repo.restore(['archive']);
     expect(names(await repo.listFolder('demo'))).toContain('Archive');
@@ -205,7 +205,7 @@ describe('mock repository mutations', () => {
     const hits = (await repo.search({ ...emptyQuery, text: 'roadmap' })).hits;
     expect(hits.length).toBeGreaterThan(0);
     expect(hits.some((h) => h.node.name === 'Roadmap.md' || h.folderPath === 'Shared')).toBe(false);
-    await expect(repo.resolvePath('demo', 'Shared/Brand assets')).rejects.toThrow('path not found');
+    await expect(repo.resolvePath('demo', 'Shared/Brand assets')).rejects.toThrow(NOT_FOUND);
 
     await repo.restore(['shared']);
     expect(names(await repo.listShared())).toHaveLength(3);

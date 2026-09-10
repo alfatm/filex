@@ -1124,6 +1124,10 @@ async function loadNavView(kind: Exclude<NavView, ''>) {
   trashMode.value = false;
   e2eRoot.value = '';
   selection.clear();
+  // What the previous screen failed at is not this view's state, and a leftover one paints over it: both live
+  // ahead of every empty state in the body's chain, so a stale not-found would hide this view entirely.
+  notFoundPath.value = '';
+  loadError.value = '';
   try {
     files.value = await fetchNavRows(kind);
     dirname.value = NAV_VIEW_DIRNAME[kind];
@@ -1134,9 +1138,13 @@ async function loadNavView(kind: Exclude<NavView, ''>) {
     adapter.value = '';
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // The retryable error state, exactly as a folder listing gets. Clearing the rows and leaving it at a toast
+    // put "No recent files" / "No starred items" on screen — a statement about the ACCOUNT, made because the
+    // request failed. `loadErrorPath` is the view's own sentinel, so Retry re-enters this loader.
     files.value = [];
+    loadError.value = msg;
+    loadErrorPath = NAV_VIEW_DIRNAME[kind];
     emit('error', { message: msg, context: { op: `nav-view:${kind}` } });
-    flashToast(msg);
   } finally {
     loading.value = false;
   }
@@ -1164,6 +1172,8 @@ async function loadTagView(tag: string) {
   trashMode.value = false;
   e2eRoot.value = '';
   selection.clear();
+  notFoundPath.value = '';
+  loadError.value = '';
   try {
     const rows = await fetchTaggedRows(name, {
       apiBase: props.config.apiBase ?? '',
@@ -1178,9 +1188,11 @@ async function loadTagView(tag: string) {
     adapter.value = '';
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // Same rule as the other views: "Nothing tagged <name>" is an answer, and a failed request is not it.
     files.value = [];
+    loadError.value = msg;
+    loadErrorPath = makeTagSegment(name);
     emit('error', { message: msg, context: { op: `nav-view:tag:${name}` } });
-    flashToast(msg);
   } finally {
     loading.value = false;
   }
@@ -1603,6 +1615,8 @@ async function loadTrash() {
   trashMode.value = true;
   e2eRoot.value = ''; /* wiring:e2 — the trash view is outside the encrypted context */
   selection.clear();
+  notFoundPath.value = '';
+  loadError.value = '';
   try {
     const { entries } = await api.listTrash();
     files.value = entries.map(
@@ -1624,8 +1638,12 @@ async function loadTrash() {
     currentPath.value = '.trash';
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // The rows were the FOLDER's, and this view is now the trash: leaving them was the worse of the two lies,
+    // and clearing them alone would have said "Trash is empty". Say the listing failed, and offer Retry.
+    files.value = [];
+    loadError.value = msg;
+    loadErrorPath = '.trash';
     emit('error', { message: msg, context: { op: 'trash-list' } });
-    flashToast(msg);
   } finally {
     loading.value = false;
   }

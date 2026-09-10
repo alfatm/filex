@@ -1,5 +1,5 @@
 import { segments } from '@/lib/path';
-import { DUPLICATE_NAME, INVALID_CREDENTIALS, MIN_PASSWORD_LENGTH, WRONG_PASSWORD, type Repository } from '../repository';
+import { DUPLICATE_NAME, INVALID_CREDENTIALS, MIN_PASSWORD_LENGTH, NOT_FOUND, WRONG_PASSWORD, type Repository } from '../repository';
 import { noBranding, type AssistantMessage, type Credentials, type AssistantSession, type ListingFilter, type Node, type NotifyPrefs, type Session, type User } from '../types';
 import { fileTypeOf, filterPeople, indexedOnly, live, nodes, storages, TYPE_THUMBNAILS, user } from './dataset';
 import * as history from './history';
@@ -187,7 +187,7 @@ export const mockRepository: Repository = {
     let current = byId(storage.rootId);
     for (const segment of segments(path)) {
       const child = nodes.find((n) => n.parentId === current.id && n.kind === 'folder' && n.name === segment && live(n));
-      if (!child) throw new Error(`path not found: ${path}`);
+      if (!child) throw new Error(NOT_FOUND);
       current = child;
     }
     return { ...current };

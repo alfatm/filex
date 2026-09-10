@@ -3,8 +3,10 @@ import { computed, ref, watch } from 'vue';
 import { useSelection } from '@/composables/useSelection';
 import { emptyFilter, isFiltered } from '@/features/files/filters';
 import { repository } from '@/data';
+import { NOT_FOUND } from '@/data/repository';
 import type { ListingFilter, Node, Person, Storage, UploadInput, UploadOptions, User } from '@/data/types';
 import { i18n } from '@/i18n';
+import { errorMessage } from '@/lib/errors';
 import { subjectMessage } from '@/i18n/subject';
 import { useToastStore } from './toast';
 import { useUndoStore } from '@/features/files/undoStore';
@@ -242,14 +244,13 @@ export const useFilesStore = defineStore('files', () => {
     // where it was rather than moved to a name that does not resolve, so the sidebar keeps saying where you are.
     lastAddress = { drive: driveId, path: folderPath };
     if (driveId && !storages.value.some((s) => s.id === driveId)) {
-      showNotFound();
+      showFailure('notFound');
       return;
     }
     storageId.value = driveId;
     // No drives at all means the list never arrived; that is the server's failure, not a wrong address.
     if (!storage.value) {
-      showNotFound();
-      error.value = 'load';
+      showFailure('load');
       return;
     }
     // Resolving the address is a request of its own, and it is made BEFORE any load exists to guard its result.
@@ -259,16 +260,23 @@ export const useFilesStore = defineStore('files', () => {
     let node: Node;
     try {
       node = await repository.resolvePath(storage.value.id, folderPath);
-    } catch {
-      if (seq === loadSeq) showNotFound();
+    } catch (e) {
+      // A folder that is GONE and a server that did not answer are two different sentences, and only the
+      // repository knows which it was (`NOT_FOUND`). Saying "renamed, moved or deleted" for a 500 or a dropped
+      // connection told people their files were gone every time the network blinked.
+      if (seq === loadSeq) showFailure(errorMessage(e) === NOT_FOUND ? 'notFound' : 'load');
       return;
     }
     if (seq !== loadSeq) return;
     await open(node.id);
   }
 
-  /** A URL naming something that is gone: say so and offer a retry, rather than leaving a blank page behind. */
-  function showNotFound() {
+  /**
+   * The address led nowhere: clear the listing and say WHICH kind of nowhere, rather than leaving a blank page
+   * behind — or, worse, the empty-folder state, which is a claim about the folder's contents that a failed
+   * request gives nobody the right to make.
+   */
+  function showFailure(kind: 'notFound' | 'load') {
     loadSeq++;
     selection.clear();
     items.value = [];
@@ -276,7 +284,7 @@ export const useFilesStore = defineStore('files', () => {
     path.value = [];
     listing.value = null;
     loading.value = false;
-    error.value = 'notFound';
+    error.value = kind;
   }
 
   async function openListing(kind: ListingKind) {

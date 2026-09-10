@@ -84,6 +84,12 @@ const roots = ref<RootEntry[]>([]);
 // True until the first storage-discovery pass finishes, so we show a loading
 // screen instead of flashing the "no storage" empty state during startup.
 const loading = ref(true);
+// Why discovery produced nothing. '' = it succeeded (and the account really has
+// no storage). An empty list and a failed request look identical from `roots`,
+// and rendering the first for the second told people "nothing has been shared
+// with you" because a request had failed — a statement about their access made
+// out of a network error.
+const discoveryError = ref('');
 
 async function fetchVisibleStorages(): Promise<RootEntry[]> {
   if (storages.items.length) {
@@ -94,22 +100,31 @@ async function fetchVisibleStorages(): Promise<RootEntry[]> {
       readOnly: s.read_only,
     }));
   }
+  const headers: Record<string, string> = {};
+  const bearer = readBearerToken();
+  const csrf = readCsrfCookie();
+  if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
+  else if (csrf) headers['X-CSRF-TOKEN'] = csrf;
+  // Throws on purpose: the caller turns it into the error state. Swallowing it
+  // into `[]` is what made a 500 read as "you have no storages".
+  const res = await fetch('/api/files/manager?action=index&path=', {
+    headers,
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const body = await res.json();
+  const names: string[] = Array.isArray(body?.storages) ? body.storages : [];
+  return names.map((n) => ({ name: n, label: n }));
+}
+
+/** The one place `roots` is filled, so the failure can never be dropped on the way. */
+async function discoverStorages() {
   try {
-    const headers: Record<string, string> = {};
-    const bearer = readBearerToken();
-    const csrf = readCsrfCookie();
-    if (bearer) headers['Authorization'] = `Bearer ${bearer}`;
-    else if (csrf) headers['X-CSRF-TOKEN'] = csrf;
-    const res = await fetch('/api/files/manager?action=index&path=', {
-      headers,
-      credentials: 'include',
-    });
-    if (!res.ok) return [];
-    const body = await res.json();
-    const names: string[] = Array.isArray(body?.storages) ? body.storages : [];
-    return names.map((n) => ({ name: n, label: n }));
-  } catch {
-    return [];
+    roots.value = await fetchVisibleStorages();
+    discoveryError.value = '';
+  } catch (err) {
+    roots.value = [];
+    discoveryError.value = err instanceof Error ? err.message : String(err);
   }
 }
 
@@ -205,7 +220,7 @@ const connectConfig = computed<ExplorerConfig>(() => ({
 async function refresh() {
   loading.value = true;
   try {
-    roots.value = await fetchVisibleStorages();
+    await discoverStorages();
     remountKey.value += 1;
   } finally {
     loading.value = false;
@@ -227,7 +242,7 @@ onMounted(async () => {
     // Admin store fetch is best-effort (403s for non-admins) — roots then fall
     // back to manager-root discovery inside fetchVisibleStorages().
     await storages.fetch().catch(() => {});
-    roots.value = await fetchVisibleStorages();
+    await discoverStorages();
   } finally {
     loading.value = false;
   }
@@ -341,6 +356,18 @@ onMounted(async () => {
       >
         <span class="fx-explore-spinner" aria-hidden="true"></span>
         <p class="text-sm">{{ t('explore.loading') }}</p>
+      </div>
+
+      <!-- Discovery failed. Neither "no storages configured" nor "nothing has
+           been shared with you" is knowable from here, so the screen says the
+           one thing that is true and offers the way out. -->
+      <div
+        v-else-if="discoveryError"
+        class="flex flex-col items-center justify-center gap-3 mt-16 text-sm text-zinc-500"
+        data-testid="explore-load-failed"
+      >
+        <p>{{ t('explore.loadFailed') }}</p>
+        <Button size="sm" variant="primary" @click="refresh()">{{ t('explore.retry') }}</Button>
       </div>
 
       <div

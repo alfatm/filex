@@ -656,6 +656,8 @@
     "loading": "Loading…",
     "noStorage": "No storages configured yet.",
     "noAccess": "Nothing has been shared with you yet. Ask whoever runs this server for access.",
+    "loadFailed": "Could not load your storages. Check your connection and try again.",
+    "retry": "Try again",
     "addStorage": "Add storage",
     "gotoAdmin": "Admin panel",
     "root": "Root",

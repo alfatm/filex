@@ -412,6 +412,60 @@ func newBlobFixture(t *testing.T, objects map[string]storage.Object) *handlers.M
 	return handlers.NewManager(store, resolver)
 }
 
+// offlineDriver is a storage nobody can reach: List fails with something that
+// is NOT storage.ErrNotFound. That difference is the whole point — a driver
+// saying "no such path" and a driver saying nothing at all are two facts, and
+// only the first one may be answered with 404 or an empty listing.
+type offlineDriver struct{ blobishDriver }
+
+func (d *offlineDriver) List(context.Context, string) ([]storage.Object, error) {
+	return nil, fmt.Errorf("dial tcp: connection refused")
+}
+
+func newOfflineFixture(t *testing.T) *handlers.Manager {
+	t.Helper()
+	_, store := testutil.NewTestDB(t)
+	st, err := store.CreateStorage(context.Background(), &model.Storage{
+		Name:       "blob",
+		Driver:     "s3",
+		MountPath:  "/blob",
+		Enabled:    true,
+		ConfigJSON: json.RawMessage(`{}`),
+	})
+	require.NoError(t, err)
+	drv := &offlineDriver{}
+	resolver := func(id int64) (storage.Driver, error) {
+		if id == st.ID {
+			return drv, nil
+		}
+		return nil, fmt.Errorf("unknown id %d", id)
+	}
+	return handlers.NewManager(store, resolver)
+}
+
+// An unreachable storage must not be dressed up as an answer about the user's
+// files. Both of these used to lie: the root came back 200 with `files: []`
+// (the client drew "this folder is empty") and the subfolder came back 404
+// ("renamed, moved or deleted").
+func TestManagerIndex_DriverUnreachable_IsNotAnEmptyFolder(t *testing.T) {
+	mh := newOfflineFixture(t)
+
+	// Storage root, never synced: the cache is empty and the driver is the
+	// only one who knows what is in there.
+	rec := callList(t, mh, url.Values{
+		"action": []string{"index"},
+		"path":   []string{"blob://"},
+	})
+	require.Equal(t, http.StatusBadGateway, rec.Code, rec.Body.String())
+
+	// Cache miss on a subfolder: same fact, and the 404 was the same guess.
+	rec = callList(t, mh, url.Values{
+		"action": []string{"index"},
+		"path":   []string{"blob://belgeler"},
+	})
+	require.Equal(t, http.StatusBadGateway, rec.Code, rec.Body.String())
+}
+
 func TestManagerIndex_PhantomPrefix_404OnBlobStore(t *testing.T) {
 	mh := newBlobFixture(t, map[string]storage.Object{
 		"real/file.txt": {Path: "real/file.txt", Name: "file.txt", Kind: storage.KindFile, Size: 3},

@@ -602,7 +602,15 @@ func (h *Manager) vfIndex(w http.ResponseWriter, r *http.Request, s *model.Stora
 	if err != nil {
 		// DB cache miss — try the driver. If the dir really doesn't
 		// exist there either, surface the original 404.
-		if h.vfIndexFromDriver(w, r, s, rel, storageNames, dirsOnly, set) {
+		handled, derr := h.vfIndexFromDriver(w, r, s, rel, storageNames, dirsOnly, set)
+		if handled {
+			return
+		}
+		// …but a driver we could not REACH says nothing about whether the
+		// dir is there, and 404 is what the client renders as "this folder
+		// was renamed, moved or deleted". Report the outage as an outage.
+		if derr != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": derr.Error()})
 			return
 		}
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
@@ -621,7 +629,16 @@ func (h *Manager) vfIndex(w http.ResponseWriter, r *http.Request, s *model.Stora
 	// (truly-empty dirs return [] without firing an extra driver
 	// list call).
 	if len(nodes) == 0 && s.LastSyncAt == nil {
-		if h.vfIndexFromDriver(w, r, s, rel, storageNames, dirsOnly, set) {
+		handled, derr := h.vfIndexFromDriver(w, r, s, rel, storageNames, dirsOnly, set)
+		if handled {
+			return
+		}
+		// The cache is empty and the driver is the only one who knows what is
+		// really there. Falling through on a driver failure answered 200 with
+		// an empty listing — the client then drew "this folder is empty",
+		// which is a claim about the user's files made out of an outage.
+		if derr != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": derr.Error()})
 			return
 		}
 	}
@@ -693,16 +710,21 @@ func permString(set *acl.Set, rel string) string {
 // writes the same vuefinder response shape vfIndex does. Used as a
 // fallback when DB cache is missing the dir (post-mutation, pre-sync).
 //
-// Returns true iff a response was written. False means the driver also
-// doesn't have the dir (or no resolver) — caller should write its own
-// 404 with the cache-side error message.
-func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *model.Storage, rel string, storageNames []string, dirsOnly bool, set *acl.Set) bool {
+// Returns (true, nil) iff a response was written. (false, nil) means the
+// driver also doesn't have the dir (or there is no resolver wired) — caller
+// should write its own 404 with the cache-side error message.
+//
+// (false, err) is the third answer, and it exists because the first two used
+// to be one: a driver that could not be REACHED was reported as a dir that is
+// not there. "Storage unreachable" and "no such folder" are different facts
+// about the user's files, and only the second one is ours to state.
+func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *model.Storage, rel string, storageNames []string, dirsOnly bool, set *acl.Set) (bool, error) {
 	if h.StorageResolver == nil {
-		return false
+		return false, nil
 	}
 	drv, err := h.StorageResolver(s.ID)
 	if err != nil {
-		return false
+		return false, err
 	}
 	clean := strings.Trim(rel, "/")
 	// Use List (not Stat) to verify the dir — many drivers (S3, GCS,
@@ -712,7 +734,15 @@ func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *m
 	// "this dir is browsable" signal across every driver we ship.
 	objs, err := drv.List(r.Context(), clean)
 	if err != nil {
-		return false
+		// ErrNotFound is the drivers' contract for "this path is not there",
+		// and it is the ONLY failure that lets the caller answer 404. Anything
+		// else (an unreachable bucket, a dead SFTP session, a permission the
+		// process lost) leaves the question unanswered, and guessing "missing"
+		// is how an outage came to read as a deleted folder.
+		if errors.Is(err, storage.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
 	}
 	// …except that blob stores also "list" a NONEXISTENT prefix as an
 	// empty success, which used to render phantom folders as browsable
@@ -722,15 +752,17 @@ func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *m
 	// filex carry a .keepdir marker (len(objs) > 0), and the storage
 	// root ("") is always browsable.
 	if len(objs) == 0 && clean != "" {
+		// A Stat that fails here is the "phantom prefix" answer, not an
+		// outage: the List above already proved the driver is reachable.
 		st, serr := drv.Stat(r.Context(), clean)
 		if serr != nil || st.Kind != storage.KindDirectory {
-			return false
+			return false, nil
 		}
 	}
 	files := projectDriverObjects(s.Name, clean, objs, dirsOnly, set)
 	if dirsOnly {
 		writeJSON(w, http.StatusOK, map[string]any{"folders": files})
-		return true
+		return true, nil
 	}
 	resp := map[string]any{
 		"adapter":   s.Name,
@@ -760,7 +792,7 @@ func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *m
 	}
 	/* /wiring:e2 */
 	writeJSON(w, http.StatusOK, resp)
-	return true
+	return true, nil
 }
 
 // projectDriverObjects shapes storage.Object entries into the same

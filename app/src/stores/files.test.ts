@@ -9,7 +9,7 @@ import { useToastStore } from './toast';
 import { useViewStore } from './view';
 import { useUndoStore } from '@/features/files/undoStore';
 import { useOperationsStore } from '@/features/files/operationsStore';
-import { OPERATION_PENDING } from '@/data/repository';
+import { NOT_FOUND, OPERATION_PENDING } from '@/data/repository';
 
 async function setup() {
   resetMock();
@@ -41,6 +41,29 @@ describe('an unreachable server', () => {
     await files.retry();
     expect(files.error).toBeNull();
     expect(files.storages.length).toBeGreaterThan(0);
+  });
+
+  // A folder that could not be REACHED used to be reported as one that had been renamed, moved or deleted —
+  // a sentence about the person's files that a 500 or a dropped connection gives nobody the right to say.
+  it('says the listing failed, not that the folder is gone, when resolving the address throws', async () => {
+    const files = await setup();
+    const spy = vi.spyOn(repository, 'resolvePath').mockRejectedValue(new Error('500: boom'));
+    await files.openPath(null, 'Design');
+    spy.mockRestore();
+
+    expect(files.error).toBe('load');
+    expect(files.ordered).toEqual([]);
+    expect(files.loading).toBe(false);
+  });
+
+  // …and the other half of the same rule: an address that really names nothing still says so.
+  it('keeps saying not found when the repository reports the address as missing', async () => {
+    const files = await setup();
+    const spy = vi.spyOn(repository, 'resolvePath').mockRejectedValue(new Error(NOT_FOUND));
+    await files.openPath(null, 'Nope');
+    spy.mockRestore();
+
+    expect(files.error).toBe('notFound');
   });
 });
 
