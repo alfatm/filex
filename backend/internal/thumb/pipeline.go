@@ -47,7 +47,21 @@ type Pipeline struct {
 	body *filebody.Resolver
 
 	caps Capabilities
+	// disabled is FILEX_THUMBS_ENABLED=false, and it is stored NEGATED on
+	// purpose: the zero value has to mean "generate", or a caller that
+	// constructs a pipeline without knowing about the switch (an embedder, a
+	// test) would silently produce no thumbnails at all.
+	disabled bool
 }
+
+// Disable turns generation off for the whole pipeline — the master switch
+// behind FILEX_THUMBS_ENABLED, applied once at boot. Serving, the cache
+// sweeper and the admin reset are unaffected: this is about not RENDERING.
+func (p *Pipeline) Disable() { p.disabled = true }
+
+// Enabled reports whether generation is on. Used by the surfaces that would
+// otherwise promise work the pipeline will not do (the admin reset endpoints).
+func (p *Pipeline) Enabled() bool { return p != nil && !p.disabled }
 
 // AttachBody wires the byte-source resolver, so a file that is still being
 // transferred gets its thumbnail from the staged bytes instead of failing
@@ -104,6 +118,13 @@ func (p *Pipeline) GenerateThumb(ctx context.Context, node *model.Node) error {
 	if node == nil || node.Type != model.NodeTypeFile {
 		return ErrSkipped
 	}
+	// ⚠ No row is written when generation is off. A "skipped" row here would
+	// outlive the switch: turning thumbnails back on would need a backfill
+	// with --retry-skipped before a single tile appeared. With no row at all,
+	// the next backfill (or the next upload) simply generates.
+	if p.disabled {
+		return ErrSkipped
+	}
 	drv, ok := p.storages[node.StorageID]
 	if !ok {
 		return errors.New("thumb: no driver attached for storage")
@@ -124,9 +145,23 @@ func (p *Pipeline) GenerateThumb(ctx context.Context, node *model.Node) error {
 	t := &model.Thumbnail{NodeID: node.ID, State: "pending"}
 	_ = p.store.UpsertThumbnail(ctx, t)
 
+	// ⚠⚠ The EXTENSION wins over the catalogued MIME for every kind this
+	// dispatcher routes on, not just for the rows that have no MIME at all.
+	//
+	// The catalogue's MIME is sniffed from the first 512 bytes, and an SVG has
+	// no magic number — so every .svg on a local storage is stored as
+	// text/plain, matched NEITHER svg branch below, and fell through to the
+	// generic placeholder card: a green rectangle with "SVG" on it, in
+	// state="ready", on an install with librsvg sitting right there. Sniffing
+	// is now repaired at the source too (storage.RefineMime), but a row
+	// catalogued before that stays wrong until its file changes, and the
+	// thumbnail must not depend on a re-sync to be right.
+	//
+	// The stored MIME still decides for everything mimeFromName does not know
+	// — an image/* that S3 metadata supplied for an extensionless object, say.
 	mime := strings.ToLower(node.Mime)
-	if mime == "" {
-		mime = mimeFromName(node.Name)
+	if byExt := mimeFromName(node.Name); byExt != "" {
+		mime = byExt
 	}
 	var err error
 	switch {
@@ -152,11 +187,35 @@ func (p *Pipeline) GenerateThumb(ctx context.Context, node *model.Node) error {
 		err = p.generatePDF(ctx, node, drv)
 	case isOfficeMime(mime) && p.caps.Office:
 		err = p.generateOffice(ctx, node, drv)
+	// ⚠⚠ A kind filex CAN render, whose tool is not installed, skips — it does
+	// NOT fall through to the placeholder card below. The card was worse than
+	// nothing twice over: every client already draws its own per-type artwork
+	// (better art, and it knows the viewport), and the card is written as
+	// state="ready", the one state a backfill never re-runs. So an install
+	// that ran once without ffmpeg kept a green rectangle where a video frame
+	// belongs FOREVER, including after moving to the full image. Skipped rows
+	// are the recoverable state: `filex thumb backfill --retry-skipped`.
+	case strings.HasPrefix(mime, "video/"):
+		_ = p.store.SetThumbnailState(ctx, node.ID, "skipped", "ffmpeg not in PATH")
+		return ErrSkipped
+	case strings.HasPrefix(mime, "audio/"):
+		_ = p.store.SetThumbnailState(ctx, node.ID, "skipped", "ffmpeg not in PATH")
+		return ErrSkipped
+	case mime == "application/pdf":
+		_ = p.store.SetThumbnailState(ctx, node.ID, "skipped", "no PDF renderer (gs / pdftoppm) in PATH")
+		return ErrSkipped
+	case isOfficeMime(mime):
+		_ = p.store.SetThumbnailState(ctx, node.ID, "skipped", "libreoffice not in PATH")
+		return ErrSkipped
 	default:
-		// Everything else (3D models, archives, code, markdown, raw
-		// docs, etc) gets a deterministic placeholder card so grid
-		// views still show *something* legible. Cheap to render —
-		// pure Go image stdlib, no external binary.
+		// Kinds filex has NO generator for (3D models, archives, code,
+		// markdown, raw docs, …) get a deterministic placeholder card so a
+		// grid with no artwork of its own still shows something legible.
+		// Cheap — pure Go image stdlib, no external binary.
+		//
+		// Reached only when no generator exists for the type: a missing TOOL
+		// skips above instead, so a card can no longer stand in for a preview
+		// that this install is one `apk add` away from rendering properly.
 		err = p.generateGeneric(ctx, node)
 	}
 	if err != nil {

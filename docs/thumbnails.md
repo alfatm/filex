@@ -17,6 +17,7 @@ kind degrades gracefully instead of erroring.
 - [The Docker image & bundled tools](#the-docker-image--bundled-tools)
 - [Serving](#serving)
 - [Backfill — catching up existing files](#backfill--catching-up-existing-files)
+- [Resetting thumbnails](#resetting-thumbnails)
 - [What happens if it isn't configured / a tool is missing](#what-happens-if-it-isnt-configured--a-tool-is-missing)
 - [Failure modes & troubleshooting](#failure-modes--troubleshooting)
 - [See also](#see-also)
@@ -25,10 +26,20 @@ kind degrades gracefully instead of erroring.
 
 ## How it works
 
-The pipeline (`backend/internal/thumb/`) is a **dispatcher**: it inspects each
-file node's MIME type — falling back to the file extension when the MIME is
-empty, which is the common case for files discovered by a storage sync — and
-routes it to exactly one generator.
+The pipeline (`backend/internal/thumb/`) is a **dispatcher**: it decides a
+file's kind and routes it to exactly one generator. The **file extension wins**
+whenever it names a kind the dispatcher knows; the catalogued MIME decides only
+for the rest.
+
+> ⚠ That order matters more than it looks. The catalogued MIME is sniffed from
+> the first 512 bytes, and an **SVG has no magic number** — so every `.svg` on a
+> local storage is stored as `text/plain`, which used to match neither SVG
+> branch and land the file on the generic placeholder card, on installs with
+> librsvg present. No reset could repair it: regeneration read the same wrong
+> MIME. Sniffing is repaired at the source too (`storage.RefineMime`), but a row
+> catalogued before that stays wrong until its file changes, so the thumbnail
+> does not depend on a re-sync to be right. Legacy `.doc` / `.xls` / `.ppt`,
+> which sniff as an OLE blob, reach LibreOffice for the same reason.
 
 Every generator writes a **JPEG** to the cache directory as
 `<cache_dir>/<nodeID>.jpg` (regardless of source kind, the cache file is always
@@ -89,7 +100,7 @@ Notes:
 
 | Setting | Default | Where | Meaning |
 |---|---|---|---|
-| `FILEX_THUMBS_ENABLED` | `true` | env | Master switch. Accepts `1` or `true` (case‑insensitive) as **on**; any other value is off. |
+| `FILEX_THUMBS_ENABLED` | `true` | env | Master switch. Accepts `1` or `true` (case‑insensitive) as **on**; any other value is off. **Off** means: nothing is rendered (no row is written either, so turning it back on needs no `--retry-skipped`), `/api/capabilities` reports every `thumbs.*` kind `false`, and the admin reset endpoints answer **503**. Read at boot — changing it takes a restart. |
 | `FILEX_THUMB_BACKFILL_ON_BOOT` | *(unset)* | env | Set `once` (or `true` / `1`) to run one background backfill on startup. See [Backfill](#backfill--catching-up-existing-files). |
 | `thumbs.cache_dir` | `<data_dir>/thumbs` | **config.yaml only** | Directory the cached `<id>.jpg` files live in. No env override. |
 | `thumbs.formats` | `[image, video, pdf, office]` | **config.yaml only** | Declares the kind list. No env override. |
@@ -160,11 +171,11 @@ openjdk17-jre   → LibreOffice's conversion pipeline
 fonts (noto/liberation/dejavu)  → so office/PDF text isn't rendered as boxes
 ```
 
-> ⚠ The stock `full` image does **not** ship `rsvg-convert` (librsvg), so **SVG
-> thumbnails are `skipped`** on it. If you need SVG previews, add librsvg to the
-> image (`apk add rsvg-convert`) and rebuild. Whatever image you run, the
-> definitive check for what's actually present is the
-> [capabilities probe](#serving) (`thumbs.svg`, `thumbs.video`, …).
+> The stock `full` image ships `rsvg-convert` (librsvg) too, so SVG thumbnails
+> work on it. Whatever image you run, the definitive check for what's actually
+> present is the [capabilities probe](#serving) (`thumbs.svg`, `thumbs.video`, …)
+> — a kind whose tool is missing reports `false` there and lands its files in
+> `skipped`, never in a placeholder.
 
 If you build your own leaner image, drop tools from the install list — the
 capability probe will report `video=false` / `pdf=false` / etc. and the pipeline
@@ -180,8 +191,15 @@ GET /api/files/thumb/{id}
 
 - Returns **404** unless the node's thumbnail state is **`ready`** and the cached
   JPEG exists on disk.
-- On success: `Content-Type: image/jpeg` and `Cache-Control: private, max-age=86400`
-  (cache for **1 day**).
+- On success: `Content-Type: image/jpeg`, an `ETag` derived from the cached file,
+  and `Cache-Control: private, no-cache` — *store it, but ask first*. A repeat
+  request carrying `If-None-Match` gets a bodiless **304**, so the steady state
+  costs no bytes; a **regenerated** thumbnail is visible immediately.
+
+  > ⚠ This used to be `private, max-age=86400` under a URL that is the node id
+  > and nothing else, which made every regeneration invisible for a day: an admin
+  > who reset the cache kept seeing the old picture and concluded the reset had
+  > not worked.
 - **Auth‑light.** The endpoint accepts either a normal authenticated **session**
   (the SPA's grid uses this) **or** an optional **signed URL** — `?sig=<hex hmac>`,
   an HMAC‑SHA256 of the id under the daily‑rotated `thumb_signing_key` setting.
@@ -262,14 +280,59 @@ default; most operators prefer to trigger backfills explicitly.
 
 ---
 
+## Resetting thumbnails
+
+A backfill **never re-runs a `ready` row**, and a placeholder card is `ready`.
+So an installation that ran without the thumbnail tools — the `slim` image has
+none of them — keeps serving the tinted extension card for every video, PDF and
+office document even after moving to `full`. Nothing regenerates it: the row has
+to go first.
+
+That is what a reset does. It drops the thumbnails in scope — the `thumbnails`
+rows **and** their cached JPEGs — and starts a background backfill over the same
+scope, so the grid repaints without a second click.
+
+**In the admin UI:** *Storages* → *Reset thumbnails* on a drive's card, or
+*Reset all thumbnails* in the page header. Both ask for confirmation and report
+how many were cleared.
+
+**Over the API** (admin session required):
+
+```
+POST /api/admin/storages/{id}/thumbs/reset   # one storage
+POST /api/admin/thumbs/reset                 # every storage
+```
+
+Both answer **202** with `{"cleared":N,"regenerating":true}`. The clearing is
+done by the time the response is written; the regeneration is only starting, and
+logs its tally when it finishes (`thumb reset: regeneration done`).
+`"regenerating":false` means this server has no backfill wired and the rebuild
+is yours to run (`filex thumb backfill`).
+
+⚠ Rows are deleted **before** the JPEGs, on purpose: the reverse order has a
+crash window that leaves a `ready` row pointing at a file that is gone — a
+thumbnail no backfill will ever rebuild. A leftover JPEG, by contrast, is simply
+overwritten by the next generation for that node.
+
+By hand, the equivalent is `DELETE FROM thumbnails …` plus `rm <data_dir>/thumbs/*.jpg`
+and then `filex thumb backfill`.
+
+---
+
 ## What happens if it isn't configured / a tool is missing
 
 - **Thumbnails are on by default.** With zero external tools you still get real
   image previews plus placeholder cards for everything else.
-- **Missing tool for video / audio / PDF / office** → that kind can't be enabled,
-  so the dispatcher routes the file to the **generic placeholder card**. The state
-  is **`ready`**, *not* `failed` — the grid shows a legible tinted card with the
-  extension, just not a real preview.
+- **Missing tool for video / audio / PDF / office** → state **`skipped`**, with the
+  missing tool named in the row's `error` (`ffmpeg not in PATH`, `no PDF renderer
+  (gs / pdftoppm) in PATH`, `libreoffice not in PATH`). No JPEG is written and the
+  client draws its own per‑type artwork.
+
+  > ⚠ Until v0.35 these became a **placeholder card in state `ready`** instead —
+  > and `ready` is the one state a backfill never re-runs, so an install that had
+  > once run without the tools kept a tinted rectangle where the video frame
+  > belonged, permanently, even after moving to the `full` image. `skipped` is
+  > recoverable: add the tool, then `filex thumb backfill --retry-skipped`.
 - **SVG with no `rsvg-convert`** → state **`skipped`** (reason: `rsvg-convert not
   in PATH`). No placeholder is drawn; the UI shows its own SVG icon.
 - **A generator that runs but errors** (tool present, but the file is broken /
@@ -312,9 +375,10 @@ and rows are `skipped`. The stock `full` image omits librsvg; install it
 (`apk add rsvg-convert`) and re‑run with `--retry-skipped`.
 
 ### PDF or video previews are blank / missing
-If the tool is entirely absent the file becomes a **placeholder** (`ready`), not
-a failure. If the tool is present but the row is **`failed`**, read the stored
-error — a broken PDF, an unreadable codec, or a permissions issue on the temp dir.
+If the tool is entirely absent the row is **`skipped`** and names the tool in
+`error`; install it and run `filex thumb backfill --retry-skipped`. If the tool is
+present but the row is **`failed`**, read the stored error — a broken PDF, an
+unreadable codec, or a permissions issue on the temp dir.
 
 ### HEIC / AVIF images fail
 Go's decoder only handles JPEG, PNG, GIF, BMP, TIFF and WebP. HEIC/AVIF sources

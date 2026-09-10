@@ -238,7 +238,14 @@
     "deletedOk": "Depo silindi",
     "createdOk": "Depo oluşturuldu",
     "updatedOk": "Depo güncellendi",
-    "syncStarted": "Senkron başladı"
+    "syncStarted": "Senkron başladı",
+    "resetThumbs": "Önizlemeleri sıfırla",
+    "resetThumbsAll": "Tüm önizlemeleri sıfırla",
+    "resetThumbsConfirm": "\"{name}\" deposunun önbellekteki önizlemeleri silinsin mi? Arka planda hemen yeniden oluşturulur. Video, PDF ve ofis önizlemeleri için sunucuda ffmpeg / ghostscript / libreoffice gerekir — bunlar yoksa bu dosyalar yer tutucu kart olarak görünür.",
+    "resetThumbsConfirmAll": "Tüm depoların önbellekteki önizlemeleri silinsin mi? Arka planda hemen yeniden oluşturulur; büyük bir kurulumda bu, her dosyayı kapsayan uzun bir geçiş demektir.",
+    "resetThumbsOk": "{count} önizleme silindi; arka planda yeniden oluşturuluyor.",
+    "resetThumbsOkNoRegen": "{count} önizleme silindi. Bu sunucu bunları kendi başına yeniden oluşturamaz — `filex thumb backfill` komutunu çalıştırın.",
+    "resetThumbsNone": "Silinecek önbelleklenmiş önizleme yoktu."
   },
   "users": {
     "title": "Kullanıcılar",

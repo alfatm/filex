@@ -139,6 +139,16 @@ type Deps struct {
 	// file per editing window instead of one per Ctrl+S. nil falls back to
 	// AVScan (scan immediately) rather than to no scan.
 	AVScanAfterSave func(ctx context.Context, n *model.Node)
+	// ThumbBackfill re-dispatches the thumbnail pipeline over the given
+	// storages (nil = every enabled storage) and RETURNS IMMEDIATELY: the walk
+	// runs in a goroutine of the bootstrap's making, on a context that outlives
+	// the request that asked for it. Wired by the server bootstrap; nil leaves
+	// the admin reset endpoints clearing thumbnails without rebuilding them.
+	//
+	// ⚠ No context parameter on purpose. The one context a handler has to hand
+	// is the request's, and it is cancelled the moment the response is written
+	// — which would kill the walk a few files in.
+	ThumbBackfill func(storageIDs []int64)
 	// Updater tracks published releases and (on installs that own their
 	// binary) applies them. Nil = the feature is off; the admin endpoints then
 	// report a "disabled" status instead of disappearing. See docs/UPDATES.md.
@@ -989,6 +999,12 @@ func BuildRouter(d *Deps) http.Handler {
 				r.Delete("/{id}", pluginsH.Delete)
 			})
 
+			// Thumbnail maintenance — drops cached thumbnails so they are
+			// rebuilt. Scoped per storage and installation-wide; see
+			// handlers/thumbs_admin.go for why "ready" rows need an explicit
+			// reset rather than a backfill.
+			thumbsAdmH := handlers.NewThumbsAdmin(d.Thumbs, d.ThumbBackfill)
+
 			r.Route("/storages", func(r chi.Router) {
 				r.Get("/", stg.List)
 				r.Post("/", stg.Create)
@@ -999,7 +1015,10 @@ func BuildRouter(d *Deps) http.Handler {
 				r.Post("/{id}/sync", stg.TriggerSync)
 				r.Get("/{id}/sync-runs", storagesAdmH.SyncRuns)
 				r.Get("/{id}/drift", storagesAdmH.Drift)
+				r.Post("/{id}/thumbs/reset", thumbsAdmH.ResetStorage)
 			})
+
+			r.Post("/thumbs/reset", thumbsAdmH.ResetAll)
 
 			// Replication targets — separate entity (backup-only sinks).
 			// See handlers/replication_targets.go for the rationale.

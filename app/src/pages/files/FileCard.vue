@@ -44,7 +44,7 @@ function onContextMenu(event: MouseEvent) {
     @dragend="drag.end()"
   >
     <div class="h-[108px] overflow-hidden rounded-t-[11px]">
-      <Thumbnail v-if="node.thumbnail" :kind="node.thumbnail" :duration="node.duration" :src="node.thumbUrl" />
+      <Thumbnail :kind="node.thumbnail ?? 'generic'" :duration="node.duration" :src="node.thumbUrl" />
     </div>
     <div class="flex h-[66px] items-center pl-[14px] pr-1">
       <FileTypeTile :type="node.fileType ?? 'other'" />

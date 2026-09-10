@@ -279,15 +279,16 @@ export const SMALL_IMAGE_BYTES = 500 * 1024;
 
 /**
  * The types whose server thumbnail is a picture OF the file: a downscaled image, a PDF's first page, a video frame.
- * For everything else the server draws a coloured card with the extension on it (`thumb/generic.go`), which the
- * app's own placeholder art already covers, better; that card is not shown.
+ * For a type filex has no generator for it draws a coloured card with the extension on it (`thumb/generic.go`)
+ * instead, which the app's own placeholder art already covers, better; that card is not shown. A type it CAN render
+ * but has no tool for sends no thumbnail at all (state `skipped`), so the art shows there too.
  */
 const RENDERED_TYPES: ReadonlySet<FileType> = new Set<FileType>(['image', 'pdf', 'mp4']);
 
 /**
- * What a file's tile paints: the cached thumbnail when the server rendered one, versioned by the file's mtime because
- * the server caches it for a day under the node id alone (a file overwritten in place would otherwise keep its old
- * picture until the next day); a small image's own bytes; nothing else, so the placeholder art shows.
+ * What a file's tile paints: the cached thumbnail when the server rendered one, versioned by the file's mtime; a small
+ * image's own bytes; nothing else, so the placeholder art shows. The version is belt-and-braces now that the thumb
+ * endpoint revalidates (ETag + `no-cache`), and it keeps the URL of an overwritten file distinct in any proxy between.
  */
 function tileUrl(
   thumb: string | undefined,

@@ -1257,7 +1257,7 @@ func (h *StagedUpload) sniffMime(row *model.StagedUpload) string {
 	if n <= 0 {
 		return ""
 	}
-	return storage.RefineOfficeMime(http.DetectContentType(sniff[:n]), path.Base(row.StorageKey))
+	return storage.RefineMime(http.DetectContentType(sniff[:n]), path.Base(row.StorageKey))
 }
 
 // writeStagingErr maps a staging error onto a status code.

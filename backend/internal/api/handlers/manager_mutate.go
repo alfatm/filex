@@ -666,7 +666,7 @@ func (h *Manager) vfUpload(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Sniff the first 512 bytes for mime detection, then rewind. ZIP-based
-		// office formats get refined via storage.RefineOfficeMime so
+		// office formats get refined via storage.RefineMime so
 		// pptx/docx/odt don't end up tagged "application/zip" — see
 		// internal/storage/mime.go for the OnlyOffice mismatch story.
 		//
@@ -678,7 +678,7 @@ func (h *Manager) vfUpload(w http.ResponseWriter, r *http.Request) {
 		n, _ := io.ReadFull(src, sniff[:])
 		mime := ""
 		if n > 0 {
-			mime = storage.RefineOfficeMime(http.DetectContentType(sniff[:n]), name)
+			mime = storage.RefineMime(http.DetectContentType(sniff[:n]), name)
 		}
 		if _, err := src.Seek(0, io.SeekStart); err != nil {
 			_ = src.Close()
@@ -1154,7 +1154,7 @@ func (h *Manager) IngestFile(ctx context.Context, st *model.Storage, destRel, fi
 	n, _ := io.ReadFull(src, sniff[:])
 	mime := ""
 	if n > 0 {
-		mime = storage.RefineOfficeMime(http.DetectContentType(sniff[:n]), name)
+		mime = storage.RefineMime(http.DetectContentType(sniff[:n]), name)
 	}
 	body := io.Reader(io.MultiReader(bytes.NewReader(sniff[:n]), src))
 	if s, ok := src.(io.Seeker); ok && n > 0 {

@@ -13,6 +13,14 @@ const CARD_SHADOW = 'filter: drop-shadow(0 1.5px 2px rgba(76, 29, 149, 0.12))';
 // Spreadsheet placeholder: x of the bars in the three wide columns, y of the five data rows.
 const SHEET_COLS = [68, 128, 187];
 const SHEET_ROWS = [27, 42, 57, 72, 87];
+// Generic placeholder: the dot grid's columns and rows, and the page itself. The page is the one thing here that
+// no token pair fits — it is paper on a near-white ground in light, and a raised card lifted off a near-black one
+// in dark, where `--c-bg` would be the ground it has to stand out from — so it carries its own pair.
+const DOT_COLS = [172, 184, 196, 208];
+const DOT_ROWS = [12, 24, 36, 48];
+const PAGE_FILL = 'light-dark(#ffffff, #3f4650)';
+const PAGE_LINE = 'light-dark(#9ca3af, #c9ccd3)';
+const PAGE_SHADOW = 'drop-shadow(0 2px 3px light-dark(rgba(17, 24, 39, 0.1), rgba(0, 0, 0, 0.45)))';
 const failed = ref(false);
 </script>
 
@@ -182,5 +190,30 @@ const failed = ref(false);
         style="background: rgba(0, 0, 0, 0.65)"
         >{{ duration }}</span>
     </div>
+
+    <!-- Every other file: no art of its own and no preview from the server. A page with its corner turned on the
+         same soft ground, so the tile reads as "nothing to show" rather than as an image that failed to load. -->
+    <svg v-else viewBox="0 0 236 108" class="h-full w-full" aria-hidden="true">
+      <rect width="236" height="108" class="fill-bg" />
+      <g class="fill-border-soft">
+        <circle cx="74" cy="32" r="46" />
+        <circle cx="154" cy="88" r="42" />
+      </g>
+      <g class="fill-border">
+        <template v-for="x in DOT_COLS" :key="`gc${x}`">
+          <circle v-for="y in DOT_ROWS" :key="`gd${x}-${y}`" :cx="x" :cy="y" r="2" />
+        </template>
+      </g>
+      <g
+        transform="translate(93 22) scale(1.14)"
+        :style="{ filter: PAGE_SHADOW, fill: PAGE_FILL, stroke: PAGE_LINE }"
+        stroke-width="2.4"
+        stroke-linejoin="round"
+      >
+        <rect x="1" y="1" width="42" height="54" rx="6" />
+        <!-- The turned corner, painted over the page's own top-right corner. -->
+        <path d="M29 1h8a6 6 0 0 1 6 6v8Z" :style="{ fill: PAGE_LINE }" />
+      </g>
+    </svg>
   </div>
 </template>

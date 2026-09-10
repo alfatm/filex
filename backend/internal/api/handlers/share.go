@@ -380,8 +380,18 @@ func (h *Share) serveSharedThumb(w http.ResponseWriter, r *http.Request, storage
 		return false
 	}
 	defer f.Close()
+	// Same validator contract as /api/files/thumb/{id} (see thumb.go): the URL
+	// is the node and nothing else, so a day of blind freshness would pin a
+	// regenerated thumbnail out of sight on every public gallery too.
+	if etag := thumbETag(f); etag != "" {
+		w.Header().Set("ETag", etag)
+		if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return true
+		}
+	}
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("Cache-Control", "private, no-cache")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// ⚠ Reported to the caller as handled even if the copy dies mid-stream:
 	// the headers are already out, so falling through would write a second

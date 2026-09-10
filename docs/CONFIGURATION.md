@@ -643,7 +643,7 @@ regenerable, and a single folder-share archive can be tens of gigabytes.
 
 | Env var | Default | Description |
 |---|---|---|
-| `FILEX_THUMBS_ENABLED` | `true` | Master switch. |
+| `FILEX_THUMBS_ENABLED` | `true` | Master switch. Off = nothing is rendered (and no `thumbnails` row is written), `thumbs.*` in `/api/capabilities` all report `false`, and the admin reset endpoints answer 503. Read at boot; a change needs a restart. |
 | `FILEX_THUMB_BACKFILL_ON_BOOT` | — | Set `once` to backfill missing thumbnails on startup. |
 | `FILEX_THUMBS_SWEEP_INTERVAL` | `6h` | How often cached thumbnails whose node no longer exists are deleted (also once at boot). `0` disables it. |
 

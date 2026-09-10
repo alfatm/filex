@@ -120,6 +120,8 @@ const ACTION_CLASS =
   'inline-flex h-10 w-10 items-center justify-center rounded-md text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring';
 const CHEVRON_CLASS =
   'absolute top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring';
+const CLOSE_CLASS =
+  'inline-flex h-11 w-11 items-center justify-center rounded-full bg-white/15 text-white ring-1 ring-white/30 hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring';
 </script>
 
 <template>
@@ -128,13 +130,15 @@ const CHEVRON_CLASS =
     <!-- The only hard-coded colour: the overlay is darker than the modal token so images read against it. -->
     <div class="absolute inset-0" style="background: rgba(17, 24, 39, 0.9)" aria-hidden="true" />
     <DialogPanel class="absolute inset-0 flex flex-col" @keydown="onKeydown">
-      <header class="flex h-16 shrink-0 items-center pl-5 pr-3">
-        <FileTypeTile :type="current.fileType ?? 'other'" :size="36" />
-        <div class="ml-3 min-w-0 flex-1">
-          <DialogTitle as="p" class="truncate-safe text-16 font-medium leading-none text-white">{{ current.name }}</DialogTitle>
-          <p class="mt-1 truncate-safe text-13 leading-none text-white/70">{{ meta }}</p>
+      <header class="flex h-16 shrink-0 items-center gap-4 pl-5 pr-3">
+        <div class="flex min-w-0 flex-1 items-center">
+          <FileTypeTile :type="current.fileType ?? 'other'" :size="36" />
+          <div class="ml-3 min-w-0">
+            <DialogTitle as="p" class="truncate-safe text-16 font-medium leading-none text-white">{{ current.name }}</DialogTitle>
+            <p class="mt-1 truncate-safe text-13 leading-none text-white/70">{{ meta }}</p>
+          </div>
         </div>
-        <div class="ml-4 flex shrink-0 items-center gap-1">
+        <div class="flex shrink-0 items-center gap-1">
           <a v-if="download" :href="download" :download="current.name" :class="ACTION_CLASS" :aria-label="t('preview.download')" :title="t('preview.download')">
             <Download :size="20" />
           </a>
@@ -162,8 +166,10 @@ const CHEVRON_CLASS =
           >
             <ExternalLink :size="20" />
           </a>
-          <button type="button" :class="ACTION_CLASS" :aria-label="t('preview.close')" :title="t('preview.close')" @click="emit('close')">
-            <X :size="22" />
+        </div>
+        <div class="flex flex-1 justify-end">
+          <button type="button" :class="CLOSE_CLASS" :aria-label="t('preview.close')" :title="t('preview.close')" @click="emit('close')">
+            <X :size="24" />
           </button>
         </div>
       </header>

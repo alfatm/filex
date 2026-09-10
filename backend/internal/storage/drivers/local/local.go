@@ -353,7 +353,7 @@ func copyTree(src, dst string) error {
 }
 
 // sniffMime peeks the first 512 bytes for magic-byte detection, then
-// refines ZIP-based formats via storage.RefineOfficeMime.
+// refines ZIP-based formats via storage.RefineMime.
 //
 // http.DetectContentType returns "application/zip" for every ZIP
 // container, including the OOXML/ODF office formats which are just
@@ -372,5 +372,5 @@ func sniffMime(abs string) string {
 	defer f.Close()
 	var buf [512]byte
 	n, _ := f.Read(buf[:])
-	return storage.RefineOfficeMime(http.DetectContentType(buf[:n]), abs)
+	return storage.RefineMime(http.DetectContentType(buf[:n]), abs)
 }

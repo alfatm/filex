@@ -444,8 +444,13 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 
 	bgBody := filebody.New(store, stagingArea).WithCache(fileCache)
 
-	// Thumbnail pipeline.
-	pipelineCaps := thumb.Capabilities{Image: true}
+	// Thumbnail pipeline. FILEX_THUMBS_ENABLED is applied to the capability
+	// service FIRST, because the probe below is what the pipeline's own
+	// capabilities are built from: switch thumbnails off and /api/capabilities
+	// stops advertising tools nothing will call, instead of the advertised set
+	// and the running set disagreeing.
+	caps.SetThumbsEnabled(cfg.Thumbs.Enabled)
+	pipelineCaps := thumb.Capabilities{Image: cfg.Thumbs.Enabled}
 	cap, _ := caps.Get(ctx)
 	if cap != nil {
 		pipelineCaps.Video = cap.Thumbs.Video
@@ -456,6 +461,13 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 	}
 	pipeline := thumb.New(store, cfg.Thumbs.CacheDir, pipelineCaps)
 	pipeline.AttachBody(bgBody)
+	if !cfg.Thumbs.Enabled {
+		// The switch a config file has always documented and nothing has ever
+		// read: `Thumbs.Enabled` was parsed and dropped on the floor, so
+		// FILEX_THUMBS_ENABLED=false generated thumbnails anyway.
+		pipeline.Disable()
+		slog.Info("thumbnails: disabled (FILEX_THUMBS_ENABLED=false)")
+	}
 
 	// Share service.
 	shareSvc := share.NewService(store)
@@ -1003,6 +1015,29 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 		AVScan:          avEnqueue,          /* koru:k2 av */
 		AVScanAfterSave: avEnqueueAfterSave, /* koru:k2 av — debounced editor save */
 		E2EEscrow:       escrowKey,          /* wiring:e2 — nil when escrow is off */
+	}
+	// Thumbnail regeneration behind the admin reset endpoints. Detached from
+	// the request on purpose (the walk outlives the 202) and bound to THIS
+	// context — the process-lifetime one — so a shutdown stops it.
+	deps.ThumbBackfill = func(storageIDs []int64) {
+		go func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					slog.Warn("thumb reset: regeneration panic recovered", slog.Any("recover", rec))
+				}
+			}()
+			res, err := srvObj.BackfillThumbs(ctx, BackfillOptions{StorageIDs: storageIDs})
+			if err != nil {
+				slog.Warn("thumb reset: regeneration aborted", slog.String("err", err.Error()))
+				return
+			}
+			slog.Info("thumb reset: regeneration done",
+				slog.Any("storages", storageIDs),
+				slog.Int("processed", res.Processed),
+				slog.Int("ok", res.OK),
+				slog.Int("failed", res.Failed),
+				slog.Int("skipped", res.Skipped))
+		}()
 	}
 	// WebDAV server (/dav/<storage>/<path>, HTTP Basic) — the handler itself
 	// is composed inside api.BuildRouter (single Mount line, see

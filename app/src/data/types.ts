@@ -2,8 +2,8 @@ export type NodeKind = 'folder' | 'file';
 
 export type FileType = 'md' | 'image' | 'ts' | 'pdf' | 'fig' | 'csv' | 'mp4' | 'other';
 
-/** Which placeholder thumbnail the grid card paints. */
-export type ThumbnailKind = 'mountain' | 'beach' | 'code' | 'document' | 'pdf' | 'figma' | 'spreadsheet' | 'video';
+/** Which placeholder thumbnail the grid card paints; `generic` is the fallback for a type with no art of its own. */
+export type ThumbnailKind = 'mountain' | 'beach' | 'code' | 'document' | 'pdf' | 'figma' | 'spreadsheet' | 'video' | 'generic';
 
 export interface Node {
   id: string;

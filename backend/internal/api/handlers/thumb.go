@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -55,9 +56,55 @@ func (h *Thumb) Serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
+
+	// ⚠⚠ REVALIDATE, don't cache blind. This used to answer
+	// `private, max-age=86400` under a URL that is the node id and nothing
+	// else, so a REGENERATED thumbnail was invisible for a day: an admin who
+	// reset the cache, or an operator who added ffmpeg and backfilled, kept
+	// looking at the old picture and concluded the reset had not worked.
+	//
+	// `no-cache` does not mean "do not store" — the browser keeps the bytes
+	// and asks whether they are still current, so the steady state is a 304
+	// with no body rather than a re-download. The ETag is the cached file's
+	// mtime and size, which is exactly what changes when a thumbnail is
+	// rebuilt.
+	etag := thumbETag(f)
+	if etag != "" {
+		w.Header().Set("ETag", etag)
+		if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("Cache-Control", "private, no-cache")
 	_, _ = copyFileToResponse(w, f)
+}
+
+// thumbETag derives a strong validator from the cached file itself, so it
+// changes on every regeneration without the pipeline having to publish a
+// version. Empty when the file cannot be stat'ed, in which case the response
+// simply carries no validator.
+func thumbETag(f *os.File) string {
+	st, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	return `"` + strconv.FormatInt(st.ModTime().UnixNano(), 10) + "-" + strconv.FormatInt(st.Size(), 10) + `"`
+}
+
+// etagMatches implements the If-None-Match comparison filex needs: a list of
+// candidates, `*`, and the weak prefix a proxy may have added on the way out.
+func etagMatches(header, etag string) bool {
+	if strings.TrimSpace(header) == "*" {
+		return true
+	}
+	for _, candidate := range strings.Split(header, ",") {
+		if strings.TrimPrefix(strings.TrimSpace(candidate), "W/") == etag {
+			return true
+		}
+	}
+	return false
 }
 
 // checkSig verifies the HMAC signature query parameter.

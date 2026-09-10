@@ -321,5 +321,5 @@ func sniffTempMime(tmp *os.File, rel string) string {
 	if n <= 0 {
 		return mime.TypeByExtension(path.Ext(rel))
 	}
-	return storage.RefineOfficeMime(http.DetectContentType(head[:n]), path.Base(rel))
+	return storage.RefineMime(http.DetectContentType(head[:n]), path.Base(rel))
 }

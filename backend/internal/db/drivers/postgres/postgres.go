@@ -1961,6 +1961,45 @@ func (s *Store) DeleteThumbnail(ctx context.Context, nodeID int64) error {
 	return err
 }
 
+// PurgeThumbnails reads the ids first and deletes with a set-based statement
+// rather than feeding them back as placeholders: the caller's scope can be the
+// whole installation, and the extended protocol tops out at 65535 parameters.
+func (s *Store) PurgeThumbnails(ctx context.Context, storageID int64) ([]int64, error) {
+	sel := `SELECT node_id FROM thumbnails`
+	del := `DELETE FROM thumbnails`
+	var args []any
+	if storageID > 0 {
+		sel = `SELECT t.node_id FROM thumbnails t JOIN nodes n ON n.id = t.node_id WHERE n.storage_id = $1`
+		del = `DELETE FROM thumbnails WHERE node_id IN (SELECT id FROM nodes WHERE storage_id = $1)`
+		args = []any{storageID}
+	}
+	rows, err := s.db.QueryContext(ctx, sel, args...)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if _, err := s.db.ExecContext(ctx, del, args...); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 // ExistingNodeIDs batches the lookup so a large thumbnail cache cannot exceed
 // the 65535-parameter ceiling of the extended protocol.
 func (s *Store) ExistingNodeIDs(ctx context.Context, ids []int64) (map[int64]bool, error) {

@@ -512,7 +512,7 @@ func (a *aiOps) WriteStream(ctx context.Context, p string, src io.Reader, size i
 	n, _ := io.ReadFull(src, sniff[:])
 	mime := ""
 	if n > 0 {
-		mime = storage.RefineOfficeMime(http.DetectContentType(sniff[:n]), name)
+		mime = storage.RefineMime(http.DetectContentType(sniff[:n]), name)
 	}
 	body := io.Reader(io.MultiReader(bytes.NewReader(sniff[:n]), src))
 	if sk, ok := src.(io.Seeker); ok && n > 0 {

@@ -80,6 +80,46 @@ func (p *Pipeline) Forget(ctx context.Context, nodeID int64) {
 	}
 }
 
+// Reset drops every cached thumbnail in scope so the next generation pass
+// rebuilds it: one storage when storageID > 0, the whole installation when 0.
+// It returns how many rows were cleared.
+//
+// This is the admin-triggered counterpart to ReapOrphans. The sweeper only
+// removes what no node claims any more; Reset deliberately removes thumbnails
+// of files that are very much alive — because the cached bytes can be WRONG
+// rather than merely stale. An image built without ffmpeg/ghostscript on PATH
+// caches a placeholder card for every video and PDF, in state="ready", and
+// "ready" is the one state a backfill never re-runs. Nothing short of dropping
+// the row gets a real preview onto the grid afterwards.
+//
+// ⚠ Rows go first, files second. The reverse order has a crash window that
+// leaves a "ready" row pointing at a JPEG that is gone — a thumbnail no
+// backfill will ever rebuild. With the row gone first, a leftover file is
+// simply overwritten by the next generation for that node.
+func (p *Pipeline) Reset(ctx context.Context, storageID int64) (int, error) {
+	if p == nil || p.store == nil {
+		return 0, errors.New("thumb: pipeline unavailable")
+	}
+	ids, err := p.store.PurgeThumbnails(ctx, storageID)
+	if err != nil {
+		return 0, err
+	}
+	if p.cacheDir == "" {
+		return len(ids), nil
+	}
+	// Best-effort from here on: the rows are already gone, so the thumbnails
+	// WILL be regenerated. A file we could not remove is overwritten by that
+	// regeneration, and an orphan is picked up by the sweeper if it is not.
+	for _, id := range ids {
+		path := filepath.Join(p.cacheDir, strconv.FormatInt(id, 10)+".jpg")
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("thumb: could not remove a cached file during reset",
+				slog.Int64("node", id), slog.String("path", path), slog.String("err", err.Error()))
+		}
+	}
+	return len(ids), nil
+}
+
 // ReapResult is what one reconciliation pass did.
 type ReapResult struct {
 	Scanned int   // candidate files inspected

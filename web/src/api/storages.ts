@@ -5,6 +5,7 @@ import type {
   StorageRef,
   StorageUpdateRequest,
   SyncRun,
+  ThumbResetResult,
 } from './types';
 
 interface BackendSyncRun {
@@ -87,6 +88,20 @@ export const StoragesApi = {
 
   async syncNow(id: number): Promise<{ run_id: number }> {
     const { data } = await api.post<{ run_id: number }>(`/admin/storages/${id}/sync`);
+    return data;
+  },
+
+  // Drops the storage's cached thumbnails (rows + JPEGs) and starts a
+  // background pass that rebuilds them. `cleared` is exact; the regeneration
+  // is only just beginning when this resolves.
+  async resetThumbs(id: number): Promise<ThumbResetResult> {
+    const { data } = await api.post<ThumbResetResult>(`/admin/storages/${id}/thumbs/reset`);
+    return data;
+  },
+
+  // The same, for every storage on the installation.
+  async resetAllThumbs(): Promise<ThumbResetResult> {
+    const { data } = await api.post<ThumbResetResult>('/admin/thumbs/reset');
     return data;
   },
 

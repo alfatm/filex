@@ -417,6 +417,14 @@ type Store interface {
 	// half, and it exists so a purge does not have to wait for the FK cascade
 	// to be the only thing that ever removed it.
 	DeleteThumbnail(ctx context.Context, nodeID int64) error
+	// PurgeThumbnails drops every thumbnails row in scope — one storage when
+	// storageID > 0, the whole installation when 0 — and returns the node ids
+	// whose rows were removed so the caller can delete their cached JPEGs.
+	//
+	// The catalogue half only, like DeleteThumbnail: nothing here touches the
+	// cache directory. See thumb.Pipeline.Reset for the operation an admin
+	// actually triggers.
+	PurgeThumbnails(ctx context.Context, storageID int64) ([]int64, error)
 	// ExistingNodeIDs reports which of the given ids still have a `nodes` row —
 	// TRASHED ROWS INCLUDED, because a trashed file is restorable and must keep
 	// its thumbnail. It is the safety interlock of the thumbnail-cache sweeper:

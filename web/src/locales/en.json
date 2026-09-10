@@ -238,7 +238,14 @@
     "deletedOk": "Storage deleted",
     "createdOk": "Storage created",
     "updatedOk": "Storage updated",
-    "syncStarted": "Sync started"
+    "syncStarted": "Sync started",
+    "resetThumbs": "Reset thumbnails",
+    "resetThumbsAll": "Reset all thumbnails",
+    "resetThumbsConfirm": "Drop the cached thumbnails of \"{name}\"? They are rebuilt in the background straight away. Video, PDF and office previews need ffmpeg / ghostscript / libreoffice on the server — without them those files get a placeholder card instead.",
+    "resetThumbsConfirmAll": "Drop the cached thumbnails of every storage? They are rebuilt in the background straight away, which on a large installation is a long pass over every file.",
+    "resetThumbsOk": "{count} thumbnails cleared; rebuilding in the background.",
+    "resetThumbsOkNoRegen": "{count} thumbnails cleared. This server cannot rebuild them by itself — run `filex thumb backfill`.",
+    "resetThumbsNone": "There were no cached thumbnails to clear."
   },
   "users": {
     "title": "Users",
