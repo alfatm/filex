@@ -22,11 +22,11 @@
  *                at the server this run started — so the browser sees one
  *                origin and the session cookie needs no CORS.
  *
- *                It is NOT the suite in `tests/app/`: that one drives the
- *                in-memory mock and needs no backend at all. This one is the
- *                only thing that exercises `app/src/data/http/` and its
- *                contract with the Go handlers, which is the code a
- *                deployment actually runs.
+ *                It is the only coverage `app/` has: it exercises
+ *                `app/src/data/http/` and its contract with the Go handlers,
+ *                which is the code a deployment actually runs. A second suite
+ *                once drove the app against an in-memory mock with no backend
+ *                at all; it went when the mock did.
  *
  *   deployment   Read-only smoke against a URL that is already live. Never
  *                run as part of a build check.

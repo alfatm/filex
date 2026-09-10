@@ -43,8 +43,6 @@ const failed = ref(false);
       <polygon points="70,34 60,46 80,46" fill="#f8fafc" />
     </svg>
 
-    <div v-else-if="kind === 'beach'" class="h-full w-full" style="background: linear-gradient(180deg, #7dd3fc 0%, #38bdf8 46%, #0ea5e9 62%, #fde68a 64%, #fcd34d 100%)" />
-
     <!-- The only placeholder made of real text. Hidden from assistive technology like every other one here: the
          thumbnail comes before the name in the card, so this decorative source line was being read out as the
          start of the card's accessible name, ahead of the file it stands for. -->

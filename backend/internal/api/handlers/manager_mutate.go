@@ -125,7 +125,7 @@ func (h *Manager) vfNewFolder(w http.ResponseWriter, r *http.Request) {
 	// EnsureDirTarget passes an existing FOLDER through, and Mkdir is
 	// MkdirAll, so without this the caller gets 200 and the client adopts
 	// somebody else's folder as the one it just created.
-	if err := ensureNameFree(r.Context(), drv, fullRel); err != nil {
+	if err := ensureNameFree(r.Context(), drv, fullRel, ""); err != nil {
 		writeJSON(w, mapDriverErr(err), map[string]string{"error": err.Error()})
 		return
 	}
@@ -236,7 +236,7 @@ func (h *Manager) vfRename(w http.ResponseWriter, r *http.Request) {
 	// silently REPLACES the file already sitting there, and the object stores
 	// overwrite the key. Renaming onto a taken name has to be a 409 here or it
 	// is data loss on the main UI path.
-	if err := ensureNameFree(r.Context(), drv, dstRel); err != nil {
+	if err := ensureNameFree(r.Context(), drv, dstRel, srcRel); err != nil {
 		writeJSON(w, mapDriverErr(err), map[string]string{"error": "rename: " + err.Error()})
 		return
 	}
@@ -330,7 +330,7 @@ func (h *Manager) vfMove(w http.ResponseWriter, r *http.Request) {
 		if dstRel == srcRel {
 			continue // moving into its own directory is a no-op, not a collision
 		}
-		if err := ensureNameFree(r.Context(), drv, dstRel); err != nil {
+		if err := ensureNameFree(r.Context(), drv, dstRel, srcRel); err != nil {
 			writeJSON(w, mapDriverErr(err), map[string]string{"error": "move: " + err.Error()})
 			return
 		}
@@ -1032,18 +1032,38 @@ func (h *Manager) applyDBMove(ctx context.Context, storageID int64, srcRel, dstR
 // that is not a clean ErrNotFound leaves the verdict unreachable, and a backend
 // too unwell to answer Stat must not start refusing renames. The write it
 // guards is about to fail anyway.
-func ensureNameFree(ctx context.Context, d storage.Driver, p string) error {
-	if d == nil || p == "" {
+//
+// src is the path about to be renamed or moved ("" when there is none, as for
+// newfolder). It exists because a case-only change — "a.txt" → "A.txt" — lands
+// on a destination that a case-INSENSITIVE backend (SMB, WebDAV) resolves back
+// to the source itself: Stat(dst) succeeds and the guard would answer a 409
+// against the very file the caller is renaming. What settles it is identity,
+// not string case: when dst and src differ only in case, Stat BOTH and compare
+// the two Objects on Kind+Size+Mtime+Etag. Equal means one entry answering
+// under two spellings, so the write is allowed; different means a case-
+// sensitive backend really does hold another file at that name, and the 409
+// stands. The second Stat runs only inside the EqualFold branch, so the
+// ordinary path still costs exactly one Stat.
+func ensureNameFree(ctx context.Context, d storage.Driver, dst, src string) error {
+	if d == nil || dst == "" {
 		return nil
 	}
-	if _, err := d.Stat(ctx, p); err != nil {
+	dstObj, err := d.Stat(ctx, dst)
+	if err != nil {
 		if !errors.Is(err, storage.ErrNotFound) {
 			slog.Debug("manager: name guard stat inconclusive, allowing write",
-				slog.String("path", p), slog.String("err", err.Error()))
+				slog.String("path", dst), slog.String("err", err.Error()))
 		}
 		return nil
 	}
-	return fmt.Errorf("%w: %q", os.ErrExist, p)
+	if src != "" && strings.EqualFold(dst, src) {
+		if srcObj, srcErr := d.Stat(ctx, src); srcErr == nil &&
+			dstObj.Kind == srcObj.Kind && dstObj.Size == srcObj.Size &&
+			dstObj.Mtime.Equal(srcObj.Mtime) && dstObj.Etag == srcObj.Etag {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %q", os.ErrExist, dst)
 }
 
 // mapDriverErr normalizes driver errors into HTTP statuses for the

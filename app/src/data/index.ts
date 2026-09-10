@@ -1,14 +1,12 @@
 import type { Repository } from './repository';
-import { mockRepository } from './mock';
 import { HttpRepository } from './http/repository';
 
 /**
- * Single injection point. The demo data is the default so the app runs with nothing behind it; pointing
- * `VITE_FILEX_API` at a server (or setting it to `1` when the dev server proxies `/api`) switches every screen
- * onto the real one — see docs/BACKEND-GAP.md for what the server does not answer yet.
+ * Single injection point. There is one repository: the app talks to a filex server over HTTP, and nothing else.
  *
- * That default is a dev convenience only: a PRODUCTION build without the variable would look like the product and
- * serve demo data, so `vite build` refuses it (see vite.config.ts) unless the demo is asked for by name,
- * `vite build --mode demo`.
+ * A mock repository used to sit here, picked whenever `VITE_FILEX_API` was unset — a demo dataset snapshotted
+ * from a directory outside this repository. It is gone. The server answers these screens now and the binary
+ * serves the app at the apex, so a second source of truth for what a drive holds bought nothing and shipped
+ * demo rows into real bundles. `VITE_FILEX_API` still names the server, or `1` when a dev server proxies `/api`.
  */
-export const repository: Repository = import.meta.env.VITE_FILEX_API ? new HttpRepository() : mockRepository;
+export const repository: Repository = new HttpRepository();

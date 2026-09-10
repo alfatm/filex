@@ -60,9 +60,9 @@ second container. `BUILD_APP=0` leaves it out and gives the `/` → `/admin/`
 redirect above. The stand that used to run it on `:5175` behind `vite preview`
 is gone; what survives of that arrangement is the live e2e suite
 (`node e2e/run.mjs app --build`), which serves a BUILD rather than the dev
-server so the screenshot/e2e hooks in `src/dev/screenshotQuery.ts` cannot fake
-answers against a real backend. A production `vite build` without
-`VITE_FILEX_API` still fails instead of quietly shipping the mock repository.
+server, because the build is what ships. There is no mock repository left to
+ship by accident either: the app has one data source, `src/data/http/`, so
+`VITE_FILEX_API` now only says where the server is.
 
 ## Repository ↔ API
 
@@ -231,3 +231,20 @@ it vary — which is where it now lives.
   cannot serve. OCR is not among them: it is an extraction-time property (text
   found in an image is content like any other), so there is no OCR surface for a
   flag to hide.
+
+## Still open on the server
+
+Carried over from the 2026-09-09 review when its working notes were removed; the
+numbering is that review's.
+
+- **N-20 — upload conflicts are decided on the client.** The server can only
+  overwrite, taking a version snapshot as it goes. "Skip", "keep both" and "ask"
+  are implemented in `app/` before the bytes are sent, so two clients uploading
+  the same name still race, and a non-filex client gets the overwrite. Server
+  support is its own task.
+- **N-21 — the assistant's failures reach the store as a transport error.**
+  `assistantStore` reads the error CLASS because it needs the HTTP status and
+  the `code` from the body, which the repository contract does not carry. The
+  honest fix adds assistant-failure sentinels to the contract and translates
+  inside the two methods — a change to a public contract, deliberately deferred
+  rather than papered over.

@@ -27,9 +27,6 @@ watch(() => branding.name, (name) => (document.title = name || 'filex'), { immed
  * 401 to when there is nobody signed in. AppShell owns that work now, so it happens exactly when the shell does.
  */
 const shell = computed(() => !route.meta.public);
-
-// Screenshot / e2e URL hooks (`?view`, `?select`, `?panel`, `?modal`, `?menu`, `?demo`); dev builds only.
-if (import.meta.env.DEV) void import('./dev/screenshotQuery').then(({ installScreenshotQuery }) => installScreenshotQuery());
 </script>
 
 <template>

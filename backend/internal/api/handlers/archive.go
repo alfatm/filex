@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/brf-tech/filex/backend/internal/acl"
-	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/confine"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/filebody"
@@ -720,12 +719,7 @@ func (a *Archive) DownloadZip(w http.ResponseWriter, r *http.Request) {
 	// chunked and the browser shows an indeterminate download.
 	zw := zip.NewWriter(w)
 	for _, rt := range roots {
-		guard, err := a.zipGuard(ctx, rt.storageID)
-		if err != nil {
-			slog.Error("zip download: acl", slog.String("err", err.Error()))
-			return
-		}
-		if err := a.zipInto(ctx, zw, rt.storageID, rt.rel, rt.name, rt.isDir, guard, 0); err != nil {
+		if err := a.zipInto(ctx, zw, rt.storageID, rt.rel, rt.name, rt.isDir, 0); err != nil {
 			// The status line is long gone; all that is left is to stop writing.
 			slog.Error("zip download aborted", slog.String("path", rt.rel), slog.String("err", err.Error()))
 			return
@@ -736,34 +730,27 @@ func (a *Archive) DownloadZip(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// zipGuard loads the caller's permission set once per storage. A subtree can be
-// thousands of files and each one has to be checked — `Effective` on a loaded
-// set is a lookup, `aclAllowID` per member would be a database round trip.
-func (a *Archive) zipGuard(ctx context.Context, storageID int64) (*acl.Set, error) {
-	if a.ACL == nil {
-		return nil, nil
-	}
-	st, err := a.Store.GetStorage(ctx, storageID)
-	if err != nil {
-		return nil, err
-	}
-	return a.ACL.LoadSet(ctx, auth.UserFrom(ctx), st)
-}
-
 // zipInto writes one path into the archive, walking a folder depth-first.
-// A member the caller may not see is skipped rather than refused: that is what
-// the folder listing does, and half an archive is better than none.
-func (a *Archive) zipInto(ctx context.Context, zw *zip.Writer, storageID int64, rel, name string, isDir bool, guard *acl.Set, depth int) error {
-	// filex's own buckets (model.ReservedNames), dropped before the ACL check
-	// and not after: on a storage with RBAC off `Effective` is just the
-	// caller's role, so the guard alone lets any account walk into the trash
+//
+// There is deliberately NO per-member permission check here, and there used to
+// be one. It could never fire: grants are monotonic by prefix — Effective takes
+// the best level over every grant whose PathPrefix CONTAINS the path
+// (acl.prefixContains) — so a grant that covers a folder covers everything
+// beneath it, and the root check in DownloadZip is the very same Effective call
+// through aclAllowID. Once the root passes at viewer, no descendant can come
+// out below it. Worse than merely dead, the branch implied a per-member
+// guarantee the ACL model does not offer, and the walk must not be read as
+// offering one: a selection is authorised as a whole BEFORE the first archive
+// byte, because after the zip header the status is 200 for good and a mid-walk
+// skip would ship a silently incomplete archive.
+func (a *Archive) zipInto(ctx context.Context, zw *zip.Writer, storageID int64, rel, name string, isDir bool, depth int) error {
+	// filex's own buckets (model.ReservedNames). This filter is live and it is
+	// not an ACL question: on a storage with RBAC off `Effective` is just the
+	// caller's role, so permissions alone let any account walk into the trash
 	// and the version history. Walking the driver straight past the listing
 	// projections is how a plain zip of a storage root came to carry other
 	// people's deleted files and every snapshot ever taken.
 	if model.IsReservedPath(rel) {
-		return nil
-	}
-	if guard != nil && guard.Effective(strings.Trim(rel, "/")) < acl.LevelViewer {
 		return nil
 	}
 	if !isDir {
@@ -790,7 +777,7 @@ func (a *Archive) zipInto(ctx context.Context, zw *zip.Writer, storageID int64, 
 		child := path.Join(name, e.Name)
 		// A symlink is zipped as the file it stands for, which is how every other
 		// read path in filex treats one; only a real directory is walked.
-		if err := a.zipInto(ctx, zw, storageID, e.Path, child, e.Kind == storage.KindDirectory, guard, depth+1); err != nil {
+		if err := a.zipInto(ctx, zw, storageID, e.Path, child, e.Kind == storage.KindDirectory, depth+1); err != nil {
 			return err
 		}
 	}

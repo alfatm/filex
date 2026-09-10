@@ -9,27 +9,26 @@ const APP_DIR = path.resolve(E2E_DIR, '../app');
 /**
  * Playwright config for the END-USER SPA against a REAL filex server.
  *
- * The third suite in this directory, and the only one that measures the code that ships:
+ * The second suite in this directory, and the one that measures the code that ships:
  *
  *   playwright.config.ts        admin SPA + HTTP contracts, real backend  (node e2e/run.mjs local)
- *   playwright.app.config.ts    app/, in-memory mock repository            (pnpm --filter filex-e2e test:app)
- *   THIS ONE                    app/, real backend, built bundle           (node e2e/run.mjs app --build)
+ *   THIS ONE                    app/, real backend, built bundle          (node e2e/run.mjs app --build)
  *
- * Why it exists: every spec in `tests/app/` drives `app/src/data/mock/`, so the one module that a deployment
- * actually runs — `app/src/data/http/`, and its contract with the Go handlers — had no end-to-end coverage at all.
- * The mock suite is not redundant; it is the UI-contract suite, and it stays. This one is the wiring suite, and it
- * is deliberately small: a handful of journeys that cannot pass unless a real server answered.
+ * It used to be the third. A mock-repository suite drove `app/` against a generated demo dataset and carried the
+ * UI-contract coverage; both it and the mock are gone, so this is now the only coverage `app/` has, and it is the
+ * coverage that matters: `app/src/data/http/` and its contract with the Go handlers, exercised against a server
+ * that really answered. It is still deliberately small — a handful of journeys — and that is now a gap, not a
+ * design: the screens themselves have no end-to-end coverage any more.
  *
  * ⚠ Do NOT run this config by hand. It needs a server, a seeded drive and a bundle built against them, and
  * `run.mjs app` is the one thing that arranges all three (a throwaway data dir, a deterministic admin, a free
  * port, and teardown). The guards below refuse rather than run something meaningless.
  *
- * ⚠ The BUILT bundle over `vite preview`, never the dev server — the opposite of the mock suite's choice, and for
- * the same reason. `app/src/dev/screenshotQuery.ts` monkeypatches the repository, forges capabilities and posts
- * mock rows; it is behind `import.meta.env.DEV`, so a dev server pointed at a real backend can be made to assert
- * things the server never said. A build has none of it.
+ * ⚠ The BUILT bundle over `vite preview`, never the dev server: `vite dev` serves an unminified graph with dev-only
+ * branches live, and what ships is the build. There is no longer any dev-only repository patching to avoid — that
+ * went with the mock — but the reason to test the artefact rather than a dev server stands on its own.
  *
- * ⚠ baseURL ends in `/`, as in the mock suite: navigate with `page.goto('files')`, not `page.goto('/files')`.
+ * ⚠ baseURL ends in `/`: navigate with `page.goto('files')`, not `page.goto('/files')`.
  */
 
 /** Where `vite preview` will serve `app/dist`. run.mjs picks a free one; 5178 is the bare-hands default. */

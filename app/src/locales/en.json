@@ -184,7 +184,7 @@
       "title": "Manage access",
       "hint": "Who can open “{name}”, and as what.",
       "email": "Email address",
-      "emailPlaceholder": "name@example.com",
+      "emailPlaceholder": "name{'@'}example.com",
       "role": "Role",
       "roleOf": "Role of {name}",
       "invite": "Invite",

@@ -65,10 +65,11 @@ jobs:
   # The end-user SPA. Its own job rather than a few more steps in `frontend`
   # because it is a separate surface with its own toolchain (vue-tsc over
   # ~42k lines, eslint, vitest) and a red one should name itself in the
-  # checks list. Nothing here builds a shippable artifact: `app/` is not in
-  # docker/Dockerfile and the Go server has no `/app` route, so this job
-  # answers "does the new code still compile, lint and pass its tests?" and
-  # nothing else.
+  # checks list. It IS a gate on a shippable artifact: docker/Dockerfile builds
+  # `app/` and the binary serves it at the apex (`backend/embed`, `wireStatic`),
+  # so a red job here means the bundle that ships is the broken one. release.yml
+  # runs the same three checks before `binaries`, because a tag can be pushed
+  # from a commit this workflow never saw.
   app:
     name: App (pnpm)
     runs-on: ubuntu-latest
@@ -161,10 +162,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # The end-user SPA against a REAL filex server — the one thing that exercises
-  # `app/src/data/http/` and its contract with the Go handlers. The suite in
-  # `e2e/tests/app/` does NOT: it drives an in-memory mock, needs no backend,
-  # and would pass against a server that answered nothing.
+  # The end-user SPA against a REAL filex server — and now the only coverage it
+  # has. It exercises `app/src/data/http/` and its contract with the Go
+  # handlers. A mock-driven suite used to sit beside it carrying the UI-contract
+  # coverage; it went with the mock, so the screens themselves are not covered
+  # end to end any more.
   #
   # Same shape as the Cypress job above and for the same reason: one command
   # that builds this tree, starts it on a free port against a throwaway data

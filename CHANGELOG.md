@@ -9,17 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **A new end-user app, `app/`.** The file surface people actually work in —
-  My files, Recent, Starred, Shared with me, Trash, search, the details panel,
-  the preview modal, the assistant panel — written from scratch as its own Vue
-  workspace package, in English, Russian and Turkish. ⚠ **filex does not serve
-  it yet**: `backend/embed` carries the admin SPA and the embed widget and
-  nothing else, and the Go server has no `/app` route, so the only way to run it
-  is the demo stand (`docker compose -f docker-compose.app.yml up --build`,
-  then http://localhost:5175/app/). Embedding it in the binary is a later wave.
-  The stand serves a BUILT bundle rather than the dev server, because the dev
-  server's screenshot hooks fake capabilities and post mock rows — against a
-  real backend that would be a demo making claims the server never made.
+- **A new end-user app, and it is now what filex answers with.** The file
+  surface people actually work in — My files, Recent, Starred, Shared with me,
+  Trash, search, the details panel, the preview modal, the assistant panel —
+  written from scratch as its own Vue workspace package, `app/`, in English,
+  Russian and Turkish. It is embedded in the binary (`backend/embed` carries the
+  admin SPA, the embed widget and now the app) and mounted at the apex, so `/`
+  is the drive and `/admin/` stays the operator console; a binary built without
+  the bundle redirects `/` there instead. The image builds it by default and
+  `BUILD_APP=0` leaves it out.
+  A production build of the app refuses to start without `VITE_FILEX_API`, and
+  in a real build the mock repository is aliased out of the bundle rather than
+  left to tree-shaking, so a shipped app cannot quietly serve demo data. The
+  demo itself has to be asked for by name: `vite build --mode demo`.
 - **Download a selection, or a whole folder, as one zip.**
   `GET /api/files/download/zip?path=…&path=…` streams `archive/zip` built on the
   fly from any mix of files and folders. A GET, because the download has to be a

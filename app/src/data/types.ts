@@ -3,7 +3,7 @@ export type NodeKind = 'folder' | 'file';
 export type FileType = 'md' | 'image' | 'ts' | 'pdf' | 'fig' | 'csv' | 'mp4' | 'other';
 
 /** Which placeholder thumbnail the grid card paints; `generic` is the fallback for a type with no art of its own. */
-export type ThumbnailKind = 'mountain' | 'beach' | 'code' | 'document' | 'pdf' | 'figma' | 'spreadsheet' | 'video' | 'generic';
+export type ThumbnailKind = 'mountain' | 'code' | 'document' | 'pdf' | 'figma' | 'spreadsheet' | 'video' | 'generic';
 
 export interface Node {
   id: string;
@@ -22,7 +22,7 @@ export interface Node {
   itemCount?: number;
   fileType?: FileType;
   thumbnail?: ThumbnailKind;
-  /** URL of the real file (served from demo-assets/): the preview modal and downloads read it. */
+  /** URL the server serves the file's own bytes from: the preview modal and downloads read it. */
   assetUrl?: string;
   /** The server's cached 320px preview of the file; the grid and list tiles paint it, never the original. */
   thumbUrl?: string;

@@ -8,9 +8,16 @@ name: Release
 #
 # Job graph — and why it is shaped like this:
 #
-#   binaries ───── desktop  (three installers, attached to the Release)
+#   app-checks ─── binaries ───── desktop  (installers, attached to the Release)
 #   docker ─────── docker-manifest   (one native runner per architecture)
 #   npm            (independent)
+#
+# `app-checks` gates the Release because `binaries` EMBEDS app/ into every
+# shipped binary (see the frontend step below) and a tag can be pushed from any
+# commit, including one CI never ran. Without it the app's own type-check, lint
+# and unit tests were the only checks a release skipped, and `pnpm build` is not
+# a substitute: vite emits a bundle from code vue-tsc rejects. It runs before
+# goreleaser rather than after, because nothing can be un-released.
 #
 # `binaries` is goreleaser alone: it is what CREATES the GitHub Release, and
 # the only thing the other two need. Until v0.25.0 goreleaser and the docker
@@ -36,10 +43,48 @@ permissions:
   packages: write   # push images to ghcr.io
 
 jobs:
+  # ── app/ checks (the SPA the binaries embed) ────────────────────────────
+  # Mirrors the `app` job in ci.yml. It is repeated here and not merely
+  # trusted from CI because release runs on a TAG: whatever commit the tag
+  # points at gets embedded and published, and that commit may never have
+  # gone through a push or pull_request run.
+  app-checks:
+    name: App checks (pnpm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9.12.0"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # ⚠ Required, not an optimisation. `app` imports @brftech/filex-core
+      # through that package's `exports`, which point at `dist/` — and `dist/`
+      # is git-ignored. On a fresh checkout nothing that imports core resolves
+      # until this has run, so `type-check` would fail on missing modules and
+      # report it as the app's own type errors.
+      - name: Build @brftech/filex-core (app resolves it through dist/)
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
+        run: pnpm --filter='@brftech/filex-core' build
+      - name: Type-check
+        env:
+          # vue-tsc needs headroom on the full component bundle.
+          NODE_OPTIONS: "--max-old-space-size=4096"
+        run: pnpm --filter='./app' type-check
+      - name: Lint
+        run: pnpm --filter='./app' lint
+      - name: Unit tests
+        run: pnpm --filter='./app' test
+
   # ── Binaries (linux/macOS/windows × amd64/arm64) → GitHub Release ───────
   # Creates the Release. Everything that uploads to it depends on this job
   # and on nothing else.
   binaries:
+    needs: app-checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

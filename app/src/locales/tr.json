@@ -184,7 +184,7 @@
       "title": "Erişimi yönet",
       "hint": "“{name}” dosyasını kim, hangi yetkiyle açabilir.",
       "email": "E-posta adresi",
-      "emailPlaceholder": "ad@ornek.com",
+      "emailPlaceholder": "ad{'@'}ornek.com",
       "role": "Rol",
       "roleOf": "{name} rolü",
       "invite": "Davet et",

@@ -672,10 +672,12 @@ Jul 5 10:08 AM; data.csv 568 KB Jul 5 09:41 AM; demo.mp4 24.8 MB Jul 3 04:55 PM
 (duration 02:14). Folder dates: Code Jul 8 11:24 AM, Design Jul 1 09:12 AM,
 Documents Jun 28 03:45 PM, Photos Jun 20 10:11 AM, example Jun 18 02:34 PM,
 Archive Jun 14 01:20 PM, Resources Jun 10 04:18 PM, Shared Jun 5 11:03 AM.
-Owner "You" everywhere; user "D" (demo). Thumbnails: images and the video
-render the real files of the demo asset tree (`drive-demo-assets/demo`, see
-DEMO-ASSETS.md — generator, `DEMO_ASSETS_DIR`, the `REF_OVERRIDES` table that
-pins the 16 root entries to the values above); the SVG/CSS placeholders
+Owner "You" everywhere; user "D" (demo). ⚠ The dataset these numbers describe
+no longer exists in the repository: the mock repository, its generated demo
+tree and the directory of real files behind it are all gone, and the app reads
+a filex server instead. The figures above stay as the RECORD of what the
+reference screenshots show — read them as the spec for layout and typography,
+not as data any build will produce. The SVG/CSS placeholders
 (mountain, beach, code block, doc page, spreadsheet, the figma design canvas —
 layer panel wired to the frame it edits, component card, colour styles and an
 empty slot — video gradient) stay as the fallback when the assets are not served. demo.mp4 shows

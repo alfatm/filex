@@ -311,16 +311,15 @@ Maintainer-only. Reproducible, automated by CI.
    PNGs** before committing them — see `e2e/README.md` for the knobs (running
    server, VM/WSL paths, thumbnails, the demo-mode landing page).
 
-   Then copy the ones filex.sh shows:
-
-   ```bash
-   node scripts/sync-site-assets.mjs
-   ```
-
-   ⚠ `site/assets/` is documented as a copy of `docs/screenshots/` and nothing
-   kept it one: on 2026-09-06 the marketing page was still showing the plugins
-   picture whose footer named the **private** GitLab repo, after the README had
-   been fixed. `web/tests/deploy/siteAssets.test.ts` fails the build now.
+   ⚠ **The marketing page's copies are not synced from here any more.** There
+   used to be a `site/assets/` directory in this repository, a `sync-site-assets`
+   script that copied `docs/screenshots/` into it and a test that failed the
+   build when the two drifted — which they had: on 2026-09-06 filex.sh was still
+   showing the plugins picture whose footer named the **private** repo, weeks
+   after the README had been fixed. `site/` is no longer part of this checkout,
+   so the script and its test are gone with it. Whoever owns the marketing page
+   has to re-copy the pictures this step produced; nothing here checks that they
+   did.
 
    ⚠ **A shot the script could not take exits 1.** It used to log a line and
    exit 0, which is how a picture stayed behind for several releases with a

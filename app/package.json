@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "filex end-user UI — Vue 3 SPA served at /app/",
+  "description": "filex end-user UI — Vue 3 SPA served at the apex by the filex binary",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
@@ -12,9 +12,7 @@
     "type-check": "vue-tsc --noEmit",
     "clean": "rimraf dist",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "shot": "node scripts/shot.mjs",
-    "gen:demo": "node scripts/gen-demo-tree.mjs"
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@brftech/filex-core": "workspace:*",
@@ -28,7 +26,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
-    "@playwright/test": "1.62.1",
     "@types/node": "^22.7.0",
     "@vitejs/plugin-vue": "^5.1.4",
     "@vue/test-utils": "^2.4.6",

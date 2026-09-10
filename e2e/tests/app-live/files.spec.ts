@@ -6,11 +6,12 @@ import { ADMIN_EMAIL } from '../../helpers/auth';
  * The end-user app driven against a REAL filex server — the HTTP repository (`app/src/data/http/`) and its contract
  * with the Go handlers, which nothing else in this repository covers.
  *
- * What makes a spec belong here rather than in `tests/app/`:
+ * What makes a spec belong here — the bar set when a mock-driven suite still existed beside it, and worth keeping
+ * now that this is the only suite:
  *
- *   • it must not pass against the mock. Every row these tests read was created by the test through the UI and
- *     stored by the server; nothing asserts a mock constant ("12.4 GB of 100 GB used", "demo@filex.local",
- *     "14 matching items"), and the first test asserts those constants are ABSENT.
+ *   • it must not be able to pass without a server. Every row these tests read was created by the test through
+ *     the UI and stored by the server; nothing asserts a fixture constant ("12.4 GB of 100 GB used",
+ *     "demo@filex.local", "14 matching items"), and the first test asserts those constants are ABSENT.
  *   • it must survive a reload. A row that is still there after `page.reload()` came from the server, not from a
  *     store that was optimistic about a call that failed.
  *
@@ -45,10 +46,10 @@ async function pickMenu(page: Page, name: string, entry: string) {
 /**
  * Navigates to a folder and puts the listing in list view.
  *
- * ⚠ Not `?view=list`. That query hook lives in `app/src/dev/screenshotQuery.ts` behind `import.meta.env.DEV` and is
- * not in the bundle this suite runs — the mock suite can use it, this one has to click the control a user clicks.
- * View mode is per-browser-context state (localStorage) and Playwright gives every test a fresh context, so this
- * runs per navigation rather than once.
+ * ⚠ Not `?view=list`. That query hook was a dev-only shortcut and it no longer exists, so this clicks the control
+ * a user clicks — which is what a suite against a real server should have been doing anyway. View mode is
+ * per-browser-context state (localStorage) and Playwright gives every test a fresh context, so this runs per
+ * navigation rather than once.
  */
 async function openFolder(page: Page, ...segments: string[]) {
   await page.goto(['files', DRIVE, ...segments].map(encodeURIComponent).join('/'));
@@ -201,8 +202,8 @@ test('Move to trash and Restore travel through the server, not the store', async
 test('Download hands back the bytes that were uploaded', async ({ page }) => {
   /*
    * The regression guard for a URL bug this suite caught: `downloadUrl` used to be built in the UI by appending
-   * `?download=1` to `node.assetUrl`, which is right for the mock (a static `/demo-assets/<file>`) and wrong
-   * for HTTP, where `assetUrl` already carries a query string — the second '?' made `path` read as
+   * `?download=1` to `node.assetUrl`, which was right for the mock's static file URLs and wrong for HTTP, where
+   * `assetUrl` already carries a query string — the second '?' made `path` read as
    * `live://Live E2E/renamed.txt?download=1`, and Chromium reported the download as `canceled`. Building the URL
    * is now the data layer's job (`repository.downloadUrl(id)`), so a UI that goes back to string-concatenation
    * fails here on the bytes, not on a suggested filename.

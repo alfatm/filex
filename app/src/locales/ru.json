@@ -184,7 +184,7 @@
       "title": "Управление доступом",
       "hint": "Кто может открыть «{name}» и с какими правами.",
       "email": "Адрес эл. почты",
-      "emailPlaceholder": "name@example.com",
+      "emailPlaceholder": "name{'@'}example.com",
       "role": "Роль",
       "roleOf": "Роль {name}",
       "invite": "Пригласить",
