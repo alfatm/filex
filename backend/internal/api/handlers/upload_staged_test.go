@@ -114,7 +114,7 @@ func newStagedFixtureWith(t *testing.T, tweak func(*api.Deps)) *stagedFixture {
 	require.NoError(t, localDrv.Init(context.Background(), nil))
 	auth.SetEnabled([]auth.Driver{localDrv})
 
-	opsSvc := ops.New(sqlDB, resolver)
+	opsSvc := ops.New(sqlDB, "sqlite3", resolver)
 	require.NoError(t, opsSvc.Migrate(context.Background()))
 
 	cfg := config.Default()

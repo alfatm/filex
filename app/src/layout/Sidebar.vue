@@ -26,7 +26,7 @@ import { useUploadStore } from '@/features/files/uploadStore';
 import { useFormat } from '@/composables/useFormat';
 import { useBrandingStore } from '@/stores/branding';
 import { useCapabilitiesStore } from '@/stores/capabilities';
-import { HOME_STORAGE, useFilesStore } from '@/stores/files';
+import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
 import { Button, IconButton, ProgressBar } from '@/ui';
 import FloatingMenu, { type FloatingMenuEntry } from '@/ui/FloatingMenu.vue';
@@ -256,7 +256,7 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
     <!-- The quota block needs its labels; the rail drops it rather than showing a bar with no numbers. -->
     <div v-if="files.storage && !view.sidebarCollapsed" class="mt-auto shrink-0 pb-[34px] pl-[26px] pt-6">
       <p class="text-15 font-semibold leading-none">
-        {{ files.storage.id === HOME_STORAGE ? t('storage.home', { name: files.storage.name }) : files.storage.name }}
+        {{ files.storage.id === files.homeStorageId ? t('storage.home', { name: files.storage.name }) : files.storage.name }}
       </p>
       <p class="mt-1.5 text-13 leading-none text-text-3">
         {{

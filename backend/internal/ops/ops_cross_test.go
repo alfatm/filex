@@ -84,7 +84,7 @@ func newCrossFixture(t *testing.T, wrapB func(storage.Driver) storage.Driver) *c
 		}
 		return nil, fmt.Errorf("unknown id %d", id)
 	}
-	svc := ops.New(sqlDB, resolver)
+	svc := ops.New(sqlDB, "sqlite3", resolver)
 	require.NoError(t, svc.Migrate(ctx))
 	svc.SetSync(handlers.NewManager(store, resolver))
 

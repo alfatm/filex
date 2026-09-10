@@ -84,3 +84,71 @@ func TestManagerMutate_Rename_SameName_StillOK(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "body", string(body))
 }
+
+// A move preserves the basename, so a taken name in the destination is the
+// same silent overwrite rename had — os.Rename replaces the victim.
+func TestManagerMutate_Move_NameTakenInDest_409_TargetBytesIntact(t *testing.T) {
+	mh, _, _, _, root := newMutateFixture(t)
+
+	require.NoError(t, os.Mkdir(filepath.Join(root, "dest"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "doc.txt"), []byte("source-bytes"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "dest", "doc.txt"), []byte("victim"), 0o644))
+
+	rec := callMutate(t, mh, "move", map[string]any{
+		"path":  "main://dest",
+		"items": []map[string]any{{"path": "main://doc.txt"}},
+	})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+
+	victim, err := os.ReadFile(filepath.Join(root, "dest", "doc.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "victim", string(victim), "the move target was replaced by the source")
+
+	src, err := os.ReadFile(filepath.Join(root, "doc.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "source-bytes", string(src))
+}
+
+// The whole batch is checked before anything moves: one taken name must not
+// leave the items ahead of it already relocated.
+func TestManagerMutate_Move_BatchRefusedBeforeAnyItemMoves(t *testing.T) {
+	mh, _, _, _, root := newMutateFixture(t)
+
+	require.NoError(t, os.Mkdir(filepath.Join(root, "dest"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "free.txt"), []byte("first"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "taken.txt"), []byte("second"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "dest", "taken.txt"), []byte("victim"), 0o644))
+
+	rec := callMutate(t, mh, "move", map[string]any{
+		"path": "main://dest",
+		"items": []map[string]any{
+			{"path": "main://free.txt"},
+			{"path": "main://taken.txt"},
+		},
+	})
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+
+	// The item ahead of the collision is still at its source.
+	first, err := os.ReadFile(filepath.Join(root, "free.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "first", string(first), "an item ahead of the collision was moved anyway")
+	_, err = os.Stat(filepath.Join(root, "dest", "free.txt"))
+	assert.True(t, os.IsNotExist(err), "a refused batch moved an item into the destination")
+}
+
+// Moving an item into the directory it already sits in stays a no-op.
+func TestManagerMutate_Move_IntoOwnDir_StillOK(t *testing.T) {
+	mh, _, _, _, root := newMutateFixture(t)
+
+	require.NoError(t, os.WriteFile(filepath.Join(root, "stay.txt"), []byte("body"), 0o644))
+
+	rec := callMutate(t, mh, "move", map[string]any{
+		"path":  "main://",
+		"items": []map[string]any{{"path": "main://stay.txt"}},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	body, err := os.ReadFile(filepath.Join(root, "stay.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "body", string(body))
+}

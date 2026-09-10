@@ -121,6 +121,26 @@ describe('Sidebar storages', () => {
     wrapper.unmount();
   });
 
+  /**
+   * The highlight was moved off the `main` constant onto the store's `homeStorageId`; the quota-block label was
+   * not, so on a dataset with no drive called `main` the home drive got no "home folder" label at all.
+   */
+  it('names the home drive as the home in the quota block whatever it is called', async () => {
+    const { files, wrapper } = await mountSidebar();
+    files.storages = [drive('demo'), drive('archive')];
+    await wrapper.vm.$router.push('/files/demo');
+    await files.openPath('demo', '');
+    await nextTick();
+    expect(wrapper.text()).toContain('demo — home folder');
+
+    // A drive that is not the home one is named plainly.
+    await wrapper.vm.$router.push('/files/archive');
+    await files.openPath('archive', '');
+    await nextTick();
+    expect(wrapper.text()).not.toContain('archive — home folder');
+    wrapper.unmount();
+  });
+
   it('marks no drive at all away from the folder view', async () => {
     const { wrapper } = await mountSidebar();
     await wrapper.vm.$router.push('/trash');

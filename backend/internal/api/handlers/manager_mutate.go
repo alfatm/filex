@@ -315,6 +315,27 @@ func (h *Manager) vfMove(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A move keeps the basename, so it lands on whatever already holds that
+	// name in the destination — and no driver refuses an occupied destination
+	// for us: os.Rename SILENTLY REPLACES it, the object stores overwrite the
+	// key. The same defect vfRename had. Checked up front over the whole batch
+	// for the same reason as the guard above: a mid-loop refusal would leave
+	// the first half moved and the second half not.
+	for _, it := range body.Items {
+		_, srcRel := splitAdapterPath(it.Path)
+		if srcRel == "" || pathHasDotDot(srcRel) {
+			continue // the move loop below answers 400 for these
+		}
+		dstRel := path.Join(destRel, path.Base(srcRel))
+		if dstRel == srcRel {
+			continue // moving into its own directory is a no-op, not a collision
+		}
+		if err := ensureNameFree(r.Context(), drv, dstRel); err != nil {
+			writeJSON(w, mapDriverErr(err), map[string]string{"error": "move: " + err.Error()})
+			return
+		}
+	}
+
 	srcDirs := make(map[string]struct{})
 	moved := make([]string, 0, 1)
 	for _, it := range body.Items {

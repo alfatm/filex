@@ -587,7 +587,11 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 	ooSvc.StorageResolver = resolver
 
 	// Async ops queue — DB-backed, restart-safe.
-	opsSvc := ops.New(sqlDB, resolver)
+	opsSvc := ops.New(sqlDB, dbDrv.Dialect(), resolver)
+	// Only the crash-recovery requeue now — the schema arrives with db.Migrate
+	// above, which fails hard. A warning is the right level: the table is
+	// there either way, and the cost of a failure here is that ops interrupted
+	// by the last shutdown stay parked in `running` rather than resuming.
 	if err := opsSvc.Migrate(ctx); err != nil {
 		slog.Warn("ops: migrate", slog.String("err", err.Error()))
 	}

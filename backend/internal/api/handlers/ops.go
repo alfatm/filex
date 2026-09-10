@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path"
 	"strconv"
@@ -401,8 +403,15 @@ func (o *Ops) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	op, err := o.Service.Get(r.Context(), id)
-	if err != nil {
+	// Only "no such row" is a 404. Mapping every error here made a broken
+	// queue indistinguishable from a stale op id — the DB failure that took
+	// the whole queue down on Postgres reported itself as a tidy 404.
+	if errors.Is(err, sql.ErrNoRows) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown op"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, op)

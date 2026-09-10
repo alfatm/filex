@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
+import { nextTick } from 'vue';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { repository } from '@/data';
 import { resetMock } from '@/data/mock';
@@ -39,6 +40,7 @@ async function setup(nodes: Node[], mode: 'move' | 'copy') {
 
 /** The dialog is teleported out of the wrapper, so the document is what holds it. */
 const driveOptions = () => [...document.querySelectorAll('option')].map((o) => [o.value, o.disabled] as const);
+const driveLabels = () => [...document.querySelectorAll('option')].map((o) => o.textContent);
 const folderRows = () => [...document.querySelectorAll<HTMLButtonElement>('button[role="option"]')];
 
 describe('DestinationModal', () => {
@@ -66,6 +68,19 @@ describe('DestinationModal', () => {
     const { wrapper } = await setup([folder('archive://2025', '2025', 'archive://'), folder('main://Docs', 'Docs', 'main://')], 'copy');
     close = () => wrapper.unmount();
     expect(driveOptions().every(([, disabled]) => disabled)).toBe(true);
+  });
+
+  /**
+   * The highlight moved off the `main` constant onto the store's `homeStorageId`; this label did not, so on a
+   * dataset with no drive called `main` no option was marked as the home drive.
+   */
+  it('labels the home drive as the home whatever it is called', async () => {
+    const { wrapper, files } = await setup([folder('archive://2025', '2025', 'archive://')], 'move');
+    close = () => wrapper.unmount();
+    files.storages = [drive('demo'), drive('archive')];
+    await nextTick();
+
+    expect(driveLabels()).toEqual(['demo — home folder', 'archive']);
   });
 
   // The tree blocks a folder's whole subtree by walking into it. A filter answers with a flat list and no walk, so

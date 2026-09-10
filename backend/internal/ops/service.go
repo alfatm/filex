@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,10 @@ const (
 	// layer (same reason DBSync is injected rather than reimplemented here).
 	OpUploadCommit = "upload-commit"
 )
+
+// dialectPostgres is the one engine whose placeholder syntax differs from
+// the `?` every statement here is written with. Matches db.Driver.Dialect().
+const dialectPostgres = "postgres"
 
 // Status values.
 const (
@@ -80,7 +85,11 @@ type Op struct {
 
 // Service is the queue + worker bundle.
 type Service struct {
-	db              *sql.DB
+	db *sql.DB
+	// dialect is the goose dialect name of db ("sqlite3", "postgres",
+	// "mysql"). Every statement in this package is written with `?`
+	// placeholders; rebind turns those into what the engine actually parses.
+	dialect         string
 	storageResolver func(int64) (storage.Driver, error)
 	dbsync          DBSync
 	uploadCommitter UploadCommitter
@@ -146,64 +155,63 @@ const TrashPrefix = trash.Prefix
 
 // New returns a Service that talks to the given *sql.DB.
 //
-// Callers must invoke Migrate before Submit/Status to ensure the
-// pending_ops table exists. Run starts the worker goroutine.
-func New(database *sql.DB, resolver func(int64) (storage.Driver, error)) *Service {
+// dialect is the engine's goose dialect name ("sqlite3", "postgres",
+// "mysql") — pass db.Driver.Dialect(). It is a parameter rather than a
+// setter on purpose: the queue speaks SQL in every method, and a dialect
+// that can be forgotten at one call site is exactly how this package came to
+// be silently broken on everything but SQLite.
+//
+// Callers must invoke Migrate before Submit/Status. Run starts the worker
+// goroutine; the pending_ops schema itself comes from goose.
+func New(database *sql.DB, dialect string, resolver func(int64) (storage.Driver, error)) *Service {
 	return &Service{
 		db:              database,
+		dialect:         dialect,
 		storageResolver: resolver,
 		wakeup:          make(chan struct{}, 1),
 		stop:            make(chan struct{}),
 	}
 }
 
-// Migrate ensures the pending_ops table exists. Idempotent.
+// Migrate re-queues rows a previous process left mid-flight. Idempotent.
 //
-// We don't drive this through goose because it's an internal queue table —
-// the migration is tiny and would be the only one in the package.
+// The pending_ops schema itself belongs to goose (backend/db/migrations/*/
+// 00040_pending_ops.sql). It used to be CREATEd right here from SQLite-only
+// DDL — `INTEGER PRIMARY KEY AUTOINCREMENT`, `DATETIME` — so on Postgres and
+// MySQL the table was never created at all, and because the caller only
+// logged the failure the server booted with a queue that answered 500 to
+// every read and write.
 func (s *Service) Migrate(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS pending_ops (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			kind TEXT NOT NULL,
-			storage_id INTEGER NOT NULL,
-			sources_json TEXT NOT NULL,
-			dest TEXT,
-			total INTEGER NOT NULL DEFAULT 0,
-			done INTEGER NOT NULL DEFAULT 0,
-			failed INTEGER NOT NULL DEFAULT 0,
-			status TEXT NOT NULL DEFAULT 'pending',
-			error TEXT,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			started_at DATETIME,
-			finished_at DATETIME
-		)`)
-	if err != nil {
-		return fmt.Errorf("ops: create table: %w", err)
-	}
-	_, _ = s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_pending_ops_status ON pending_ops(status, created_at)`)
-	// Cross-storage destination. Added after the table shipped, so this is an
-	// ALTER whose "duplicate column name" error is the expected outcome on
-	// every boot but the first — the queue table is not driven by goose (see
-	// the comment above), and a table rebuild would drop in-flight work.
-	s.addColumn(ctx, "dest_storage_id", `ALTER TABLE pending_ops ADD COLUMN dest_storage_id INTEGER NOT NULL DEFAULT 0`)
-	// Who asked for the op. Same story: added after the table shipped.
-	s.addColumn(ctx, "user_id", `ALTER TABLE pending_ops ADD COLUMN user_id INTEGER`)
 	// On boot, any row left in `running` is from a previous crash — re-queue.
 	if _, err := s.db.ExecContext(ctx, `UPDATE pending_ops SET status='pending', started_at=NULL WHERE status='running'`); err != nil {
-		slog.Warn("ops: requeue stale running rows", slog.String("err", err.Error()))
+		return fmt.Errorf("ops: requeue stale running rows: %w", err)
 	}
 	return nil
 }
 
-// addColumn applies one ALTER whose "duplicate column name" error is the
-// expected outcome on every boot but the first — the queue table is not driven
-// by goose (see Migrate), and rebuilding it would drop in-flight work.
-func (s *Service) addColumn(ctx context.Context, name, ddl string) {
-	if err := func() error { _, e := s.db.ExecContext(ctx, ddl); return e }(); err != nil &&
-		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		slog.Warn("ops: add column", slog.String("column", name), slog.String("err", err.Error()))
+// rebind rewrites the `?` placeholders this package writes its statements
+// with into the form the configured engine parses. SQLite and MySQL take `?`
+// as it stands; Postgres wants $1..$n and rejects `?` as a syntax error.
+//
+// None of the package's statements contain a literal `?` inside a string, so
+// counting every `?` is enough — no SQL parsing required.
+func (s *Service) rebind(q string) string {
+	if s.dialect != dialectPostgres {
+		return q
 	}
+	var b strings.Builder
+	b.Grow(len(q) + 8)
+	n := 0
+	for i := 0; i < len(q); i++ {
+		if q[i] != '?' {
+			b.WriteByte(q[i])
+			continue
+		}
+		n++
+		b.WriteByte('$')
+		b.WriteString(strconv.Itoa(n))
+	}
+	return b.String()
 }
 
 // Submit enqueues a same-storage op and pokes the worker.
@@ -250,14 +258,23 @@ func (s *Service) SubmitTo(ctx context.Context, kind string, storageID, destStor
 	if u := auth.UserFrom(ctx); u != nil && u.ID > 0 {
 		userID = u.ID
 	}
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO pending_ops (kind, storage_id, dest_storage_id, sources_json, dest, total, status, user_id)
-		 VALUES (?,?,?,?,?,?,?,?)`,
-		kind, storageID, destStorageID, string(srcJSON), dest, len(sources), StatusPending, userID)
-	if err != nil {
-		return nil, fmt.Errorf("ops: insert: %w", err)
+	const insertSQL = `INSERT INTO pending_ops (kind, storage_id, dest_storage_id, sources_json, dest, total, status, user_id)
+		 VALUES (?,?,?,?,?,?,?,?)`
+	args := []any{kind, storageID, destStorageID, string(srcJSON), dest, len(sources), StatusPending, userID}
+	var id int64
+	if s.dialect == dialectPostgres {
+		// pgx implements no LastInsertId — on Postgres the new id has to come
+		// back with the row or the caller has nothing to poll for.
+		if err := s.db.QueryRowContext(ctx, s.rebind(insertSQL)+` RETURNING id`, args...).Scan(&id); err != nil {
+			return nil, fmt.Errorf("ops: insert: %w", err)
+		}
+	} else {
+		res, err := s.db.ExecContext(ctx, insertSQL, args...)
+		if err != nil {
+			return nil, fmt.Errorf("ops: insert: %w", err)
+		}
+		id, _ = res.LastInsertId()
 	}
-	id, _ := res.LastInsertId()
 	s.poke()
 	return s.Get(ctx, id)
 }
@@ -267,7 +284,7 @@ const opColumns = `id, kind, storage_id, COALESCE(dest_storage_id,0), sources_js
 
 // Get returns the current state of an op.
 func (s *Service) Get(ctx context.Context, id int64) (*Op, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT `+opColumns+` FROM pending_ops WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, s.rebind(`SELECT `+opColumns+` FROM pending_ops WHERE id=?`), id)
 	return scanOp(row)
 }
 
@@ -283,7 +300,7 @@ func (s *Service) List(ctx context.Context, status string) ([]*Op, error) {
 	)
 	if status != "" {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT `+cols+` FROM pending_ops WHERE status=? ORDER BY id DESC LIMIT 200`, status)
+			s.rebind(`SELECT `+cols+` FROM pending_ops WHERE status=? ORDER BY id DESC LIMIT 200`), status)
 	} else {
 		rows, err = s.db.QueryContext(ctx,
 			`SELECT `+cols+` FROM pending_ops ORDER BY id DESC LIMIT 200`)
@@ -393,7 +410,7 @@ func (s *Service) claimNext(ctx context.Context) (*Op, bool, error) {
 		}
 		return nil, false, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE pending_ops SET status=?, started_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'`, StatusRunning, id); err != nil {
+	if _, err := tx.ExecContext(ctx, s.rebind(`UPDATE pending_ops SET status=?, started_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'`), StatusRunning, id); err != nil {
 		return nil, false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -449,7 +466,7 @@ func (s *Service) execute(ctx context.Context, op *Op) {
 		} else {
 			op.Done++
 		}
-		_, _ = s.db.ExecContext(ctx, `UPDATE pending_ops SET done=?, failed=? WHERE id=?`, op.Done, op.Failed, op.ID)
+		_, _ = s.db.ExecContext(ctx, s.rebind(`UPDATE pending_ops SET done=?, failed=? WHERE id=?`), op.Done, op.Failed, op.ID)
 	}
 
 	status := StatusOK
@@ -465,7 +482,7 @@ func (s *Service) execute(ctx context.Context, op *Op) {
 		errMsg = errMessage(lastErr)
 	}
 	_, _ = s.db.ExecContext(ctx,
-		`UPDATE pending_ops SET status=?, error=?, finished_at=CURRENT_TIMESTAMP WHERE id=?`,
+		s.rebind(`UPDATE pending_ops SET status=?, error=?, finished_at=CURRENT_TIMESTAMP WHERE id=?`),
 		status, errMsg, op.ID)
 }
 
@@ -481,7 +498,7 @@ func (s *Service) withSubmitter(ctx context.Context, op *Op) context.Context {
 		return ctx
 	}
 	var email string
-	if err := s.db.QueryRowContext(ctx, `SELECT email FROM users WHERE id=?`, *op.UserID).Scan(&email); err != nil {
+	if err := s.db.QueryRowContext(ctx, s.rebind(`SELECT email FROM users WHERE id=?`), *op.UserID).Scan(&email); err != nil {
 		return ctx
 	}
 	return auth.WithUser(ctx, &model.User{ID: *op.UserID, Email: email})
@@ -660,7 +677,7 @@ func pathExists(ctx context.Context, drv storage.Driver, p string) bool {
 
 func (s *Service) fail(ctx context.Context, op *Op, msg string) {
 	_, _ = s.db.ExecContext(ctx,
-		`UPDATE pending_ops SET status=?, error=?, finished_at=CURRENT_TIMESTAMP, failed=total WHERE id=?`,
+		s.rebind(`UPDATE pending_ops SET status=?, error=?, finished_at=CURRENT_TIMESTAMP, failed=total WHERE id=?`),
 		StatusFailed, msg, op.ID)
 }
 

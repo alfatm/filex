@@ -8,7 +8,7 @@ import { subjectMessage } from '@/i18n/subject';
 import { isInside, splitPath } from '@/lib/address';
 import { errorMessage } from '@/lib/errors';
 import FolderIcon from '@/pages/files/FolderIcon.vue';
-import { HOME_STORAGE, useFilesStore } from '@/stores/files';
+import { useFilesStore } from '@/stores/files';
 import { Button, Input, Select } from '@/ui';
 import Modal from '@/ui/Modal.vue';
 
@@ -47,7 +47,7 @@ const storageId = ref(source);
 const storageOptions = computed(() =>
   files.storages.map((s) => ({
     value: s.id,
-    label: s.id === HOME_STORAGE ? t('storage.home', { name: s.name }) : s.name,
+    label: s.id === files.homeStorageId ? t('storage.home', { name: s.name }) : s.name,
     disabled: copying.value && !(sourceDrives.size === 1 && sourceDrives.has(s.id)),
   })),
 );
