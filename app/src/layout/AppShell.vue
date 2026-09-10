@@ -3,8 +3,12 @@ import { defineAsyncComponent, onBeforeUnmount, onMounted, watch } from 'vue';
 import { repository } from '@/data';
 import { useDragStore } from '@/features/files/dragStore';
 import { useSettingsStore } from '@/features/settings/settingsStore';
+import { useUploadStore } from '@/features/files/uploadStore';
+import { LOCALES, setLocale, type Locale } from '@/i18n';
+import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
+import SessionExpiredModal from './SessionExpiredModal.vue';
 import Sidebar from './Sidebar.vue';
 import ToastHost from './ToastHost.vue';
 import TopBar from './TopBar.vue';
@@ -17,6 +21,31 @@ const view = useViewStore();
 const settings = useSettingsStore();
 const files = useFilesStore();
 const drag = useDragStore();
+const capabilities = useCapabilitiesStore();
+
+/*
+ * Start-up that needs an account, and therefore lives HERE rather than in App.vue: the shell is the part of the
+ * app that only exists once somebody is signed in, so mounting it is the moment these are worth asking for. From
+ * App.vue they also ran on the sign-in screen, where every one of them is a 401.
+ */
+
+// The account carries the language and the time zone, so they follow the person to another browser. Local storage
+// is what an offline or demo run falls back to; an account that has never set them leaves that choice standing.
+void files.bootstrap().then(() => {
+  const account = files.user;
+  if (!account) return;
+  if (account.locale && LOCALES.includes(account.locale as Locale)) setLocale(account.locale as Locale);
+  if (account.timeZone) settings.apply({ ...settings.settings, timeZone: account.timeZone });
+});
+void capabilities.load();
+// A snapshot that never arrived leaves every action reading "Not available on this server" for the rest of the
+// session; coming back online is the one moment worth asking again.
+window.addEventListener('online', () => {
+  if (capabilities.failed) void capabilities.load();
+});
+// A reload leaves the server holding whatever a transfer had staged. Asking about those sessions is what turns
+// them back into rows the person can carry on or throw away, instead of bytes that sit there until they expire.
+void useUploadStore().restore();
 
 /**
  * The drive list, again, after anything changed the files.
@@ -108,6 +137,9 @@ onBeforeUnmount(() => {
     <!-- Full height beside the topbar (spec §6: header at the topbar's level, search box shrinks). -->
     <AssistantPanel v-if="view.assistantOpen" @close="view.assistantOpen = false" />
     <SettingsModal v-if="settings.open" />
+    <!-- The cookie ran out: raised by the HTTP client, shown here because a lost session is the shell's news and
+         never the sign-in screen's. -->
+    <SessionExpiredModal />
     <ToastHost />
   </div>
 </template>

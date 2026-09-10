@@ -25,6 +25,23 @@ interface RequestOptions {
   /** Appended as a query string; `undefined` and `null` values are dropped. */
   query?: Record<string, string | number | boolean | undefined | null>;
   signal?: AbortSignal;
+  /**
+   * This call has its own meaning for a 401, so it is not the shell's business. Sign-in, the "who am I" behind the
+   * router's guard and the current-password check in Settings → Security are all answered 401 by filex without
+   * anybody's session having ended — and a shell that reacted to those would offer to sign the person in again
+   * from inside the sign-in form, or from a mistyped password.
+   */
+  expectUnauthorized?: boolean;
+}
+
+/**
+ * What to do when the server stops recognising this browser. Set once at start-up (main.ts) and called for every
+ * 401 that no caller claimed as its own; the handler is what decides how often the person is told.
+ */
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  unauthorizedHandler = handler;
 }
 
 function withQuery(path: string, query: RequestOptions['query']): string {
@@ -44,22 +61,22 @@ function messageOf(status: number, body: unknown): string {
 }
 
 /** The shared tail of every call: read the body, raise the interesting statuses, hand back the payload. */
-async function settle<T>(response: Response): Promise<T> {
+async function settle<T>(response: Response, expectUnauthorized = false): Promise<T> {
   const text = await response.text();
   const payload: unknown = text ? safeParse(text) : null;
   if (!response.ok) {
-    // 401 is raised like any other status, deliberately: it was also broadcast as a "session expired" event that
-    // nothing ever listened for, and could not have been listened for safely — a wrong current password in
-    // Settings → Security is a 401 too, so a shell acting on the event would sign the person out of the app from
-    // inside the password form. Bring it back once this app owns a sign-in route (today's form lives in the admin
-    // SPA) and a caller can say which 401s it expects; until then the layer that made the call is the one that knows.
+    // A 401 is still raised like any other status — the caller that made the request is the one that knows what
+    // it was doing — but it is ALSO reported, because an expired cookie shows up nowhere else: every screen just
+    // starts failing. The callers for which a 401 is an answer rather than a surprise say so with
+    // `expectUnauthorized`, so nothing announces a lost session from inside the sign-in or password forms.
+    if (response.status === 401 && !expectUnauthorized) unauthorizedHandler?.();
     throw new HttpError(response.status, payload, messageOf(response.status, payload));
   }
   return payload as T;
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, query, signal } = options;
+  const { method = 'GET', body, query, signal, expectUnauthorized } = options;
   const response = await fetch(withQuery(path, query), {
     method,
     signal,
@@ -69,7 +86,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 
-  return settle<T>(response);
+  return settle<T>(response, expectUnauthorized);
 }
 
 /**

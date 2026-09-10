@@ -175,6 +175,43 @@ export interface UploadSession {
 }
 
 /**
+ * What the sign-in form sends.
+ *
+ * `identifier` and not `email`: filex's local realm resolves an e-mail address OR a username, and the field is
+ * labelled for both. `totp` is only ever filled in once the server has said it wants one — a realm without a
+ * second factor rejects nothing for its absence, and asking everybody up front for a code most accounts do not
+ * have is how a sign-in screen teaches people to ignore it.
+ */
+export interface Credentials {
+  identifier: string;
+  password: string;
+  totp?: string;
+  /** Ask the server for a long-lived session rather than one that ends with the browser. */
+  remember?: boolean;
+}
+
+/**
+ * What the sign-in screen has to know BEFORE anyone is signed in (`GET /api/capabilities`, public).
+ *
+ * Separate from the `Capabilities` snapshot the shell reads: that one is asked for as a signed-in user and folds
+ * in the assistant probe, which answers 401 to a visitor. This is the pre-session half — which realms may be
+ * offered, whether SSO should take over on its own, and the build to print under the card.
+ */
+export interface AuthOptions {
+  /** Realm names, as filex's `AUTH_DRIVERS` spells them: "local", "oidc", "proxyheader". Empty means local only. */
+  drivers: string[];
+  /** FILEX_OIDC_AUTO_REDIRECT: an SSO-first install sends a visitor to the IdP instead of showing the form. */
+  oidcAutoRedirect: boolean;
+  /** `<version> (<commit>, <date>)`, printed under the card; empty when the server does not say. */
+  version: string;
+}
+
+/** What a server that has not answered is assumed to offer: the password form, and nothing else. */
+export function noAuthOptions(): AuthOptions {
+  return { drivers: [], oidcAutoRedirect: false, version: '' };
+}
+
+/**
  * How the signed-in account authenticates. filex's second factor and the password both belong to the auth
  * provider, not to this app: an OIDC realm answers `changePassword: false`, and its second step is configured
  * wherever the identity provider lives.

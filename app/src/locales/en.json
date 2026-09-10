@@ -7,6 +7,36 @@
     "loading": "Loading",
     "unavailable": "Not available on this server"
   },
+  "login": {
+    "title": "Sign in",
+    "subtitle": "Sign in with your {app} account",
+    "identifier": "E-mail or username",
+    "password": "Password",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password",
+    "useTotp": "Use 2FA code",
+    "hideTotp": "Hide 2FA code",
+    "totp": "2FA code",
+    "remember": "Stay signed in",
+    "submit": "Sign in",
+    "oidc": "Sign in with SSO",
+    "or": "or",
+    "local": "Sign in with a password instead",
+    "redirecting": "Taking you to your identity provider…",
+    "errCredentials": "Wrong e-mail, username or password",
+    "errTotp": "That two-factor code was missing or wrong",
+    "errDisabled": "This account is disabled. Ask your administrator.",
+    "errLimited": "Sign-in is temporarily limited to the platform operator",
+    "errOidc": "The identity provider did not sign you in. Try again, or use a password.",
+    "errUnreachable": "Could not reach the server. Try again.",
+    "errNoRealm": "This installation has no sign-in method enabled.",
+    "expired": {
+      "title": "Your session has ended",
+      "body": "The server no longer recognises this browser — your sign-in expired, or it was ended elsewhere. Sign in again to carry on.",
+      "again": "Sign in again",
+      "later": "Not now"
+    }
+  },
   "nav": {
     "menu": "Menu",
     "home": "Home",

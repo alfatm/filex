@@ -7,6 +7,7 @@ import type {
   AssistantContext,
   AssistantEvent,
   AuthMethods,
+  AuthOptions,
   AssistantMode,
   Branding,
   Capabilities,
@@ -15,6 +16,7 @@ import type {
   NotifyPrefs,
   Person,
   ProfilePatch,
+  Credentials,
   SearchQuery,
   SearchResult,
   Session,
@@ -42,6 +44,21 @@ export const OPERATION_PENDING = 'operationPending';
 /** filex refuses anything shorter, so the form says so before a request goes out. */
 export const MIN_PASSWORD_LENGTH = 8;
 
+/**
+ * Why a sign-in was refused.
+ *
+ * `signIn` rejects with an Error carrying one of these rather than the server's own sentence, because the four
+ * mean four different things to the person in front of the form: one is "try again", one is "and now the code",
+ * and two are "there is nothing you can do here". filex answers all but the disabled one with 401, so the body is
+ * what separates them — see backend/internal/api/handlers/auth.go.
+ */
+export const INVALID_CREDENTIALS = 'invalidCredentials';
+/** The password was RIGHT and the second factor was missing or wrong; the form asks for the code. */
+export const TOTP_REQUIRED = 'totpRequired';
+export const ACCOUNT_DISABLED = 'accountDisabled';
+/** Multi-tenant maintenance: only the platform operator may sign in right now. */
+export const SIGN_IN_LIMITED = 'signInLimited';
+
 export interface Repository {
   listStorages(): Promise<Storage[]>;
   getStorage(id: string): Promise<Storage>;
@@ -67,6 +84,28 @@ export interface Repository {
   /** Options of the People chip: everyone who can own a row in the user's listings. */
   listFilterPeople(): Promise<Person[]>;
   currentUser(): Promise<User>;
+  /**
+   * The account this browser is already signed in as, or null when it is signed in as nobody.
+   *
+   * Distinct from `currentUser`, which every screen calls and which throws for either reason: the router's guard
+   * has to tell "no session" (send them to the form) from "the server is unreachable" (do not), and a caught
+   * exception cannot say which it was without the data layer's own error shape leaking upwards.
+   */
+  session(): Promise<User | null>;
+  /**
+   * Signs in and answers with the account. Rejects with `INVALID_CREDENTIALS`, `TOTP_REQUIRED`,
+   * `ACCOUNT_DISABLED` or `SIGN_IN_LIMITED`; anything else is a transport failure and reaches the caller as it is.
+   */
+  signIn(credentials: Credentials): Promise<User>;
+  /** Ends this browser's session, server-side and in the cookie. Never rejects: local state is cleared regardless. */
+  signOut(): Promise<void>;
+  /** Which realms this installation offers, and the build — read by the sign-in screen before there is a session. */
+  authOptions(): Promise<AuthOptions>;
+  /**
+   * Where to send the browser to start an SSO sign-in, or null when the installation has no IdP. A navigation and
+   * not a request: the IdP owns the next few pages. `returnTo` is where filex lands the person afterwards.
+   */
+  oidcStartUrl(returnTo: string): string | null;
   /** Saves the account fields the settings modal owns and answers with the account as it now stands. */
   updateProfile(patch: ProfilePatch): Promise<User>;
   /** Rejects with `WRONG_PASSWORD` when `currentPassword` is not the account's. */

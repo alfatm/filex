@@ -22,6 +22,23 @@
     font: inherit;
     color: inherit;
   }
+  /*
+   * A field the browser filled in. Chrome paints its own pale-blue over it, which on the dark theme is a slab of
+   * the wrong colour with barely readable text inside — and the sign-in form, where autofill happens most, is the
+   * first screen anybody sees.
+   *
+   * The text colour is settable; the background is not, so it is left to the animation Chrome uses to apply it and
+   * that animation is postponed indefinitely. This keeps the field TRANSPARENT rather than repainting it, which is
+   * what the layout needs: the visible surface belongs to the wrapper around the input, and it is not the same
+   * colour everywhere (`bg-bg` in the shared control, `bg-bg-muted` on the sign-in form).
+   */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--c-text);
+    caret-color: var(--c-text);
+    transition: background-color 600000s 0s;
+  }
 }
 
 @layer utilities {

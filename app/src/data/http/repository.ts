@@ -1,7 +1,7 @@
-import { DUPLICATE_NAME, OPERATION_PENDING, WRONG_PASSWORD, type Repository } from '../repository';
+import { ACCOUNT_DISABLED, DUPLICATE_NAME, INVALID_CREDENTIALS, OPERATION_PENDING, SIGN_IN_LIMITED, TOTP_REQUIRED, WRONG_PASSWORD, type Repository } from '../repository';
 import { matchesFilter, MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
-import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantContext, type AssistantConversation, type AssistantMode, type AssistantReport, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type Branding, type Capabilities, type ListingFilter, type Node, type Person, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
+import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantContext, type AssistantConversation, type AssistantMode, type AssistantReport, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type AuthOptions, type Branding, type Capabilities, type ListingFilter, type Node, type Person, type Credentials, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
 import { i18n } from '@/i18n';
 import { isInside, joinPath, nameOf, parentPath, splitPath } from '@/lib/address';
 import { HttpError, putChunk, request, streamJSON } from './client';
@@ -384,6 +384,23 @@ function toUser(wire: WireUser): User {
   };
 }
 
+/**
+ * Which of the four sign-in refusals this is.
+ *
+ * Anything that is not one of them — a 500, a proxy's HTML error page, a dropped connection — is reported as bad
+ * credentials only if the server said 401/403; otherwise the transport error is what the form should show, so it
+ * is re-raised by the caller under its own message.
+ */
+function refusalOf(error: unknown): string {
+  if (!(error instanceof HttpError)) throw error;
+  const body = (error.body ?? {}) as WireLoginRefusal;
+  if (body.disabled) return ACCOUNT_DISABLED;
+  if (body.maintenance) return SIGN_IN_LIMITED;
+  if (body.totp_required) return TOTP_REQUIRED;
+  if (error.status === 401 || error.status === 403) return INVALID_CREDENTIALS;
+  throw error;
+}
+
 /** `chatSessionView` from the server: metadata only, never message text. */
 interface WireChatSession {
   id: string;
@@ -429,6 +446,26 @@ interface WireVersion {
   /** Absent on revisions taken before filex recorded who took them; there is no backfill for those. */
   created_by?: number;
   author_name?: string;
+}
+
+/**
+ * The pre-session half of `model.Capabilities`.
+ *
+ * Read from `/api/capabilities`, which is public — the same handler as `/api/files/capabilities`, but asked for
+ * without the assistant probe beside it, because that one needs a session and a visitor at the sign-in screen has
+ * none.
+ */
+interface WireAuthOptions {
+  auth_drivers?: string[];
+  oidc_auto_redirect?: boolean;
+  version?: string;
+}
+
+/** The body filex answers a refused sign-in with; the status alone cannot tell the four refusals apart. */
+interface WireLoginRefusal {
+  totp_required?: boolean;
+  disabled?: boolean;
+  maintenance?: boolean;
 }
 
 /** `model.Capabilities` — only the fields the app gates on. */
@@ -607,6 +644,92 @@ export class HttpRepository implements Repository {
   }
 
   /**
+   * The session behind this browser's cookie, or null when there is none.
+   *
+   * The one place a 401 is read as an answer rather than as a failure — which is also why it asks the server
+   * every time instead of going through `currentUser`'s cache: it is the question "does this cookie still work",
+   * and a remembered answer cannot say. The router's guard wants to know WHICH kind of no, so that a server that
+   * is merely down does not look like a sign-out and throw the person at the form with their work behind it.
+   */
+  async session(): Promise<User | null> {
+    try {
+      const { user } = await request<{ user: WireUser }>('/api/auth/me', { expectUnauthorized: true });
+      this.user = toUser(user);
+      return this.user;
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 401) {
+        this.user = null;
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Signs in against the local realm.
+   *
+   * filex answers a wrong password, a missing second factor and a wrong second factor with the same 401 — on
+   * purpose, so an anonymous caller learns nothing — and marks the two TOTP cases in the BODY, which is the only
+   * thing that lets the form ask for a code instead of saying the password was wrong. A disabled account and a
+   * locked-down tenant come back as 403 with their own markers.
+   */
+  async signIn(credentials: Credentials): Promise<User> {
+    try {
+      const { user } = await request<{ user: WireUser }>('/api/auth/login', {
+        method: 'POST',
+        expectUnauthorized: true,
+        body: {
+          email: credentials.identifier,
+          password: credentials.password,
+          totp: credentials.totp ?? '',
+          remember: credentials.remember ?? false,
+        },
+      });
+      // The answer IS the account, so the cache the rest of the app reads is filled here rather than by a second
+      // round trip to /api/auth/me on the first screen after the form.
+      this.user = toUser(user);
+      return this.user;
+    } catch (error) {
+      throw new Error(refusalOf(error));
+    }
+  }
+
+  /**
+   * Ends the session. The cached account goes with it — this instance outlives the sign-out (the app reloads
+   * itself onto the form rather than tearing down the module), and a stale `this.user` would answer `session()`
+   * for the person who just left.
+   */
+  async signOut(): Promise<void> {
+    try {
+      await request('/api/auth/logout', { method: 'POST' });
+    } catch (error) {
+      // A server that could not be told is still a browser that is done with this account: the cookie is cleared
+      // by the reload that follows, and refusing to sign out because the network blinked leaves the person
+      // looking at somebody else's files.
+      console.error('sign-out failed server-side', error);
+    } finally {
+      this.user = null;
+    }
+  }
+
+  async authOptions(): Promise<AuthOptions> {
+    const wire = await request<WireAuthOptions>('/api/capabilities');
+    return {
+      drivers: wire.auth_drivers ?? [],
+      oidcAutoRedirect: wire.oidc_auto_redirect === true,
+      version: wire.version ?? '',
+    };
+  }
+
+  /**
+   * The IdP hand-off. `return_to` is honoured by the callback since the end-user app grew a sign-in of its own —
+   * before that every SSO login bounced to `/admin/`, which is not where an ordinary account belongs.
+   */
+  oidcStartUrl(returnTo: string): string {
+    return `/api/auth/oidc/start?${new URLSearchParams({ provider: 'oidc', return_to: returnTo }).toString()}`;
+  }
+
+  /**
    * The account fields the modal owns, in one PATCH. filex answers with the whole user row, so the store gets the
    * value the server actually stored — a display name it trimmed, or an avatar it refused.
    */
@@ -685,7 +808,11 @@ export class HttpRepository implements Repository {
   /** filex checks the old password itself and answers 401 when it is wrong; every other status is a real failure. */
   async changePassword(currentPassword: string, newPassword: string): Promise<void> {
     try {
-      await request('/api/auth/password', { method: 'POST', body: { old_password: currentPassword, new_password: newPassword } });
+      await request('/api/auth/password', {
+        method: 'POST',
+        body: { old_password: currentPassword, new_password: newPassword },
+        expectUnauthorized: true,
+      });
     } catch (error) {
       if (error instanceof HttpError && error.status === 401) throw new Error(WRONG_PASSWORD);
       throw error;

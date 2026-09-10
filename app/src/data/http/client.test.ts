@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HttpError, request } from './client';
+import { HttpError, request, setUnauthorizedHandler } from './client';
 
 function answer(status: number, body: unknown) {
   return {
@@ -10,26 +10,35 @@ function answer(status: number, body: unknown) {
 }
 
 describe('http client', () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setUnauthorizedHandler(null);
+  });
+
+  /** A 401 is still the caller's to handle; reporting it is what tells the shell the cookie is gone. */
+  it('raises a 401 and reports it as a lost session', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => answer(401, { error: 'unauthorized' })));
+    const lost = vi.fn();
+    setUnauthorizedHandler(lost);
+
+    await expect(request('/api/files/manager', { query: { q: 'list' } })).rejects.toMatchObject({
+      status: 401,
+      body: { error: 'unauthorized' },
+    });
+    expect(lost).toHaveBeenCalledTimes(1);
+  });
 
   /**
-   * A 401 is the caller's to handle. It used to be broadcast as a "session expired" event that nothing listened
-   * for, and that could not have been listened for safely: a wrong current password in Settings → Security is a
-   * 401 too, so a shell acting on it would have signed the person out from inside the password form.
+   * The reason the report has to be opt-out: a wrong current password in Settings → Security is a 401 too, and a
+   * shell acting on it would offer to sign the person in again from inside the password form.
    */
-  it('raises a 401 without announcing it to the window', async () => {
+  it('keeps quiet about a 401 the caller expects', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => answer(401, { error: 'wrong password' })));
-    const heard: string[] = [];
-    const listener = (event: Event) => heard.push(event.type);
-    // Nothing else in the app dispatches on window during a request, so any event here is one this raised.
-    const spy = vi.spyOn(window, 'dispatchEvent').mockImplementation((event) => (listener(event), true));
+    const lost = vi.fn();
+    setUnauthorizedHandler(lost);
 
-    await expect(request('/api/auth/password', { method: 'POST', body: {} })).rejects.toMatchObject({
-      status: 401,
-      body: { error: 'wrong password' },
-    });
-    expect(heard).toEqual([]);
-    spy.mockRestore();
+    await expect(request('/api/auth/password', { method: 'POST', body: {}, expectUnauthorized: true })).rejects.toMatchObject({ status: 401 });
+    expect(lost).not.toHaveBeenCalled();
   });
 
   it('carries the server’s own body on the error, which is what the assistant reads a 429 from', async () => {

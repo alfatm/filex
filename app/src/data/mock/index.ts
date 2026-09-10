@@ -1,6 +1,6 @@
 import { segments } from '@/lib/path';
-import { DUPLICATE_NAME, MIN_PASSWORD_LENGTH, WRONG_PASSWORD, type Repository } from '../repository';
-import { noBranding, type AssistantMessage, type AssistantSession, type ListingFilter, type Node, type NotifyPrefs, type Session, type User } from '../types';
+import { DUPLICATE_NAME, INVALID_CREDENTIALS, MIN_PASSWORD_LENGTH, WRONG_PASSWORD, type Repository } from '../repository';
+import { noBranding, type AssistantMessage, type Credentials, type AssistantSession, type ListingFilter, type Node, type NotifyPrefs, type Session, type User } from '../types';
 import { fileTypeOf, filterPeople, indexedOnly, live, nodes, storages, TYPE_THUMBNAILS, user } from './dataset';
 import * as history from './history';
 import { assistantAsk } from './assistant';
@@ -28,6 +28,7 @@ let seq = 0;
 export function resetMock() {
   nodes.splice(0, nodes.length, ...structuredClone(initial));
   Object.assign(user, initialUser);
+  signedIn = true;
   history.resetHistory();
   seq = 0;
 }
@@ -99,6 +100,14 @@ export const MOCK_UPLOAD_MS = 1500;
 
 /** The demo account's current password: what the Security card's form accepts, and what a wrong one is measured against. */
 export const MOCK_PASSWORD = 'demo';
+
+/**
+ * Whether the demo is "signed in". It starts true: the demo IS the signed-in app, and opening it on a sign-in
+ * form nobody has credentials for would be a worse first screen than the files. Signing out is what makes the
+ * form reachable — which is the point of keeping the state at all, so the screen can be worked on and
+ * photographed with no server behind it.
+ */
+let signedIn = true;
 const MOCK_UPLOAD_STEPS = 15;
 
 /** The demo account's notification switches, kept where the server would keep them. */
@@ -223,6 +232,33 @@ export const mockRepository: Repository = {
   },
   async currentUser() {
     return { ...user };
+  },
+  async session() {
+    return signedIn ? { ...user } : null;
+  },
+  /**
+   * The demo has one account and one password (`MOCK_PASSWORD`), and refuses everything else — a form whose
+   * error path cannot be reached is a form nobody has ever seen fail. The second factor is not asked for: the
+   * demo realm has none, exactly as `authMethods` below reports.
+   */
+  async signIn(credentials: Credentials) {
+    const identifier = credentials.identifier.trim().toLowerCase();
+    if ((identifier !== user.email && identifier !== user.name) || credentials.password !== MOCK_PASSWORD) {
+      throw new Error(INVALID_CREDENTIALS);
+    }
+    signedIn = true;
+    return { ...user };
+  },
+  async signOut() {
+    signedIn = false;
+  },
+  async authOptions() {
+    // A single local realm, and a version string shaped like the server's so the footer reads the same.
+    return { drivers: ['local'], oidcAutoRedirect: false, version: '0.0.0-demo' };
+  },
+  oidcStartUrl() {
+    // No identity provider to hand off to; the sign-in screen then offers the password form alone.
+    return null;
   },
   /** The demo account is edited in place, so the header and the avatar follow the modal as the real one would. */
   async updateProfile(patch) {

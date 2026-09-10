@@ -19,6 +19,7 @@ import {
 import { emptyQuery, toUrlQuery, useSearchStore } from '@/features/search/searchStore';
 import { joinPath, segments } from '@/lib/path';
 import { THEMES, useSettingsStore } from '@/features/settings/settingsStore';
+import { useAuthStore } from '@/stores/auth';
 import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
@@ -36,6 +37,7 @@ const search = useSearchStore();
 const view = useViewStore();
 const settings = useSettingsStore();
 const capabilities = useCapabilitiesStore();
+const auth = useAuthStore();
 
 const accountMenu = ref<{ x: number; y: number } | null>(null);
 const ACCOUNT_MENU_WIDTH = 208;
@@ -68,11 +70,10 @@ const assistantOffered = computed(() => !view.assistantOpen && capabilities.can.
 const ADMIN_SETTINGS_URL = '/admin/settings';
 const isAdmin = computed(() => !!files.user && files.user.role !== 'member');
 
-/** Signing out needs the session endpoint, so only the settings entries act for now. */
 const accountItems = computed<FloatingMenuEntry[]>(() => [
   { id: 'settings', label: t('settings.title'), icon: UserRound },
   ...(isAdmin.value ? [{ id: 'adminSettings', label: t('topbar.adminSettings'), icon: ShieldCheck }] : []),
-  { id: 'signOut', label: t('topbar.signOut'), icon: LogOut, dividerBefore: true, disabled: true, hint: t('common.comingSoon') },
+  { id: 'signOut', label: t('topbar.signOut'), icon: LogOut, dividerBefore: true },
 ]);
 
 function onAccountSelect(id: string) {
@@ -80,6 +81,9 @@ function onAccountSelect(id: string) {
   if (id === 'settings') settings.open = true;
   // A new tab: the console is a different application, and the person was in the middle of their files.
   else if (id === 'adminSettings') window.open(ADMIN_SETTINGS_URL, '_blank', 'noopener');
+  // Ends the session and reloads onto the sign-in screen — the store's own doing, because nothing of this
+  // account's may be left in memory for whoever signs in next on this browser.
+  else if (id === 'signOut') void auth.signOut();
 }
 
 const input = ref<HTMLInputElement>();

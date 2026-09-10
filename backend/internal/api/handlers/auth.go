@@ -147,15 +147,95 @@ func (h *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// oidcReturnCookieName carries `?return_to` across the IdP round-trip.
+//
+// The state cookie belongs to the driver and is a random nonce, so there was
+// nowhere to keep the caller's destination: OIDCStart's `return_to` was
+// accepted by both SPAs and read by nobody, and every SSO sign-in landed on
+// the admin console. A cookie rather than the `state` value because the
+// dispatcher (multioidc) and the single-realm driver mint that string
+// independently, and neither is this handler's to change.
+const oidcReturnCookieName = "filex_oidc_return"
+
+// oidcDefaultReturn is where an SSO sign-in lands when nobody asked for
+// anywhere: the console, which is what every OIDC login did before the
+// end-user app existed.
+const oidcDefaultReturn = "/admin/"
+
 // OIDCStart redirects to the IdP.
 func (h *Auth) OIDCStart(w http.ResponseWriter, r *http.Request) {
 	if h.OIDCAuth == nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "OIDC not configured"})
 		return
 	}
+	// Remembered before the redirect, because the IdP round-trip is what
+	// destroys the query string. Same lifetime and scope as the driver's own
+	// state cookie — a flow that is too old to finish has nothing to return.
+	http.SetCookie(w, &http.Cookie{
+		Name:     oidcReturnCookieName,
+		Value:    safeReturnTo(r.URL.Query().Get("return_to")),
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   requestIsHTTPS(r),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   600,
+	})
 	if err := h.OIDCAuth.StartFlow(w, r); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 	}
+}
+
+// safeReturnTo reduces a caller-supplied destination to a same-origin path,
+// or to the default when it is anything else.
+//
+// ⚠ This is an open-redirect gate, and the value reaches an HTML bounce page,
+// so it is a whitelist and not a blacklist: one leading "/" and nothing that
+// could re-parse as an authority ("//host", "/\host") or carry a scheme.
+// Control characters and length are cut for the same reason.
+func safeReturnTo(raw string) string {
+	if raw == "" || len(raw) > 512 {
+		return oidcDefaultReturn
+	}
+	if raw[0] != '/' || strings.HasPrefix(raw, "//") {
+		return oidcDefaultReturn
+	}
+	// A backslash re-parses as "/" in every browser, so "/\\host" is an authority
+	// too; control characters would break the redirect header and the bounce page.
+	if strings.ContainsRune(raw, '\\') || strings.IndexFunc(raw, func(c rune) bool { return c < 0x20 || c == 0x7f }) >= 0 {
+		return oidcDefaultReturn
+	}
+	return raw
+}
+
+// takeOIDCReturn reads the destination stashed by OIDCStart and clears it, so
+// one flow's target can never be inherited by the next.
+func (h *Auth) takeOIDCReturn(w http.ResponseWriter, r *http.Request) string {
+	http.SetCookie(w, &http.Cookie{
+		Name:     oidcReturnCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   requestIsHTTPS(r),
+		MaxAge:   -1,
+	})
+	c, err := r.Cookie(oidcReturnCookieName)
+	if err != nil {
+		return oidcDefaultReturn
+	}
+	// Validated again on the way out: the cookie is written by this handler,
+	// but it is still client-held state by the time it comes back.
+	return safeReturnTo(c.Value)
+}
+
+// oidcLoginPage is the sign-in screen belonging to a destination — the one the
+// person actually came from. Sending an app user back to /admin/login for a
+// failed IdP hand-off would strand them in a console they may not even be
+// allowed into.
+func oidcLoginPage(returnTo string) string {
+	if strings.HasPrefix(returnTo, "/admin/") || returnTo == "/admin" {
+		return "/admin/login"
+	}
+	return "/login"
 }
 
 // OIDCCallback completes the OIDC flow.
@@ -165,6 +245,11 @@ func (h *Auth) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	base := h.redirectBase(r)
+	// Where this flow was started from, and therefore which of the two sign-in
+	// screens owns its failures. Read (and cleared) before the first return so
+	// no branch can leave the cookie behind for the next attempt.
+	returnTo := h.takeOIDCReturn(w, r)
+	login := oidcLoginPage(returnTo)
 	usr, token, err := h.OIDCAuth.HandleCallback(w, r)
 	if err != nil {
 		// The callback is a browser navigation (the IdP redirected here), so
@@ -173,13 +258,13 @@ func (h *Auth) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 		// a friendly message and — critically — suppresses OIDC auto-redirect
 		// so a broken IdP can't cause a redirect loop.
 		slog.Warn("oidc callback failed", slog.String("err", err.Error()))
-		http.Redirect(w, r, base+"/admin/login?error=oidc", http.StatusFound)
+		http.Redirect(w, r, base+login+"?error=oidc", http.StatusFound)
 		return
 	}
 	if !auth.LoginAllowed(r.Context(), h.Store, h.MultiTenant, usr) {
 		// Maintenance mode (see docs/MULTI-TENANCY.md): tenant locked out.
 		_ = h.Store.DeleteSession(r.Context(), token)
-		http.Redirect(w, r, base+"/admin/login?maintenance=1", http.StatusFound)
+		http.Redirect(w, r, base+login+"?maintenance=1", http.StatusFound)
 		return
 	}
 	h.setSessionCookie(w, r, token)
@@ -189,10 +274,11 @@ func (h *Auth) OIDCCallback(w http.ResponseWriter, r *http.Request) {
 	// silently loses the just-minted session cookie and the SPA loops on
 	// /api/auth/me 401. The session cookie is written above (unchanged
 	// Domain/Secure/SameSite logic); the body just forwards the browser. The
-	// target is a fixed relative path so it stays on the tenant host that
-	// served this callback (v0.1.66's host fix) with zero open-redirect
-	// surface.
-	writeOIDCBounce(w, "/admin/")
+	// target is a relative path so it stays on the tenant host that served
+	// this callback (v0.1.66's host fix); safeReturnTo is what keeps it one —
+	// it is the only thing between a caller-supplied `return_to` and this
+	// bounce, so the open-redirect surface stays zero.
+	writeOIDCBounce(w, returnTo)
 }
 
 // oidcBounceTmpl is the 200 "signing in…" page that carries the session

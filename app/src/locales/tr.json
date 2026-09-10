@@ -7,6 +7,36 @@
     "loading": "Yükleniyor",
     "unavailable": "Bu sunucuda kullanılamıyor"
   },
+  "login": {
+    "title": "Oturum aç",
+    "subtitle": "{app} hesabınızla oturum açın",
+    "identifier": "E-posta veya kullanıcı adı",
+    "password": "Parola",
+    "showPassword": "Parolayı göster",
+    "hidePassword": "Parolayı gizle",
+    "useTotp": "2FA kodu gir",
+    "hideTotp": "2FA kodunu gizle",
+    "totp": "2FA kodu",
+    "remember": "Oturumum açık kalsın",
+    "submit": "Oturum aç",
+    "oidc": "SSO ile oturum aç",
+    "or": "veya",
+    "local": "Bunun yerine parolayla oturum aç",
+    "redirecting": "Kimlik sağlayıcınıza yönlendiriliyorsunuz…",
+    "errCredentials": "E-posta, kullanıcı adı veya parola hatalı",
+    "errTotp": "İki adımlı doğrulama kodu eksik veya hatalı",
+    "errDisabled": "Bu hesap devre dışı. Yöneticinize başvurun.",
+    "errLimited": "Oturum açma geçici olarak yalnızca platform işletmecisine açık",
+    "errOidc": "Kimlik sağlayıcı oturumunuzu açmadı. Yeniden deneyin veya parola kullanın.",
+    "errUnreachable": "Sunucuya ulaşılamadı. Yeniden deneyin.",
+    "errNoRealm": "Bu kurulumda etkin bir oturum açma yöntemi yok.",
+    "expired": {
+      "title": "Oturumunuz sona erdi",
+      "body": "Sunucu bu tarayıcıyı artık tanımıyor — oturumunuzun süresi doldu ya da başka bir yerden sonlandırıldı. Devam etmek için yeniden oturum açın.",
+      "again": "Yeniden oturum aç",
+      "later": "Şimdi değil"
+    }
+  },
   "nav": {
     "menu": "Menü",
     "home": "Ana sayfa",
