@@ -9,6 +9,8 @@ import FloatingMenu, { anchorBelow } from '@/ui/FloatingMenu.vue';
 /**
  * Sort state mirror. `plain` is the grid's text button (spec §3); `pill` is
  * the bordered control right of the filter chips in list view (spec §4).
+ * Both carry the key menu: in grid view the table headers are not there to
+ * sort by, so without it the grid could only flip the direction of one key.
  */
 withDefaults(defineProps<{ variant?: 'plain' | 'pill' }>(), { variant: 'plain' });
 
@@ -43,19 +45,18 @@ function pick(id: string) {
       <ArrowUp v-if="view.sortDir === 'asc'" :size="16" />
       <ArrowDown v-else :size="16" />
     </button>
-    <template v-if="variant === 'pill'">
-      <span class="h-full w-px bg-border" />
-      <IconButton
-        :label="t('sort.by')"
-        :size="38"
-        class="rounded-l-none rounded-r-md text-text-2"
-        aria-haspopup="menu"
-        :aria-expanded="!!menu"
-        @click="menu = anchorBelow($event.currentTarget as HTMLElement, MENU_WIDTH)"
-      >
-        <ChevronDown :size="16" />
-      </IconButton>
-      <FloatingMenu v-if="menu" :items="items" :x="menu.x" :y="menu.y" :width="MENU_WIDTH" :label="t('sort.by')" @select="pick" @close="menu = null" />
-    </template>
+    <span v-if="variant === 'pill'" class="h-full w-px bg-border" />
+    <IconButton
+      :label="t('sort.by')"
+      :size="38"
+      class="text-text-2"
+      :class="variant === 'pill' && 'rounded-l-none rounded-r-md'"
+      aria-haspopup="menu"
+      :aria-expanded="!!menu"
+      @click="menu = anchorBelow($event.currentTarget as HTMLElement, MENU_WIDTH)"
+    >
+      <ChevronDown :size="16" />
+    </IconButton>
+    <FloatingMenu v-if="menu" :items="items" :x="menu.x" :y="menu.y" :width="MENU_WIDTH" :label="t('sort.by')" @select="pick" @close="menu = null" />
   </div>
 </template>

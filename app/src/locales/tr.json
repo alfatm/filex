@@ -273,6 +273,8 @@
     "originalPath": "Özgün konum",
     "breadcrumb": "Konum",
     "breadcrumbMore": "Diğer klasörler",
+    "breadcrumbPath": "Klasör yolu",
+    "breadcrumbPathEdit": "Yolu düzenle",
     "subfolders": "Alt klasörler",
     "noSubfolders": "Alt klasör yok",
     "listingActions": "Liste eylemleri",

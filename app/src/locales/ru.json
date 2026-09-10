@@ -273,6 +273,8 @@
     "originalPath": "Исходное расположение",
     "breadcrumb": "Расположение",
     "breadcrumbMore": "Ещё папки",
+    "breadcrumbPath": "Путь к папке",
+    "breadcrumbPathEdit": "Изменить путь",
     "subfolders": "Подпапки",
     "noSubfolders": "Подпапок нет",
     "listingActions": "Действия со списком",

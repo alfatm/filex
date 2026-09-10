@@ -273,6 +273,8 @@
     "originalPath": "Original location",
     "breadcrumb": "Location",
     "breadcrumbMore": "More folders",
+    "breadcrumbPath": "Folder path",
+    "breadcrumbPathEdit": "Edit path",
     "subfolders": "Subfolders",
     "noSubfolders": "No subfolders",
     "listingActions": "Listing actions",

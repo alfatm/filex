@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { watch } from 'vue';
+import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
-import { AlertTriangle, Filter, Folder, FolderOpen, Info, LayoutGrid, List, MoreVertical, Upload } from 'lucide-vue-next';
+import { AlertTriangle, Filter, Folder, FolderOpen, Info, LayoutGrid, List, MoreVertical, PencilLine, Upload } from 'lucide-vue-next';
 import FilterChip from '@/features/files/FilterChip.vue';
 import { type FilterId } from '@/features/files/filters';
 import { useDragStore } from '@/features/files/dragStore';
@@ -33,6 +33,9 @@ const drag = useDragStore();
 const uploads = useUploadStore();
 
 const LISTING_TARGET = 'listing';
+
+/** The path box lives in the bar; its button sits with the other view controls, so the chain ends at its own chevron. */
+const breadcrumbs = ref<InstanceType<typeof Breadcrumbs>>();
 
 /** Files dragged in from the OS land in the open folder unless a folder card takes the drop first. */
 function onPageDragOver(event: DragEvent) {
@@ -96,9 +99,12 @@ watch(
       </p>
     </div>
     <div class="flex h-[38px] items-center">
-      <Breadcrumbs />
+      <Breadcrumbs ref="breadcrumbs" />
 
       <div class="ml-auto flex items-center">
+        <IconButton :label="t('files.breadcrumbPathEdit')" variant="outline" class="mx-[14px] !w-11" @click="breadcrumbs?.edit()">
+          <PencilLine :size="20" />
+        </IconButton>
         <div
           role="radiogroup"
           class="flex h-10 overflow-hidden rounded-md border border-border"
