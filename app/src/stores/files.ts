@@ -4,7 +4,8 @@ import { useSelection } from '@/composables/useSelection';
 import { emptyFilter, isFiltered } from '@/features/files/filters';
 import { repository } from '@/data';
 import { matchesFilter } from '@/data/listingFilter';
-import { NOT_FOUND, ROLE_FORBIDDEN } from '@/data/repository';
+import { typeKeyOf } from '@/data/fileTypes';
+import { FORBIDDEN, NOT_FOUND, ROLE_FORBIDDEN } from '@/data/repository';
 import type { ListingFilter, Node, Person, Storage, UploadInput, UploadOptions, User } from '@/data/types';
 import { i18n } from '@/i18n';
 import { errorMessage } from '@/lib/errors';
@@ -103,13 +104,15 @@ export const useFilesStore = defineStore('files', () => {
   /** Whether `bootstrap` has settled — either way. A page must not read an empty drive list as "no drives yet". */
   const ready = ref(false);
   /** i18n key under `error.` when the last load failed, so the page can offer a retry instead of a blank listing. */
-  const error = ref<'notFound' | 'load' | null>(null);
+  const error = ref<'notFound' | 'forbidden' | 'load' | null>(null);
   /** Bumped after every mutation; pages that keep their own data (Home, Search) reload on it. */
   const revision = ref(0);
   // Out-of-order guard: only the newest `load` may publish its result.
   let loadSeq = 0;
   /** Drive and path of the last `openPath`, so a retry can resolve the same address again. */
   let lastAddress: { drive: string | null; path: string } | null = null;
+
+  const typeLabel = (node: Node) => t(typeKeyOf(node));
 
   const sorted = computed(() => {
     // Recent is a timeline: its day groups only make sense newest-first.
@@ -123,14 +126,25 @@ export const useFilesStore = defineStore('files', () => {
       if (recent) return n.openedAt ?? n.modifiedAt ?? '';
       return n.modifiedAt ?? '';
     };
+    // `numeric` is what makes a digit run in a name count as a number: without it `file 10` sorted before `file 2`,
+    // and a folder of `IMG_2 … IMG_10` came out in an order nobody writes those names for.
+    const byName = (a: Node, b: Node) =>
+      a.name.localeCompare(b.name, i18n.global.locale.value, { numeric: true, sensitivity: 'base' });
     const cmp = (a: Node, b: Node): number => {
       switch (key) {
         case 'modified':
           return (Date.parse(date(a)) - Date.parse(date(b))) * dir;
         case 'size':
           return (a.size - b.size) * dir;
+        // By the label the Type column shows, not by the raw `fileType`: what a person sorts by is what they read.
+        // Files of one type keep a stable order of their own, which is the name — otherwise a type sort would
+        // shuffle the rows within each group on every reload.
+        case 'type': {
+          const byType = typeLabel(a).localeCompare(typeLabel(b), i18n.global.locale.value) * dir;
+          return byType || byName(a, b);
+        }
         default:
-          return a.name.localeCompare(b.name, i18n.global.locale.value, { sensitivity: 'base' }) * dir;
+          return byName(a, b) * dir;
       }
     };
     return [...visible.value].sort(cmp);
@@ -189,10 +203,10 @@ export const useFilesStore = defineStore('files', () => {
     error.value = null;
     try {
       await read(target, seq);
-    } catch {
+    } catch (e) {
       // A newer load already owns the listing; its own result decides what is shown.
       if (seq === loadSeq) {
-        error.value = 'load';
+        error.value = failureKind(e);
         items.value = [];
       }
     } finally {
@@ -328,11 +342,19 @@ export const useFilesStore = defineStore('files', () => {
       // A folder that is GONE and a server that did not answer are two different sentences, and only the
       // repository knows which it was (`NOT_FOUND`). Saying "renamed, moved or deleted" for a 500 or a dropped
       // connection told people their files were gone every time the network blinked.
-      if (seq === loadSeq) showFailure(errorMessage(e) === NOT_FOUND ? 'notFound' : 'load');
+      if (seq === loadSeq) showFailure(failureKind(e));
       return;
     }
     if (seq !== loadSeq) return;
     await open(node.id);
+  }
+
+  /** Which of the three sentences a failed address deserves; only the repository knows which refusal it was. */
+  function failureKind(e: unknown): 'notFound' | 'forbidden' | 'load' {
+    const message = errorMessage(e);
+    if (message === NOT_FOUND) return 'notFound';
+    if (message === FORBIDDEN) return 'forbidden';
+    return 'load';
   }
 
   /**
@@ -340,7 +362,7 @@ export const useFilesStore = defineStore('files', () => {
    * behind — or, worse, the empty-folder state, which is a claim about the folder's contents that a failed
    * request gives nobody the right to make.
    */
-  function showFailure(kind: 'notFound' | 'load') {
+  function showFailure(kind: 'notFound' | 'forbidden' | 'load') {
     loadSeq++;
     selection.clear();
     clearRows();
@@ -573,7 +595,6 @@ export const useFilesStore = defineStore('files', () => {
 
   async function move(nodes: Node[], target: Node) {
     await queued(nodes, 'op.moving', () => mutate(() => repository.move(nodes.map((n) => n.id), target.id)), () => {
-      toast.push(subjectMessage(t, 'toast.moved', nodes, { folder: target.name }));
       // Where each node came from, by name: undo re-resolves the ids in the target, because a moved node's path —
       // and with it its id — has changed.
       const origins = new Map<string, string[]>();
@@ -582,6 +603,13 @@ export const useFilesStore = defineStore('files', () => {
       }
       // After the undo the nodes are back under their own ids, so the redo is simply the same move again.
       if (origins.size) undo.record({ undo: () => moveBack(target.id, origins), redo: () => move(nodes, target) });
+      // The step was recorded all along and Ctrl+Z ran it; only the toast said nothing about it. A move away from
+      // the open folder takes the rows off the screen, so it is exactly the action whose "put it back" has to be
+      // within reach. Offered only when there IS a step — a node with no parent leaves nothing to undo.
+      toast.push(
+        subjectMessage(t, 'toast.moved', nodes, { folder: target.name }),
+        origins.size ? { label: t('toast.undo'), run: () => void undo.undo() } : undefined,
+      );
     }, { folder: target.name });
   }
 

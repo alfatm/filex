@@ -83,7 +83,7 @@ watch(() => files.revision, load);
           :to="filesRoute(storage.id, [])"
           class="flex h-[76px] items-center rounded-lg border border-border bg-bg px-3 hover:border-border-hover hover:bg-hover-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
         >
-          <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-primary-soft text-primary">
+          <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-primary-soft text-primary-strong">
             <HardDrive :size="18" :stroke-width="1.75" />
           </span>
           <span class="ml-2.5 min-w-0 flex-1">

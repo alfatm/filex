@@ -25,7 +25,7 @@ withDefaults(
       variant === 'plain'
         ? 'text-text-2'
         : active
-          ? 'border border-border bg-primary-soft text-primary'
+          ? 'border border-border bg-primary-soft text-primary-strong'
           : 'border border-border bg-bg text-text-2',
       disabledHint ? 'cursor-default' : variant === 'plain' ? 'hover:bg-bg-muted' : !active && 'hover:bg-hover-row',
     ]"

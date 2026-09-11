@@ -2,10 +2,13 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Dialog, DialogPanel, DialogTitle } from '@headlessui/vue';
-import { ChevronLeft, ChevronRight, Download, ExternalLink, Share2, Star, X } from 'lucide-vue-next';
+import { ChevronLeft, ChevronRight, Download, ExternalLink, Maximize, Minus, Plus, Share2, Star, X } from 'lucide-vue-next';
 import { repository } from '@/data';
 import type { Node } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
+// The Markdown parser and renderer the assistant answers with. It is the app's one Markdown reader: a safe block
+// parser with no `v-html` behind it, and a `.md` file is untrusted text for exactly the same reason an answer is.
+import AnswerText from '@/features/assistant/AnswerText.vue';
 import FileTypeTile from '@/pages/files/FileTypeTile.vue';
 import { useFilesStore } from '@/stores/files';
 import { CSV_MAX_ROWS, parseCsv, previewKind, splitLines } from './preview';
@@ -57,6 +60,21 @@ let panOrigin = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
 
 const zoomLabel = computed(() => `${Math.round(scale.value * 100)}%`);
 
+/** What one press of the zoom buttons does. The wheel is continuous; the buttons are a step, and this is its size. */
+const ZOOM_STEP = 1.25;
+
+/**
+ * Zooms about the CENTRE of the box, which is where the transform is anchored — so the pan offset has to scale
+ * with it, or a zoomed-and-panned image jumps when a button is pressed.
+ */
+function zoomBy(factor: number) {
+  const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale.value * factor));
+  const ratio = next / scale.value;
+  offsetX.value *= ratio;
+  offsetY.value *= ratio;
+  scale.value = next;
+}
+
 function resetZoom() {
   scale.value = 1;
   offsetX.value = 0;
@@ -100,9 +118,13 @@ function onPanEnd(event: PointerEvent) {
 type Status = 'loading' | 'ready' | 'error';
 const status = ref<Status>('loading');
 const lines = ref<string[]>([]);
+/** The Markdown source of a `.md` file; `AnswerText` parses and draws it. */
+const markdown = ref('');
 const rows = ref<string[][]>([]);
 const csvTruncated = computed(() => rows.value.length > CSV_MAX_ROWS);
 const pdfFailed = ref(false);
+/** The browser refused the codec: the player draws nothing useful, so the card says so and offers the file. */
+const audioFailed = ref(false);
 let pdfTimer: ReturnType<typeof setTimeout> | undefined;
 let fetchSeq = 0;
 
@@ -115,6 +137,7 @@ async function loadText(node: Node) {
     const text = await response.text();
     if (seq !== fetchSeq) return;
     if (kind.value === 'csv') rows.value = parseCsv(text);
+    else if (kind.value === 'markdown') markdown.value = text;
     else lines.value = splitLines(text);
     status.value = 'ready';
   } catch {
@@ -137,10 +160,12 @@ watch(
   (node) => {
     starred.value = node.starred;
     resetZoom();
+    audioFailed.value = false;
     lines.value = [];
     rows.value = [];
+    markdown.value = '';
     void repository.recordOpen(node.id);
-    if (kind.value === 'text' || kind.value === 'csv') void loadText(node);
+    if (kind.value === 'text' || kind.value === 'csv' || kind.value === 'markdown') void loadText(node);
     if (kind.value === 'pdf') armPdfTimeout();
   },
   { immediate: true },
@@ -154,8 +179,9 @@ function step(delta: 1 | -1) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  // The video's own keys (seek) win while it has focus.
-  if ((event.target as HTMLElement | null)?.tagName === 'VIDEO') return;
+  // A player's own keys (seek, and space for play/pause) win while it has focus.
+  const tag = (event.target as HTMLElement | null)?.tagName;
+  if (tag === 'VIDEO' || tag === 'AUDIO') return;
   if (event.key === 'ArrowLeft') step(-1);
   else if (event.key === 'ArrowRight') step(1);
   else return;
@@ -172,6 +198,8 @@ const ACTION_CLASS =
   'inline-flex h-10 w-10 items-center justify-center rounded-md text-white hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring';
 const CHEVRON_CLASS =
   'absolute top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring';
+const ZOOM_BUTTON_CLASS =
+  'flex h-7 w-7 items-center justify-center rounded-full text-white hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring';
 const CLOSE_CLASS =
   'inline-flex h-11 w-11 items-center justify-center rounded-full bg-white/15 text-white ring-1 ring-white/30 hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring';
 </script>
@@ -255,17 +283,52 @@ const CLOSE_CLASS =
             class="max-h-full max-w-full select-none object-contain"
             :style="{ transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})` }"
           />
-          <!-- Only while zoomed: at fit-to-screen the number says nothing. -->
-          <p
-            v-if="scale !== 1"
-            class="pointer-events-none absolute bottom-5 left-1/2 -translate-x-1/2 rounded-full bg-white/10 px-2.5 py-1 text-11 leading-none text-white/60 tabular-nums"
-            aria-live="off"
+          <!-- The wheel zooms and dragging pans, but neither is discoverable and neither exists on a touchpad-less
+               machine or a tablet; these are the same three moves with a control on them. `stop` on the clicks:
+               the box below them pans on pointerdown and resets on double-click. -->
+          <div
+            class="absolute bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-1 rounded-full bg-white/10 p-1 backdrop-blur"
+            @pointerdown.stop
+            @dblclick.stop
+            @wheel.stop
           >
-            {{ zoomLabel }}
-          </p>
+            <button type="button" :class="ZOOM_BUTTON_CLASS" :aria-label="t('preview.zoomOut')" :title="t('preview.zoomOut')" @click="zoomBy(1 / ZOOM_STEP)">
+              <Minus :size="16" />
+            </button>
+            <p class="w-14 text-center text-11 leading-none text-white/80 tabular-nums" aria-live="off">{{ zoomLabel }}</p>
+            <button type="button" :class="ZOOM_BUTTON_CLASS" :aria-label="t('preview.zoomIn')" :title="t('preview.zoomIn')" @click="zoomBy(ZOOM_STEP)">
+              <Plus :size="16" />
+            </button>
+            <button type="button" :class="ZOOM_BUTTON_CLASS" :aria-label="t('preview.zoomFit')" :title="t('preview.zoomFit')" @click="resetZoom">
+              <Maximize :size="16" />
+            </button>
+          </div>
         </div>
 
         <video v-else-if="kind === 'video'" :key="current.id" :src="current.assetUrl" controls autoplay muted playsinline class="max-h-[80vh] max-w-[90vw] rounded-lg" />
+
+        <!-- Sound has nothing to show, so the card carries the file's identity and the browser's own transport. -->
+        <div v-else-if="kind === 'audio'" class="flex w-[420px] max-w-[90vw] flex-col items-center rounded-2xl bg-bg p-[26px] text-center shadow-modal">
+          <FileTypeTile :type="current.fileType ?? 'other'" :size="56" />
+          <p class="mt-4 max-w-full truncate text-13 font-medium text-text">{{ current.name }}</p>
+          <p class="mt-1 text-11.5 leading-none text-text-3">{{ formatSize(current.size) }}</p>
+          <!-- `preload="metadata"` so the controls know the duration before anything is played; no autoplay —
+               a preview that starts making noise on its own is not what opening a folder asked for. -->
+          <audio
+            v-if="!audioFailed"
+            :key="current.id"
+            :src="current.assetUrl"
+            controls
+            preload="metadata"
+            class="mt-5 w-full"
+            :aria-label="current.name"
+            @error="audioFailed = true"
+          />
+          <p v-else class="mt-4 text-13 text-text-2">{{ t('preview.audioError') }}</p>
+          <a v-if="download" :href="download" :download="current.name" class="mt-5 inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-13 font-medium text-white hover:bg-primary-hover">
+            <Download :size="18" />{{ t('preview.download') }}
+          </a>
+        </div>
 
         <iframe
           v-else-if="kind === 'pdf' && !pdfFailed"
@@ -276,7 +339,7 @@ const CLOSE_CLASS =
           @load="onPdfLoad"
         />
 
-        <template v-else-if="kind === 'text' || kind === 'csv'">
+        <template v-else-if="kind === 'text' || kind === 'csv' || kind === 'markdown'">
           <p v-if="status === 'loading'" class="text-13 text-white/70" role="status">{{ t('preview.loading') }}</p>
           <div v-else-if="status === 'error'" class="w-[420px] rounded-2xl bg-bg p-[26px] text-center shadow-modal">
             <p class="text-13 text-text">{{ t('preview.loadError') }}</p>
@@ -298,6 +361,8 @@ const CLOSE_CLASS =
               </tbody>
             </table>
             <p v-if="kind === 'csv' && csvTruncated" class="px-3 py-2 text-11 text-text-3">{{ t('preview.csvTruncated', { count: CSV_MAX_ROWS }) }}</p>
+            <!-- Narrower than the code view on purpose: prose is read in a column, not across 80vw of screen. -->
+            <AnswerText v-if="kind === 'markdown'" :text="markdown" class="mx-auto max-w-[72ch] px-6 py-5" />
             <pre v-if="kind === 'text'" class="py-3 text-[13px] leading-5" :style="{ fontFamily: MONO_FONT }"><ol class="list-none"><li v-for="(line, i) in lines" :key="i" class="flex"><span class="w-14 shrink-0 select-none pr-4 text-right text-text-3" aria-hidden="true">{{ i + 1 }}</span><span class="whitespace-pre pr-4">{{ line }}</span></li></ol></pre>
           </div>
         </template>

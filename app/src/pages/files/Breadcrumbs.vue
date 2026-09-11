@@ -150,7 +150,7 @@ async function openSubfolders(event: MouseEvent) {
             class="min-w-0 truncate-safe rounded px-1.5 py-1 text-13 font-semibold leading-none hover:bg-bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
             :class="[
               crumb.current ? 'text-text' : 'text-text-2 hover:text-text',
-              drag.overId === crumb.node.id && 'bg-primary-soft text-primary ring-2 ring-primary',
+              drag.overId === crumb.node.id && 'bg-primary-soft text-primary-strong ring-2 ring-primary',
             ]"
             @click="go(crumb.parts)"
             @dragover="!crumb.current && onDragOver(crumb.node, $event)"

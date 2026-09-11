@@ -25,7 +25,10 @@ export function useNodeDrag() {
     event.preventDefault();
     event.stopPropagation();
     drag.overId = node.id;
-    if (event.dataTransfer) event.dataTransfer.dropEffect = drag.files ? 'copy' : 'move';
+    // The nodes decide whenever there are any, exactly as `canDrop` does. Answering `copy` for a drag that started
+    // in the app contradicts the `move` its `effectAllowed` asked for, and a browser given two answers refuses the
+    // drop: the folder was highlighted and the cursor said no.
+    if (event.dataTransfer) event.dataTransfer.dropEffect = drag.nodes.length ? 'move' : 'copy';
   }
 
   function onDragLeave(node: Node) {
@@ -39,10 +42,14 @@ export function useNodeDrag() {
     const dropped = event.dataTransfer;
     const moved = [...drag.nodes];
     drag.end();
+    // Nodes first: a drag that started in the app is a move, whatever the transfer picked up on the way. A card
+    // grabbed by its picture used to arrive carrying the browser's own image drag, and asking the file list first
+    // turned that move into an upload of the thumbnail.
+    //
     // The whole DataTransfer, not its `files`: a dropped FOLDER is only recognisable through the item entries, and
     // handing over the file list alone sent the server a zero-length file named after the folder.
-    if (dropped?.files.length) await uploads.start(dropped, node.id);
-    else if (moved.length) await files.move(moved, node);
+    if (moved.length) await files.move(moved, node);
+    else if (dropped?.files.length) await uploads.start(dropped, node.id);
   }
 
   return { drag, onDragStart, onDragOver, onDragLeave, onDrop };

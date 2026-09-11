@@ -118,7 +118,7 @@ func (h *Manager) vfNewFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Name = strings.TrimSpace(body.Name)
-	if body.Name == "" || strings.ContainsAny(body.Name, "/\\") {
+	if !validEntryName(body.Name) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad folder name"})
 		return
 	}
@@ -217,7 +217,7 @@ func (h *Manager) vfNewFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Name = strings.TrimSpace(body.Name)
-	if body.Name == "" || strings.ContainsAny(body.Name, "/\\") {
+	if !validEntryName(body.Name) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad file name"})
 		return
 	}
@@ -330,7 +330,7 @@ func (h *Manager) vfRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Name = strings.TrimSpace(body.Name)
-	if body.Name == "" || strings.ContainsAny(body.Name, "/\\") {
+	if !validEntryName(body.Name) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad new name"})
 		return
 	}
@@ -1320,6 +1320,22 @@ func mapDriverErr(err error) int {
 // would escape the destination directory once path.Join'ed. ".." is refused
 // explicitly: path.Base("..") is ".." and joining it walks OUT of the target
 // folder — the earlier inline copies of this check did not cover it.
+// validEntryName says whether `name` names an ENTRY in a directory, which is
+// what newfolder, newfile and rename are given.
+//
+// "." and ".." address a directory rather than something in one, and path.Join
+// folds them away: `mkdir ".."` resolved to the PARENT folder, which of course
+// already exists, so the caller was told the name was taken — a sentence about
+// the wrong thing entirely. sanitizeUploadName has refused both on the upload
+// path all along; these three verbs checked only for empty and separators.
+func validEntryName(name string) bool {
+	switch name {
+	case "", ".", "..":
+		return false
+	}
+	return !strings.ContainsAny(name, "/\\")
+}
+
 func sanitizeUploadName(raw string) (string, bool) {
 	name := path.Base(raw)
 	switch name {

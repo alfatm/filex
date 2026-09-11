@@ -1,4 +1,4 @@
-import type { FileType, ThumbnailKind } from './types';
+import type { FileType, Node, ThumbnailKind } from './types';
 
 /** Name → type → placeholder artwork. Shared by the mock and the HTTP mapper: neither owns what a ".csv" is. */
 const EXTENSION_TYPES: Record<string, FileType> = {
@@ -26,6 +26,15 @@ export const TYPE_THUMBNAILS: Partial<Record<FileType, ThumbnailKind>> = {
   csv: 'spreadsheet',
   mp4: 'video',
 };
+
+/**
+ * The i18n key that names a node's type: what the listing's Type column prints and what a sort by type orders by.
+ * A folder is a type of its own here — it is what the column has to say about one, and grouping puts them together
+ * at one end regardless.
+ */
+export function typeKeyOf(node: Node): string {
+  return `type.${node.kind === 'folder' ? 'folder' : (node.fileType ?? 'other')}`;
+}
 
 export function fileTypeOf(name: string): FileType {
   return EXTENSION_TYPES[name.split('.').pop()?.toLowerCase() ?? ''] ?? 'other';

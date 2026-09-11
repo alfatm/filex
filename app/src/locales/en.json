@@ -39,6 +39,7 @@
     }
   },
   "nav": {
+    "skipToContent": "Skip to files",
     "menu": "Menu",
     "home": "Home",
     "files": "My files",
@@ -116,6 +117,7 @@
     "close": "Close",
     "done": "Done",
     "duplicateName": "An item with this name already exists",
+    "invalidName": "That name cannot be used",
     "newFolder": {
       "title": "New folder",
       "defaultName": "Untitled folder",
@@ -305,7 +307,9 @@
     "subfolders": "Subfolders",
     "noSubfolders": "No subfolders",
     "listingActions": "Listing actions",
-    "dropHere": "Drop files to upload to “{folder}”"
+    "dropHere": "Drop files to upload to “{folder}”",
+    "fileKind": "Type",
+    "location": "Location"
   },
   "filter": {
     "type": "Type",
@@ -353,13 +357,15 @@
     "size": "Size",
     "ascending": "Ascending",
     "descending": "Descending",
-    "by": "Sort by"
+    "by": "Sort by",
+    "type": "Type"
   },
   "selection": {
     "count": "{count} selected",
     "download": "Download",
     "share": "Share",
     "move": "Move",
+    "copy": "Copy to",
     "star": "Star",
     "delete": "Delete",
     "clear": "Clear selection",
@@ -442,11 +448,15 @@
     "star": "Add to starred",
     "unstar": "Remove from starred",
     "openInNewTab": "Open in new tab",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "zoomFit": "Fit to screen",
     "close": "Close",
     "previous": "Previous file",
     "next": "Next file",
     "loading": "Loading preview…",
     "loadError": "The file could not be loaded.",
+    "audioError": "The browser cannot play this sound file.",
     "noPreview": "No preview available",
     "pdfFallback": "The PDF viewer did not load.",
     "counter": "{index} of {count}",
@@ -546,7 +556,8 @@
     "dateWindow": "Or around a date",
     "dateWindowDate": "Date",
     "dateWindowSpan": "Window width",
-    "dateWindowField": "Which date the window reads"
+    "dateWindowField": "Which date the window reads",
+    "searching": "Searching…"
   },
   "assistant": {
     "title": "AI assistant",
@@ -801,6 +812,10 @@
     "notFound": {
       "title": "Folder not found",
       "hint": "It may have been renamed, moved or deleted"
+    },
+    "forbidden": {
+      "title": "You cannot open this folder",
+      "hint": "Ask its owner for access"
     },
     "noSuchPage": {
       "title": "Page not found",

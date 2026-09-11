@@ -11,7 +11,8 @@ describe('previewKind', () => {
     expect(previewKind(file('a.mp4', { fileType: 'mp4' }))).toBe('video');
     expect(previewKind(file('a.pdf', { fileType: 'pdf' }))).toBe('pdf');
     expect(previewKind(file('a.csv', { fileType: 'csv' }))).toBe('csv');
-    expect(previewKind(file('README.md', { fileType: 'md' }))).toBe('text');
+    // Markdown is a document, not source: it is drawn as headings and lists, not printed with line numbers.
+    expect(previewKind(file('README.md', { fileType: 'md' }))).toBe('markdown');
     expect(previewKind(file('app.ts', { fileType: 'ts' }))).toBe('text');
     for (const name of ['a.txt', 'a.json', 'a.yaml', 'a.yml', 'a.xml', 'a.ics', 'a.vcf', 'a.py', 'a.go', 'a.css', 'a.html', 'a.sql', 'a.sh', 'Dockerfile', 'a.toml', '.env', 'a.log']) {
       expect(previewKind(file(name)), name).toBe('text');
@@ -19,10 +20,21 @@ describe('previewKind', () => {
     for (const name of ['a.docx', 'a.xlsx', 'a.fig', 'a.psd', 'a.zip', 'a.sqlite']) expect(previewKind(file(name)), name).toBe('none');
   });
 
+  // Sound arrives as `other` — the server has no audio group — so only the extension can say the modal has a
+  // player for it. A correct .wav used to draw "No preview available" with no <audio> anywhere.
+  it('plays what the browser can decode, whatever the server called the type', () => {
+    for (const name of ['a.wav', 'a.mp3', 'a.ogg', 'a.oga', 'a.opus', 'a.m4a', 'a.aac', 'a.flac', 'a.weba']) {
+      expect(previewKind(file(name)), name).toBe('audio');
+    }
+    // A big sound file is still played: nothing is read into memory, unlike the text branch.
+    expect(previewKind(file('long.mp3', { size: TEXT_MAX_BYTES * 50 }))).toBe('audio');
+  });
+
   it('needs an asset URL and keeps text under the size limit', () => {
     expect(previewKind(file('a.jpg', { fileType: 'image', assetUrl: undefined }))).toBe('none');
     expect(previewKind(file('big.txt', { size: TEXT_MAX_BYTES + 1 }))).toBe('none');
     expect(previewKind(file('big.csv', { fileType: 'csv', size: TEXT_MAX_BYTES + 1 }))).toBe('none');
+    expect(previewKind(file('big.md', { fileType: 'md', size: TEXT_MAX_BYTES + 1 }))).toBe('none');
     expect(previewKind({ ...file('Docs'), kind: 'folder' })).toBe('none');
   });
 });

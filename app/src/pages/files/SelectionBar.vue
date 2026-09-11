@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Download, FolderInput, RotateCcw, Share2, Star, Trash2, X } from 'lucide-vue-next';
+import { Copy, Download, FolderInput, RotateCcw, Share2, Star, Trash2, X } from 'lucide-vue-next';
 import { useModalsStore } from '@/features/files/modalsStore';
 import { useFileActions } from '@/features/files/useFileActions';
 import type { RolePermission } from '@/data/types';
@@ -64,6 +64,9 @@ const actions = computed<Action[]>(() =>
           run: () => modals.open({ kind: 'share', node: files.selected[0] }),
         },
         { id: 'move', icon: FolderInput, hint: gate(capabilities.can.move, 'files.move'), run: () => modals.open({ kind: 'move', nodes: files.selected }) },
+        // The row menu has offered "Copy to" all along; the selection bar did not, so the one thing a person could
+        // not do to several files at once was duplicate them. Same modal, same verb, same permission.
+        { id: 'copy', icon: Copy, hint: gate(capabilities.can.copy, 'files.copy'), run: () => modals.open({ kind: 'copy', nodes: files.selected }) },
         {
           id: allStarred.value ? 'unstar' : 'star',
           icon: Star,

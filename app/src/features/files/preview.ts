@@ -1,15 +1,24 @@
 import type { Node } from '@/data/types';
 
 /** How the preview modal renders a file; `none` shows the "No preview available" card. */
-export type PreviewKind = 'image' | 'video' | 'pdf' | 'text' | 'csv' | 'none';
+export type PreviewKind = 'image' | 'video' | 'audio' | 'pdf' | 'markdown' | 'text' | 'csv' | 'none';
 
 /** Text-like files are fetched and shown in a <pre>; larger ones fall back to the download card. */
 export const TEXT_MAX_BYTES = 2 * 1024 * 1024;
 /** A CSV preview shows the header and at most this many data rows. */
 export const CSV_MAX_ROWS = 200;
 
+/**
+ * Sound files the browser plays itself. `fileType` has no audio group — it comes off the server as `other` — so
+ * the extension is what says so, the same way `csv` and the text list do.
+ *
+ * What is here is what a browser will actually decode: wav, mp3, ogg/oga/opus, m4a/aac and flac are covered by
+ * Chrome, Firefox and Safari between them. A codec one of them refuses still lands in this branch, where the
+ * player says so rather than the modal claiming there is nothing to show.
+ */
+const AUDIO_EXTENSIONS = new Set(['wav', 'mp3', 'ogg', 'oga', 'opus', 'm4a', 'aac', 'flac', 'weba']);
+
 const TEXT_EXTENSIONS = new Set([
-  'md',
   'txt',
   'json',
   'yaml',
@@ -48,6 +57,10 @@ export function previewKind(node: Node): PreviewKind {
       return 'pdf';
   }
   const ext = extensionOf(node.name);
+  if (AUDIO_EXTENSIONS.has(ext)) return 'audio';
+  // Markdown is a document, not source: it is fetched like the other text files and drawn as headings, lists and
+  // paragraphs. `notes.md` used to open as its own characters, `#` and all.
+  if (ext === 'md') return node.size <= TEXT_MAX_BYTES ? 'markdown' : 'none';
   if (ext === 'csv') return node.size <= TEXT_MAX_BYTES ? 'csv' : 'none';
   return TEXT_EXTENSIONS.has(ext) && node.size <= TEXT_MAX_BYTES ? 'text' : 'none';
 }

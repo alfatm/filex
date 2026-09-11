@@ -7,11 +7,17 @@ import path from 'node:path';
  * session cookie rides along and nothing needs CORS. The target moves with the deployment; a plain local
  * backend is the default.
  */
+//
+// ⚠ Regexes, not plain prefixes: a plain key matches by string prefix, so '/api' swallowed '/api-keys' — the
+// app's own route — and a reload there answered with the BACKEND's index.html, whose asset hashes belong to
+// whatever was last built into the binary. The browser then asked this server for an asset it does not have,
+// got the SPA fallback HTML back, and refused it as a module: a blank screen on F5. Anchored to a segment
+// boundary, '/api-keys' stays with the app and '/api/…' still reaches the server.
 const apiProxy = {
-  '/api': process.env.FILEX_API_PROXY ?? 'http://localhost:5212',
+  '^/api(?:/|$)': process.env.FILEX_API_PROXY ?? 'http://localhost:5212',
   // The admin console, so the account menu's "Admin settings" opens it from here too. In a deployment the
   // two are one origin already; here they are two ports, and a same-origin link would reopen this app.
-  '/admin': process.env.FILEX_API_PROXY ?? 'http://localhost:5212',
+  '^/admin(?:/|$)': process.env.FILEX_API_PROXY ?? 'http://localhost:5212',
 };
 
 // Vite config for the filex end-user UI. `base` is '/': the app is the product's front door, mounted at the ROOT

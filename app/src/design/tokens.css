@@ -40,6 +40,14 @@
   --c-primary-soft: light-dark(#e6ecfa, #22304d);
   --c-primary-ring: light-dark(#8fb0f7, #4a76d8);
   --c-primary-tint: light-dark(#eef3ff, #1c2740);
+  /*
+   * Text and icons drawn ON `--c-primary-soft` / `--c-primary-tint` — an avatar initial, a filter chip, an active
+   * segmented control. The brand blue is not readable there: #2f6ceb on #e6ecfa measures 4.0:1 against the 4.5:1
+   * WCAG AA asks for (the dark theme's pairing came out at 4.2:1), which is what the audit caught on the avatar.
+   * A role of its own rather than a darker `--c-primary`: the blue a button is FILLED with is the brand's and is
+   * read against white, where it already passes.
+   */
+  --c-on-primary-soft: light-dark(#2453bd, #a8c1ff);
   --c-folder: #f4b400;
   --c-success: light-dark(#16a34a, #34d399);
   --c-highlight: light-dark(#fde68a, #6b5a17);

@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRouter } from 'vue-router';
 import { ArrowDown, ArrowUp, MoreVertical, Star } from 'lucide-vue-next';
 import { useFormat } from '@/composables/useFormat';
 import type { Node } from '@/data/types';
+import { typeKeyOf } from '@/data/fileTypes';
+import { parentPath, splitPath } from '@/lib/address';
+import { filesRoute, segments } from '@/lib/path';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
 import { useClipboardStore } from '@/features/files/clipboardStore';
 import { useNodeDrag } from '@/features/files/useNodeDrag';
@@ -15,7 +19,7 @@ import { useViewStore, type SortKey } from '@/stores/view';
 import { Avatar, Checkbox, IconButton } from '@/ui';
 
 /** Columns right of Name; the flat listings (Shared, Trash) swap in their own. */
-export type TableColumn = 'owner' | 'lastModified' | 'fileSize' | 'sharedBy' | 'sharedOn' | 'deleted' | 'originalPath';
+export type TableColumn = 'fileKind' | 'location' | 'owner' | 'lastModified' | 'fileSize' | 'sharedBy' | 'sharedOn' | 'deleted' | 'originalPath';
 
 // The keyboard scope (tabindex, aria-activedescendant, keydown) belongs on the grid, and the grid is no longer the
 // root element — it sits inside the scroll container below. So attrs are placed by hand rather than inherited.
@@ -27,11 +31,12 @@ const props = withDefaults(
     /** Inserts a heading row whenever the key changes (Recent's "Today" / "Yesterday"). */
     groupBy?: (node: Node) => string;
   }>(),
-  { columns: () => ['owner', 'lastModified', 'fileSize'], groupBy: undefined },
+  { columns: () => ['fileKind', 'owner', 'lastModified', 'fileSize'], groupBy: undefined },
 );
 const emit = defineEmits<{ open: [node: Node] }>();
 
 const { t } = useI18n();
+const router = useRouter();
 const { formatDateTime, formatSize } = useFormat();
 const files = useFilesStore();
 const view = useViewStore();
@@ -44,6 +49,8 @@ const settings = useSettingsStore();
 // the 12px the table extends past the ⋮ (icon at x 1618, table edge 1651): a narrower column would widen the flex
 // name column and push Owner off x 1035.
 const COLUMN_DEFS = {
+  fileKind: { sort: 'type', width: 120 },
+  location: { width: 220 },
   owner: { width: 132 },
   lastModified: { sort: 'modified', width: 190 },
   fileSize: { sort: 'size', width: 110 },
@@ -53,7 +60,32 @@ const COLUMN_DEFS = {
   originalPath: { width: 220 },
 } satisfies Record<TableColumn, { sort?: SortKey; width: number }>;
 
-const columns = computed(() => props.columns.map((id) => ({ id, ...(COLUMN_DEFS[id] as { sort?: SortKey; width: number }) })));
+const wanted = computed(() => props.columns.map((id) => ({ id, ...(COLUMN_DEFS[id] as { sort?: SortKey; width: number }) })));
+
+/**
+ * How much room the table has been given. Watched rather than read once: the details panel opens and closes, the
+ * sidebar is resized, and a phone is turned.
+ */
+const wrapper = ref<HTMLElement>();
+const room = ref(Number.POSITIVE_INFINITY);
+let sizes: ResizeObserver | undefined;
+onMounted(() => {
+  if (!wrapper.value) return;
+  sizes = new ResizeObserver(([entry]) => (room.value = entry.contentRect.width));
+  sizes.observe(wrapper.value);
+});
+onBeforeUnmount(() => sizes?.disconnect());
+
+/**
+ * The metadata columns are dropped when the row cannot fit them.
+ *
+ * Below its `minWidth` the table scrolls sideways inside its container, and what goes off the right edge first is
+ * the ⋮ — so on a 390 px screen a row's actions could not be reached at all (measured: the row wanted 728 px, and
+ * a click on ⋮ landed on the page behind it). Name and ⋮ are what a listing cannot do without; owner, date and
+ * size are what a narrow screen can do without. The reference layout is untouched: at any width that fits the
+ * full row, every column is there.
+ */
+const shownColumns = computed(() => (room.value >= fullWidth.value ? wanted.value : []));
 
 // The fixed ends of every row, and the narrowest the flex name column may become.
 const CHECKBOX_WIDTH = 48;
@@ -71,7 +103,12 @@ const NAME_MIN_WIDTH = 200;
  * geometry is unaffected: at the 1672 the design is drawn for, the table is far wider than this and `w-full` wins.
  */
 const minWidth = computed(
-  () => CHECKBOX_WIDTH + MENU_WIDTH + NAME_MIN_WIDTH + columns.value.reduce((total, col) => total + col.width, 0),
+  () => CHECKBOX_WIDTH + MENU_WIDTH + NAME_MIN_WIDTH + shownColumns.value.reduce((total, col) => total + col.width, 0),
+);
+
+/** What the row needs with every column it was asked for — the threshold the narrow layout is decided by. */
+const fullWidth = computed(
+  () => CHECKBOX_WIDTH + MENU_WIDTH + NAME_MIN_WIDTH + wanted.value.reduce((total, col) => total + col.width, 0),
 );
 
 const rows = computed(() =>
@@ -92,6 +129,29 @@ function owner(node: Node): string {
   return sharedDriveOf(node, files.storages) ?? (node.ownerId === files.user?.id ? t('panel.you') : (node.ownerName ?? node.ownerId));
 }
 
+/**
+ * The folder a row's node lives in, as a path under its drive — what Starred and Recent could not say about a row
+ * at all, so a name there named a file the person had no way to place.
+ *
+ * Read off the address rather than asked for: a node's id IS `<drive>://<path>`, so the answer is already in hand
+ * for every row at once. The drive is named too, because these listings gather rows from every drive there is.
+ */
+function location(node: Node): string {
+  const parent = parentPath(node.id);
+  if (parent === null) return '';
+  const { adapter, rel } = splitPath(parent);
+  const drive = files.storages.find((s) => s.id === adapter)?.name ?? adapter;
+  return rel ? `${drive}/${rel}` : drive;
+}
+
+/** Opens the folder the row lives in. Its own click, so the row's select/preview is not what happens. */
+function openLocation(node: Node) {
+  const parent = parentPath(node.id);
+  if (parent === null) return;
+  const { adapter, rel } = splitPath(parent);
+  void router.push(filesRoute(adapter, segments(rel)));
+}
+
 function openMenu(node: Node, event: MouseEvent) {
   itemMenu.openFor(node, event.currentTarget as HTMLElement);
 }
@@ -106,7 +166,7 @@ function onContextMenu(node: Node, event: MouseEvent) {
 <template>
   <!-- The scroll container is horizontal only in intent; it is left unconstrained in height so the page keeps
        owning vertical scrolling (a height here would give the rows a second, nested scrollbar). -->
-  <div class="overflow-x-auto">
+  <div ref="wrapper" class="overflow-x-auto">
     <!-- The page owns the keyboard scope (tabindex, aria-activedescendant, keydown) and passes it through $attrs. -->
     <table
       v-bind="$attrs"
@@ -118,7 +178,7 @@ function onContextMenu(node: Node, event: MouseEvent) {
       <colgroup>
         <col :style="{ width: `${CHECKBOX_WIDTH}px` }" />
         <col />
-        <col v-for="col in columns" :key="col.id" :style="{ width: `${col.width}px` }" />
+        <col v-for="col in shownColumns" :key="col.id" :style="{ width: `${col.width}px` }" />
         <col :style="{ width: `${MENU_WIDTH}px` }" />
       </colgroup>
       <thead>
@@ -140,7 +200,7 @@ function onContextMenu(node: Node, event: MouseEvent) {
             </button>
           </th>
           <th
-            v-for="col in columns"
+            v-for="col in shownColumns"
             :key="col.id"
             class="text-left font-normal"
             :aria-sort="col.sort && view.sortKey === col.sort ? (view.sortDir === 'asc' ? 'ascending' : 'descending') : undefined"
@@ -160,7 +220,7 @@ function onContextMenu(node: Node, event: MouseEvent) {
       <tbody>
         <template v-for="{ node, heading } in rows" :key="node.id">
           <tr v-if="heading" class="[&>td]:p-0">
-            <td :colspan="columns.length + 3" class="h-[34px] pt-2 align-bottom text-13 font-semibold leading-none text-text-2">{{ heading }}</td>
+            <td :colspan="shownColumns.length + 3" class="h-[34px] pt-2 align-bottom text-13 font-semibold leading-none text-text-2">{{ heading }}</td>
           </tr>
           <tr
             :id="`node-${node.id}`"
@@ -202,8 +262,19 @@ function onContextMenu(node: Node, event: MouseEvent) {
                 </span>
               </div>
             </td>
-            <td v-for="col in columns" :key="col.id" class="truncate">
-              <template v-if="col.id === 'owner'">{{ owner(node) }}</template>
+            <td v-for="col in shownColumns" :key="col.id" class="truncate">
+              <template v-if="col.id === 'fileKind'">{{ t(typeKeyOf(node)) }}</template>
+              <button
+                v-else-if="col.id === 'location'"
+                type="button"
+                class="max-w-full truncate text-left underline-offset-2 hover:underline"
+                :title="location(node)"
+                @click.stop="openLocation(node)"
+                @dblclick.stop
+              >
+                {{ location(node) }}
+              </button>
+              <template v-else-if="col.id === 'owner'">{{ owner(node) }}</template>
               <template v-else-if="col.id === 'lastModified'">{{ formatDateTime(node.modifiedAt) }}</template>
               <template v-else-if="col.id === 'fileSize'">{{ node.kind === 'folder' ? '—' : formatSize(node.size) }}</template>
               <span v-else-if="col.id === 'sharedBy'" class="flex items-center">

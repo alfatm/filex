@@ -27,13 +27,14 @@ export type Span =
 /** One block of an answer. */
 export type Block =
   | { kind: 'p'; spans: Span[] }
-  | { kind: 'h'; spans: Span[] }
+  /** `level` is the number of `#`, 1–6 — a document preview sizes its headings by it. */
+  | { kind: 'h'; level: number; spans: Span[] }
   | { kind: 'ul'; items: Span[][] }
   | { kind: 'ol'; items: Span[][]; start: number }
   | { kind: 'pre'; text: string };
 
 const FENCE = /^\s*```/;
-const HEADING = /^\s{0,3}#{1,6}\s+(.*)$/;
+const HEADING = /^\s{0,3}(#{1,6})\s+(.*)$/;
 const BULLET = /^\s{0,3}[-*+]\s+(.*)$/;
 const NUMBERED = /^\s{0,3}(\d{1,3})[.)]\s+(.*)$/;
 
@@ -81,7 +82,7 @@ export function parseAnswer(text: string): Block[] {
     const heading = HEADING.exec(line);
     if (heading) {
       flush();
-      blocks.push({ kind: 'h', spans: parseSpans(heading[1]) });
+      blocks.push({ kind: 'h', level: heading[1].length, spans: parseSpans(heading[2]) });
       continue;
     }
     const numbered = NUMBERED.exec(line);

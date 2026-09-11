@@ -13,6 +13,7 @@ const byDay = (node: Node) => formatRelativeDay(node.openedAt ?? node.modifiedAt
 <template>
   <ListingPage
     listing="recent"
+    :columns="['location', 'lastModified', 'fileSize']"
     :title="t('nav.recent')"
     :filters="['type', 'people']"
     :group-by="byDay"

@@ -248,7 +248,7 @@ async function revoke(person: Person) {
     <ul class="mt-5 divide-y divide-border-soft" :aria-label="t('modal.access.people')">
       <li v-for="person in people" :key="person.id" class="flex h-[58px] items-center">
         <!-- A group is not a face: it gets the group mark and its size instead of an initial and an address. -->
-        <span v-if="person.principal === 'group'" class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-soft text-primary">
+        <span v-if="person.principal === 'group'" class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-soft text-primary-strong">
           <Users :size="18" />
         </span>
         <Avatar v-else :initial="person.initial" />

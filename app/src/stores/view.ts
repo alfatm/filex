@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 
 export type ViewMode = 'grid' | 'list';
-export type SortKey = 'name' | 'modified' | 'size';
+export type SortKey = 'name' | 'type' | 'modified' | 'size';
 export type SortDir = 'asc' | 'desc';
 /** The two right-hand panels open independently: details next to the listing, the assistant at the shell's edge. */
 export type RightPanel = 'details' | 'assistant';
@@ -10,7 +10,7 @@ export type RightPanel = 'details' | 'assistant';
 const STORAGE_KEY = 'filex.app.view';
 
 const VIEW_MODES: ViewMode[] = ['grid', 'list'];
-export const SORT_KEYS: readonly SortKey[] = ['name', 'modified', 'size'];
+export const SORT_KEYS: readonly SortKey[] = ['name', 'type', 'modified', 'size'];
 const SORT_DIRS: SortDir[] = ['asc', 'desc'];
 /** Spec §6 draws the assistant at 432; the drag handle keeps it between a readable minimum and half a laptop screen. */
 export const ASSISTANT_WIDTH = { min: 320, default: 432, max: 720 } as const;

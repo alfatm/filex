@@ -38,6 +38,7 @@ describe('the selection bar under role permissions', () => {
       ...noCapabilities(),
       delete: true,
       move: true,
+      copy: true,
       folderDownload: true,
       deleteForever: true,
       allowed: new Set(ROLE_PERMISSIONS.filter((id) => !withheld.includes(id))),
@@ -68,6 +69,18 @@ describe('the selection bar under role permissions', () => {
     // And the button says why, rather than only looking pressable.
     expect(trash.attributes('title')).toBe('Your role may not do this');
     expect(trash.attributes('disabled')).toBeDefined();
+  });
+
+  // The row menu had "Copy to" all along; the bar did not, so duplicating several files at once was the one thing
+  // a multi-selection could not do.
+  it('offers the same Copy to the whole selection that a single row has', async () => {
+    const wrapper = await bar([]);
+    const modals = useModalsStore();
+    const copy = wrapper.findAll('button').find((b) => b.attributes('aria-label') === 'Copy to')!;
+
+    expect(copy.attributes('disabled')).toBeUndefined();
+    await copy.trigger('click');
+    expect(modals.active).toMatchObject({ kind: 'copy' });
   });
 
   it('still acts on the same icon for a role that carries the permission', async () => {

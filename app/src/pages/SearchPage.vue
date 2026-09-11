@@ -2,7 +2,7 @@
 import { computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
-import { HardDrive, SlidersHorizontal, X } from 'lucide-vue-next';
+import { HardDrive, Loader2, SlidersHorizontal, X } from 'lucide-vue-next';
 import type { SearchHit } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
 import { useFileActions } from '@/features/files/useFileActions';
@@ -136,12 +136,12 @@ function open(hit: SearchHit) {
     <div class="flex min-h-control-md flex-wrap items-center gap-x-2 gap-y-2 pl-2">
       <h1 class="text-18 font-semibold leading-none">{{ t('search.resultsTitle') }}</h1>
       <ul class="flex flex-wrap items-center gap-2">
-        <li v-for="chip in chips" :key="chip" class="flex h-7 items-center rounded-full bg-primary-soft px-3 text-11.5 leading-none text-primary">
+        <li v-for="chip in chips" :key="chip" class="flex h-7 items-center rounded-full bg-primary-soft px-3 text-11.5 leading-none text-primary-strong">
           {{ chip }}
         </li>
       </ul>
       <ul v-if="exclusions.length" class="flex flex-wrap items-center gap-2">
-        <li v-for="chip in exclusions" :key="chip.path" class="flex h-7 items-center gap-1 rounded-full bg-primary-soft pl-3 pr-1 text-11.5 leading-none text-primary">
+        <li v-for="chip in exclusions" :key="chip.path" class="flex h-7 items-center gap-1 rounded-full bg-primary-soft pl-3 pr-1 text-11.5 leading-none text-primary-strong">
           <span>{{ t('search.chipSkip', { path: chip.label }) }}</span>
           <button
             type="button"
@@ -164,7 +164,16 @@ function open(hit: SearchHit) {
       </Button>
     </div>
 
-    <div class="mr-[9px] mt-3">
+    <!--
+      `aria-busy` on the region, not a spinner alone: a slow query used to leave the previous answer on screen with
+      nothing saying a new one was on the way (measured at 2.5 s — no spinner, no busy flag, no line of text).
+      The rows are kept rather than blanked, so what is there stays readable while the newer answer is fetched.
+    -->
+    <div class="mr-[9px] mt-3" :aria-busy="store.loading">
+      <p v-if="store.loading" class="flex items-center gap-2 py-2 pl-3 text-13 leading-none text-text-3" role="status">
+        <Loader2 :size="14" class="animate-spin" />
+        <span>{{ t('search.searching') }}</span>
+      </p>
       <table class="w-full table-fixed border-collapse">
         <colgroup>
           <col v-for="col in columns" :key="col.id" :style="'width' in col ? { width: `${col.width}px` } : undefined" />

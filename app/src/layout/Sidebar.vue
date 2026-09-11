@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink, useRoute } from 'vue-router';
 import {
@@ -189,10 +189,31 @@ function onResizeKeydown(event: KeyboardEvent) {
 
 onBeforeUnmount(() => stopDrag?.());
 
+/**
+ * The width below which the sidebar is a rail whatever the stored preference says.
+ *
+ * At 390 px an expanded sidebar left the listing about 150 px — narrower than a row can be drawn in — so the ⋮ at
+ * the end of every row sat outside the page and a row's actions could not be reached at all. The person's own
+ * choice is untouched: it is what comes back the moment there is room for it again.
+ */
+const RAIL_BELOW_PX = 768;
+const narrow = ref(false);
+let viewport: MediaQueryList | undefined;
+const onViewportChange = (event: MediaQueryListEvent) => (narrow.value = event.matches);
+onMounted(() => {
+  viewport = window.matchMedia(`(max-width: ${RAIL_BELOW_PX - 1}px)`);
+  narrow.value = viewport.matches;
+  viewport.addEventListener('change', onViewportChange);
+});
+onBeforeUnmount(() => viewport?.removeEventListener('change', onViewportChange));
+
+/** What the sidebar actually draws as: the preference, or the rail a narrow screen forces. */
+const collapsed = computed(() => narrow.value || view.sidebarCollapsed);
+
 // Spec §2: a row is one --control-md tall and the active one paints the full width between the rail's gutters.
 // Rail mode keeps the same rows and paints the same active box; only the labels and the section captions go.
 const itemClass = computed(() =>
-  view.sidebarCollapsed
+  collapsed.value
     ? 'flex h-control-md w-control-md items-center justify-center rounded-md text-13 font-medium leading-none text-text'
     : 'flex h-control-md items-center gap-2 rounded-md px-3 text-13 font-medium leading-none text-text',
 );
@@ -205,11 +226,11 @@ const captionClass = 'mt-4 px-[18px] text-10 font-semibold uppercase leading-non
 <template>
   <nav
     class="relative flex h-full shrink-0 flex-col border-r border-border bg-bg-sidebar"
-    :class="view.sidebarCollapsed ? 'w-[60px] items-center' : ''"
-    :style="view.sidebarCollapsed ? undefined : { width: `${view.sidebarWidth}px` }"
+    :class="collapsed ? 'w-[60px] items-center' : ''"
+    :style="collapsed ? undefined : { width: `${view.sidebarWidth}px` }"
   >
     <div
-      v-if="!view.sidebarCollapsed"
+      v-if="!collapsed"
       role="separator"
       aria-orientation="vertical"
       :aria-label="t('nav.resize')"
@@ -220,12 +241,12 @@ const captionClass = 'mt-4 px-[18px] text-10 font-semibold uppercase leading-non
       @keydown="onResizeKeydown"
     />
     <!-- Same height as the topbar beside it, so the two rules across the top of the app line up. -->
-    <div class="flex h-12 items-center" :class="view.sidebarCollapsed ? 'justify-center' : 'pl-2'">
+    <div class="flex h-12 items-center" :class="collapsed ? 'justify-center' : 'pl-2'">
       <IconButton
-        :label="t(view.sidebarCollapsed ? 'nav.expandMenu' : 'nav.collapseMenu')"
+        :label="t(collapsed ? 'nav.expandMenu' : 'nav.collapseMenu')"
         class="text-text"
-        :aria-expanded="!view.sidebarCollapsed"
-        @click="view.sidebarCollapsed = !view.sidebarCollapsed"
+        :aria-expanded="!collapsed"
+        @click="view.sidebarCollapsed = !collapsed"
       >
         <MenuIcon :size="18" :stroke-width="1.75" />
       </IconButton>
@@ -236,7 +257,7 @@ const captionClass = 'mt-4 px-[18px] text-10 font-semibold uppercase leading-non
         hamburger moved onto the button, so nothing in the reference shifts.
       -->
       <button
-        v-if="!view.sidebarCollapsed"
+        v-if="!collapsed"
         type="button"
         :title="t('nav.reload')"
         class="ml-1 flex items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
@@ -248,16 +269,16 @@ const captionClass = 'mt-4 px-[18px] text-10 font-semibold uppercase leading-non
     </div>
 
     <!-- Same left edge (x 14) as the active nav pill below; the button's own icon and label are centred inside it. -->
-    <div class="mt-2" :class="view.sidebarCollapsed ? '' : 'px-1.5'">
+    <div class="mt-2" :class="collapsed ? '' : 'px-1.5'">
       <Button
-        :size="view.sidebarCollapsed ? 'sm' : 'md'"
-        :class="view.sidebarCollapsed ? '!h-control-lg !w-control-lg !rounded-full !px-0' : 'w-full !gap-0 !px-0'"
+        :size="collapsed ? 'sm' : 'md'"
+        :class="collapsed ? '!h-control-lg !w-control-lg !rounded-full !px-0' : 'w-full !gap-0 !px-0'"
         aria-haspopup="menu"
         :aria-expanded="!!newMenu"
-        :aria-label="view.sidebarCollapsed ? t('new.button') : undefined"
+        :aria-label="collapsed ? t('new.button') : undefined"
         @click="openNewMenu"
       >
-        <Plus v-if="view.sidebarCollapsed" :size="18" />
+        <Plus v-if="collapsed" :size="18" />
         <template v-else>
           <!-- The ref centres icon and label inside the button rather than aligning them to the nav columns below. -->
           <span class="flex flex-1 items-center justify-center gap-2 font-semibold">
@@ -279,27 +300,27 @@ const captionClass = 'mt-4 px-[18px] text-10 font-semibold uppercase leading-non
       <input ref="folderInput" type="file" webkitdirectory multiple class="hidden" tabindex="-1" :aria-label="t('new.folderUpload')" @change="onFilesPicked" />
     </div>
 
-    <div class="min-h-0 overflow-y-auto" :class="view.sidebarCollapsed && 'w-full'">
-      <ul class="mt-3 flex flex-col gap-px" :class="view.sidebarCollapsed ? 'items-center' : 'px-1.5'">
+    <div class="min-h-0 overflow-y-auto" :class="collapsed && 'w-full'">
+      <ul class="mt-3 flex flex-col gap-px" :class="collapsed ? 'items-center' : 'px-1.5'">
         <li v-for="item in nav" :key="item.name">
           <RouterLink
             :to="{ name: item.name }"
             :class="[linkClass, isNavActive(item.name) && activeClass]"
-            :title="view.sidebarCollapsed ? t(item.label) : undefined"
+            :title="collapsed ? t(item.label) : undefined"
           >
             <component :is="item.icon" :size="18" :stroke-width="1.75" class="shrink-0" />
-            <span class="min-w-0 truncate" :class="view.sidebarCollapsed && 'sr-only'">{{ t(item.label) }}</span>
+            <span class="min-w-0 truncate" :class="collapsed && 'sr-only'">{{ t(item.label) }}</span>
           </RouterLink>
         </li>
       </ul>
 
       <!-- The home drive is "My files" above, so a section that would list only it is left out altogether. -->
       <template v-if="files.listedStorages.length">
-        <p v-if="!view.sidebarCollapsed" :class="captionClass">{{ t('nav.storages') }}</p>
+        <p v-if="!collapsed" :class="captionClass">{{ t('nav.storages') }}</p>
         <!-- The caption's place in rail mode: a rule, so the groups stay apart without a label. -->
         <div v-else class="mx-auto mt-3 h-px w-6 bg-border" />
       </template>
-      <ul class="mt-1 flex flex-col gap-px" :class="view.sidebarCollapsed ? 'items-center' : 'px-1.5'">
+      <ul class="mt-1 flex flex-col gap-px" :class="collapsed ? 'items-center' : 'px-1.5'">
         <!--
           Active is the drive the listing is actually in, not "some files route": the condition used to be the
           route name alone, so with a second drive on the sidebar BOTH rows painted themselves active.
@@ -308,43 +329,43 @@ const captionClass = 'mt-4 px-[18px] text-10 font-semibold uppercase leading-non
           <RouterLink
             :to="filesRoute(storage.id, [])"
             :class="[linkClass, route.name === 'files' && files.storage?.id === storage.id && activeClass]"
-            :title="view.sidebarCollapsed ? storage.name : undefined"
+            :title="collapsed ? storage.name : undefined"
           >
             <HardDrive :size="18" :stroke-width="1.75" class="shrink-0" />
-            <span class="min-w-0 truncate" :class="view.sidebarCollapsed && 'sr-only'">{{ storage.name }}</span>
+            <span class="min-w-0 truncate" :class="collapsed && 'sr-only'">{{ storage.name }}</span>
           </RouterLink>
         </li>
       </ul>
 
-      <p v-if="!view.sidebarCollapsed" :class="[captionClass, '!mt-4']">{{ t('nav.connections') }}</p>
+      <p v-if="!collapsed" :class="[captionClass, '!mt-4']">{{ t('nav.connections') }}</p>
       <div v-else class="mx-auto mt-3 h-px w-6 bg-border" />
-      <ul class="mt-1 flex flex-col gap-px" :class="view.sidebarCollapsed ? 'items-center' : 'px-1.5'">
+      <ul class="mt-1 flex flex-col gap-px" :class="collapsed ? 'items-center' : 'px-1.5'">
         <li v-for="item in connections" :key="item.name">
           <RouterLink
             v-if="capabilities.can.connections"
             :to="{ name: item.name }"
             :class="[linkClass, route.name === item.name && activeClass]"
-            :title="view.sidebarCollapsed ? t(item.label) : undefined"
+            :title="collapsed ? t(item.label) : undefined"
           >
             <component :is="item.icon" :size="18" :stroke-width="1.75" class="shrink-0" />
-            <span class="min-w-0 truncate" :class="view.sidebarCollapsed && 'sr-only'">{{ t(item.label) }}</span>
+            <span class="min-w-0 truncate" :class="collapsed && 'sr-only'">{{ t(item.label) }}</span>
           </RouterLink>
           <button
             v-else
             type="button"
-            :class="[itemClass, view.sidebarCollapsed ? 'cursor-default' : 'w-full cursor-default']"
+            :class="[itemClass, collapsed ? 'cursor-default' : 'w-full cursor-default']"
             aria-disabled="true"
-            :title="view.sidebarCollapsed ? `${t(item.label)} — ${t('common.comingSoon')}` : t('common.comingSoon')"
+            :title="collapsed ? `${t(item.label)} — ${t('common.comingSoon')}` : t('common.comingSoon')"
           >
             <component :is="item.icon" :size="18" :stroke-width="1.75" class="shrink-0" />
-            <span class="min-w-0 truncate" :class="view.sidebarCollapsed && 'sr-only'">{{ t(item.label) }}</span>
+            <span class="min-w-0 truncate" :class="collapsed && 'sr-only'">{{ t(item.label) }}</span>
           </button>
         </li>
       </ul>
     </div>
 
     <!-- The quota block needs its labels; the rail drops it rather than showing a bar with no numbers. -->
-    <div v-if="files.storage && !view.sidebarCollapsed" class="mt-auto shrink-0 px-[18px] pb-4 pt-3">
+    <div v-if="files.storage && !collapsed" class="mt-auto shrink-0 px-[18px] pb-4 pt-3">
       <p class="text-12 font-semibold leading-none">
         {{ files.storage.name }}
       </p>

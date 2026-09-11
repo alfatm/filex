@@ -133,7 +133,7 @@ watch(
             :aria-checked="view.mode === mode"
             :aria-label="t(mode === 'list' ? 'files.listView' : 'files.gridView')"
             class="flex w-10 items-center justify-center"
-            :class="view.mode === mode ? 'bg-primary-soft text-primary' : 'text-text-2 hover:bg-hover-row'"
+            :class="view.mode === mode ? 'bg-primary-soft text-primary-strong' : 'text-text-2 hover:bg-hover-row'"
             @click="view.mode = mode"
           >
             <List v-if="mode === 'list'" :size="16" />
@@ -241,7 +241,9 @@ watch(
 
     <!-- A load that failed keeps the page usable: say what happened and offer to run it again. -->
     <EmptyState v-else-if="files.error" class="mt-16" :icon="AlertTriangle" :title="t(`error.${files.error}.title`)" :hint="t(`error.${files.error}.hint`)">
-      <Button variant="outline" @click="files.retry()">{{ t('error.retry') }}</Button>
+      <!-- Not for a refusal: the same request would be refused again, and a button that cannot work reads as a
+           bug in the app rather than as an answer about permissions. -->
+      <Button v-if="files.error !== 'forbidden'" variant="outline" @click="files.retry()">{{ t('error.retry') }}</Button>
     </EmptyState>
 
     <!-- A folder can be empty, or emptied by the chips; the second case offers the way out. -->

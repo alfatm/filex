@@ -34,6 +34,10 @@ import type {
 
 /** `createFolder` / `createFile` / `rename` reject with an Error carrying this message when a live sibling has the same name. */
 export const DUPLICATE_NAME = 'duplicateName';
+/** The node is there, but this account may not read it: a 403 rather than a 404, and a different sentence. */
+export const FORBIDDEN = 'forbidden';
+/** The server refused the name itself — "." or ".." or a separator in it — rather than the folder it would go in. */
+export const INVALID_NAME = 'invalidName';
 
 /** `changePassword` and `totpDisable` reject with this when the current password does not match. */
 export const WRONG_PASSWORD = 'wrongPassword';

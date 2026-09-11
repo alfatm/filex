@@ -25,7 +25,7 @@
  * mounting the explorer got users with no way to mint the credential WebDAV,
  * FTPS and `filex mount` ask for. The copy is gone; this is the surface.
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import type { ExplorerConfig, LocaleCode } from '../types/ExplorerConfig';
 import type { ApiToken } from '../types/Tokens';
 import { useLocale } from '../composables/useLocale';
@@ -57,6 +57,29 @@ const { t } = useLocale(locale);
 const { tokens, loading, error, canMint, revealed, load, create, remove, dismiss } = useTokens(
   props.config,
 );
+
+/* ── theme ──────────────────────────────────────────────────────────────
+ * ⚠ Resolved here, not left to the stylesheet: the palette's auto rule keys
+ * off the explorer's own `.fe` root, and this panel is also mounted ON ITS
+ * OWN — the app's "API keys" page renders nothing but this section. Without
+ * the class the section fell back to the `:root` LIGHT tokens inside a dark
+ * host: a near-white card carrying the host's light text. Same resolution as
+ * ConnectionsPanel, which mounts standalone for the same reason. */
+const mq =
+  typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia('(prefers-color-scheme: dark)')
+    : undefined;
+const osDark = ref(!!mq?.matches);
+function onMq(e: MediaQueryListEvent) {
+  osDark.value = e.matches;
+}
+onMounted(() => mq?.addEventListener?.('change', onMq));
+onBeforeUnmount(() => mq?.removeEventListener?.('change', onMq));
+const themeResolved = computed(() => {
+  const mode = props.config.theme ?? 'auto';
+  if (mode === 'light' || mode === 'dark') return mode;
+  return osDark.value ? 'dark' : 'light';
+});
 
 const label = ref('');
 const busy = ref(false);
@@ -181,7 +204,14 @@ function usedLabel(row: ApiToken): string {
 </script>
 
 <template>
-  <section class="fe-s3keys" data-testid="api-tokens">
+  <section
+    class="fe-s3keys"
+    :class="{
+      'fe--theme-dark': themeResolved === 'dark',
+      'fe--theme-light': themeResolved === 'light',
+    }"
+    data-testid="api-tokens"
+  >
     <header class="fe-s3keys__head">
       <h4 class="fe-s3keys__title">{{ t('conn.tokens.title') }}</h4>
       <p class="fe-s3keys__lead">{{ t('conn.tokens.lead') }}</p>

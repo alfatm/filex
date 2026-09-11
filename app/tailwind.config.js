@@ -30,6 +30,8 @@ export default {
         soft: 'var(--c-primary-soft)',
         ring: 'var(--c-primary-ring)',
         tint: 'var(--c-primary-tint)',
+        /* Readable on `primary-soft` / `primary-tint`; see the token. */
+        strong: 'var(--c-on-primary-soft)',
       },
       folder: 'var(--c-folder)',
       success: 'var(--c-success)',

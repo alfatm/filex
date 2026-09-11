@@ -1,6 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { repository } from '@/data';
+import { FORBIDDEN, NOT_FOUND } from '@/data/repository';
 import type { Node } from '@/data/types';
 import { useFilesStore } from './files';
 
@@ -89,5 +90,36 @@ describe('navigating between folders', () => {
     resolvePath(folderNode(PHOTOS, 'Photos'));
     await second;
     expect(files.ordered).toHaveLength(1);
+  });
+});
+
+/**
+ * The three sentences a failed address gets. They used to be two: `resolvePath` answered 403 and 404 alike with
+ * `NOT_FOUND`, so a folder somebody simply may not read was reported as one that "may have been renamed, moved or
+ * deleted" — and the page offered Try again for a request that will be refused every time.
+ */
+describe('what a refused address says', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    vi.spyOn(repository, 'getPath').mockResolvedValue([]);
+    vi.spyOn(repository, 'listPeople').mockResolvedValue({ people: [], canManage: false });
+    vi.spyOn(repository, 'listFilterPeople').mockResolvedValue([]);
+    vi.spyOn(repository, 'listStorages').mockResolvedValue([{ id: 'main', name: 'main', rootId: 'main://', kind: 'local' } as never]);
+    vi.spyOn(repository, 'currentUser').mockResolvedValue({ id: 'u1', name: 'U', email: 'u@e' } as never);
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    [NOT_FOUND, 'notFound'],
+    [FORBIDDEN, 'forbidden'],
+    ['500: upstream exploded', 'load'],
+  ])('answers %s with the %s state', async (thrown, expected) => {
+    vi.spyOn(repository, 'resolvePath').mockRejectedValue(new Error(thrown));
+    const files = useFilesStore();
+    await files.bootstrap();
+
+    await files.openPath('main', 'Docs');
+    expect(files.error).toBe(expected);
+    expect(files.ordered).toEqual([]);
   });
 });

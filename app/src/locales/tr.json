@@ -39,6 +39,7 @@
     }
   },
   "nav": {
+    "skipToContent": "Dosyalara atla",
     "menu": "Menü",
     "home": "Ana sayfa",
     "files": "Dosyalarım",
@@ -116,6 +117,7 @@
     "close": "Kapat",
     "done": "Bitti",
     "duplicateName": "Bu adda bir öğe zaten var",
+    "invalidName": "Bu ad kullanılamaz",
     "newFolder": {
       "title": "Yeni klasör",
       "defaultName": "Adsız klasör",
@@ -305,7 +307,9 @@
     "subfolders": "Alt klasörler",
     "noSubfolders": "Alt klasör yok",
     "listingActions": "Liste eylemleri",
-    "dropHere": "“{folder}” klasörüne yüklemek için bırakın"
+    "dropHere": "“{folder}” klasörüne yüklemek için bırakın",
+    "fileKind": "Tür",
+    "location": "Konum"
   },
   "filter": {
     "type": "Tür",
@@ -353,13 +357,15 @@
     "size": "Boyut",
     "ascending": "Artan",
     "descending": "Azalan",
-    "by": "Sıralama"
+    "by": "Sıralama",
+    "type": "Tür"
   },
   "selection": {
     "count": "{count} seçildi",
     "download": "İndir",
     "share": "Paylaş",
     "move": "Taşı",
+    "copy": "Şuraya kopyala",
     "star": "Yıldızla",
     "delete": "Sil",
     "clear": "Seçimi kaldır",
@@ -442,11 +448,15 @@
     "star": "Yıldızlılara ekle",
     "unstar": "Yıldızlılardan çıkar",
     "openInNewTab": "Yeni sekmede aç",
+    "zoomIn": "Yakınlaştır",
+    "zoomOut": "Uzaklaştır",
+    "zoomFit": "Ekrana sığdır",
     "close": "Kapat",
     "previous": "Önceki dosya",
     "next": "Sonraki dosya",
     "loading": "Önizleme yükleniyor…",
     "loadError": "Dosya yüklenemedi.",
+    "audioError": "Tarayıcı bu ses dosyasını oynatamıyor.",
     "noPreview": "Önizleme yok",
     "pdfFallback": "PDF görüntüleyici yüklenemedi.",
     "counter": "{index} / {count}",
@@ -546,7 +556,8 @@
     "dateWindow": "Ya da bir tarihin çevresinde",
     "dateWindowDate": "Tarih",
     "dateWindowSpan": "Pencere genişliği",
-    "dateWindowField": "Pencerenin okuduğu tarih"
+    "dateWindowField": "Pencerenin okuduğu tarih",
+    "searching": "Aranıyor…"
   },
   "assistant": {
     "title": "Yapay zekâ asistanı",
@@ -801,6 +812,10 @@
     "notFound": {
       "title": "Klasör bulunamadı",
       "hint": "Yeniden adlandırılmış, taşınmış veya silinmiş olabilir"
+    },
+    "forbidden": {
+      "title": "Bu klasörü açamazsınız",
+      "hint": "Erişim için sahibine sorun"
     },
     "noSuchPage": {
       "title": "Sayfa bulunamadı",

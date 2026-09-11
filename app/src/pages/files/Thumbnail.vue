@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, useId } from 'vue';
+import { computed, ref, useId } from 'vue';
 import { Play } from 'lucide-vue-next';
 import type { ThumbnailKind } from '@/data/types';
 
@@ -22,12 +22,25 @@ const PAGE_FILL = 'light-dark(#ffffff, #3f4650)';
 const PAGE_LINE = 'light-dark(#9ca3af, #c9ccd3)';
 const PAGE_SHADOW = 'drop-shadow(0 2px 3px light-dark(rgba(17, 24, 39, 0.1), rgba(0, 0, 0, 0.45)))';
 const failed = ref(false);
+// Banners and other extreme aspect ratios are unreadable cropped to the tile — a 728x90 strip cropped to the tile's
+// shape shows a few pixels of its middle. Past this bound the whole picture is fitted inside the tile instead.
+const EXTREME_RATIO = 2.5;
+const ratio = ref(0);
+const cropped = computed(() => !ratio.value || (ratio.value < EXTREME_RATIO && ratio.value > 1 / EXTREME_RATIO));
+function measure(event: Event) {
+  const img = event.target as HTMLImageElement;
+  ratio.value = img.naturalHeight ? img.naturalWidth / img.naturalHeight : 0;
+}
 </script>
 
 <template>
   <!-- The cached preview when the server has one; otherwise placeholder artwork per kind. -->
   <div class="relative h-full w-full overflow-hidden">
-    <img v-if="src && kind !== 'video' && !failed" :src="src" alt="" loading="lazy" decoding="async" class="h-full w-full object-cover" @error="failed = true" />
+    <!-- ⚠ `draggable="false"`: a picture is draggable by default, and a person grabs the card BY its picture. Chrome
+         then ran its own image drag instead of the card's — the raw image became the drag ghost, the transfer
+         picked up the browser's own types, and the drop effect no longer matched the `move` the card had asked
+         for, so a folder lit up as a valid target refused the drop with a no-entry cursor. -->
+    <img v-if="src && kind !== 'video' && !failed" :src="src" alt="" draggable="false" loading="lazy" decoding="async" class="h-full w-full" :class="cropped ? 'object-cover' : 'bg-bg-muted object-contain'" @load="measure" @error="failed = true" />
 
     <svg v-else-if="kind === 'mountain'" viewBox="0 0 236 108" preserveAspectRatio="none" class="h-full w-full" aria-hidden="true">
       <defs>
@@ -178,7 +191,7 @@ const failed = ref(false);
 
     <div v-else-if="kind === 'video'" class="relative flex h-full w-full items-center justify-center" style="background: linear-gradient(135deg, #312e81 0%, #1e1b4b 100%)">
       <!-- The poster is the server's frame at one second, so the tile costs one JPEG instead of a media fetch. -->
-      <img v-if="src && !failed" :src="src" alt="" loading="lazy" decoding="async" class="absolute inset-0 h-full w-full object-cover" @error="failed = true" />
+      <img v-if="src && !failed" :src="src" alt="" draggable="false" loading="lazy" decoding="async" class="absolute inset-0 h-full w-full object-cover" @error="failed = true" />
       <span class="relative flex h-11 w-11 items-center justify-center rounded-full bg-white/90 text-[#1e1b4b]">
         <Play :size="20" fill="currentColor" :stroke-width="0" class="ml-0.5" />
       </span>

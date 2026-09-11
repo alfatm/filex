@@ -12,12 +12,12 @@ defineProps<{ label: string; width?: number; disabledHint?: string; active?: boo
     :title="disabledHint"
     class="inline-flex h-control-sm shrink-0 items-center justify-between rounded border px-2.5 text-12 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
     :class="[
-      active ? 'border-primary bg-primary-soft text-primary' : 'border-border bg-bg text-text',
+      active ? 'border-primary bg-primary-soft text-primary-strong' : 'border-border bg-bg text-text',
       disabledHint ? 'cursor-default' : 'hover:bg-hover-row',
     ]"
     :style="width && !active ? { width: `${width}px` } : undefined"
   >
     <span>{{ label }}</span>
-    <ChevronDown :size="14" class="ml-1" :class="active ? 'text-primary' : 'text-text-3'" />
+    <ChevronDown :size="14" class="ml-1" :class="active ? 'text-primary-strong' : 'text-text-3'" />
   </button>
 </template>

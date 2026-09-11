@@ -285,7 +285,7 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
         class="absolute left-1/2 top-[62px] ml-px w-[722px] -translate-x-1/2 rounded-2xl bg-bg px-[26px] pb-[22px] pt-[26px] shadow-modal"
       >
         <div class="flex items-center">
-          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-soft text-primary">
+          <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-soft text-primary-strong">
             <Search :size="18" />
           </span>
           <div class="ml-3.5">

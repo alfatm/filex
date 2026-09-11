@@ -1,27 +1,38 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
-import { useI18n } from 'vue-i18n';
-import { useRouter } from 'vue-router';
-import { Copy, Link, Star, Tag, X } from 'lucide-vue-next';
-import { repository } from '@/data';
-import { sizeBandOf, typeGroupOf } from '@/data/listingFilter';
-import type { ActivityEvent, ListingFilter, Node, Person, User } from '@/data/types';
-import { useFormat } from '@/composables/useFormat';
-import { reportUnhandled } from '@/lib/errors';
-import { filesRoute } from '@/lib/path';
-import { useOperationsStore } from '@/features/files/operationsStore';
-import { toFilterQuery } from '@/features/files/filterQuery';
-import { useFileActions } from '@/features/files/useFileActions';
-import { sharedDriveOf } from '@/features/files/owner';
-import { useCapabilitiesStore } from '@/stores/capabilities';
-import { useFilesStore } from '@/stores/files';
-import { useToastStore } from '@/stores/toast';
-import { useViewStore } from '@/stores/view';
-import { Avatar, Button, IconButton, SidePanel, Tabs } from '@/ui';
-import FileTypeTile from './FileTypeTile.vue';
-import FolderIcon from './FolderIcon.vue';
+import { computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
+import { useRouter } from "vue-router";
+import { Copy, Link, Star, Tag, X } from "lucide-vue-next";
+import { repository } from "@/data";
+import { sizeBandOf, typeGroupOf } from "@/data/listingFilter";
+import type {
+  ActivityEvent,
+  ListingFilter,
+  Node,
+  Person,
+  User,
+} from "@/data/types";
+import { useFormat } from "@/composables/useFormat";
+import { reportUnhandled } from "@/lib/errors";
+import { filesRoute } from "@/lib/path";
+import { useOperationsStore } from "@/features/files/operationsStore";
+import { toFilterQuery } from "@/features/files/filterQuery";
+import { useFileActions } from "@/features/files/useFileActions";
+import { sharedDriveOf } from "@/features/files/owner";
+import { useCapabilitiesStore } from "@/stores/capabilities";
+import { useFilesStore } from "@/stores/files";
+import { useToastStore } from "@/stores/toast";
+import { useViewStore } from "@/stores/view";
+import { Avatar, Button, IconButton, SidePanel, Tabs } from "@/ui";
+import FileTypeTile from "./FileTypeTile.vue";
+import FolderIcon from "./FolderIcon.vue";
 
-const props = defineProps<{ node: Node; path: Node[]; people: Person[]; user: User | null }>();
+const props = defineProps<{
+  node: Node;
+  path: Node[];
+  people: Person[];
+  user: User | null;
+}>();
 const emit = defineEmits<{ close: [] }>();
 
 const { t } = useI18n();
@@ -34,28 +45,62 @@ const capabilities = useCapabilitiesStore();
 const toast = useToastStore();
 
 /** Minting and revoking a public link is one permission; without it the panel still SHOWS the link it has. */
-const canShare = computed(() => capabilities.allows('files.share'));
+const canShare = computed(() => capabilities.allows("files.share"));
 const operations = useOperationsStore();
 
-type PanelTab = 'details' | 'activity';
-const tab = ref<PanelTab>('details');
+type PanelTab = "details" | "activity";
+const tab = ref<PanelTab>("details");
 const tabs = computed(() => [
-  { id: 'details' as const, label: t('panel.tabDetails') },
-  { id: 'activity' as const, label: t('panel.tabActivity') },
+  { id: "details" as const, label: t("panel.tabDetails") },
+  { id: "activity" as const, label: t("panel.tabActivity") },
 ]);
 
 const typeLabel = computed(() =>
-  props.node.kind === 'folder' ? t('type.folder') : t(`type.${props.node.fileType ?? 'other'}`),
+  props.node.kind === "folder"
+    ? t("type.folder")
+    : t(`type.${props.node.fileType ?? "other"}`),
 );
 const meta = computed(() =>
-  props.node.kind === 'folder'
-    ? (props.node.itemCount === undefined ? t('type.folder') : t('panel.folderMeta', props.node.itemCount))
-    : t('panel.fileMeta', { type: typeLabel.value, size: formatSize(props.node.size) }),
+  props.node.kind === "folder"
+    ? props.node.itemCount === undefined
+      ? t("type.folder")
+      : t("panel.folderMeta", props.node.itemCount)
+    : t("panel.fileMeta", {
+        type: typeLabel.value,
+        size: formatSize(props.node.size),
+      }),
 );
-const location = computed(() => '/' + props.path.map((n) => n.name).join('/'));
+const location = computed(() => "/" + props.path.map((n) => n.name).join("/"));
+
+/**
+ * Banners and other extreme aspect ratios are unreadable when the preview crops them to its box — a 728x90 strip
+ * cropped to a square shows a few pixels of the middle. Past these bounds the whole image is fitted instead, and
+ * the box follows its shape; everything closer to square keeps the cover crop the panel is laid out around.
+ */
+const EXTREME_RATIO = 2.5;
+const previewRatio = ref(0);
+const previewFit = computed<"cover" | "wide" | "tall">(() => {
+  const ratio = previewRatio.value;
+  if (!ratio) return "cover";
+  if (ratio >= EXTREME_RATIO) return "wide";
+  if (ratio <= 1 / EXTREME_RATIO) return "tall";
+  return "cover";
+});
+watch(
+  () => props.node.thumbUrl,
+  () => {
+    previewRatio.value = 0;
+  },
+);
+function measurePreview(event: Event) {
+  const img = event.target as HTMLImageElement;
+  previewRatio.value = img.naturalHeight
+    ? img.naturalWidth / img.naturalHeight
+    : 0;
+}
 
 function personName(id: string, name: string): string {
-  return id === props.user?.id ? t('panel.you') : name;
+  return id === props.user?.id ? t("panel.you") : name;
 }
 
 /**
@@ -68,16 +113,21 @@ const access = computed<Person[]>(() => {
   const owner: Person = {
     id: props.node.ownerId,
     name,
-    initial: (props.node.ownerId === props.user?.id ? props.user.initial : name.trim()[0]) || '?',
-    role: 'owner',
-    principal: 'user',
+    initial:
+      (props.node.ownerId === props.user?.id
+        ? props.user.initial
+        : name.trim()[0]) || "?",
+    role: "owner",
+    principal: "user",
   };
   return [owner, ...props.people.filter((person) => person.id !== owner.id)];
 });
 
 /** The same rule the listing's Owner column applies, so the panel and the row can never disagree about who owns it. */
 const ownerLabel = computed(
-  () => sharedDriveOf(props.node, files.storages) ?? personName(props.node.ownerId, props.node.ownerName ?? props.node.ownerId),
+  () =>
+    sharedDriveOf(props.node, files.storages) ??
+    personName(props.node.ownerId, props.node.ownerName ?? props.node.ownerId),
 );
 
 /**
@@ -94,7 +144,10 @@ async function apply(patch: Partial<ListingFilter>) {
   // The filter lives in the listing's address (`useFilterQuery`), so travelling to one carries it in the URL
   // rather than in the store: the page it lands on reads its chips off the query like any other arrival.
   if (!files.listing && props.path.length) {
-    const landing = filesRoute(props.path[0].name, props.path.slice(1).map((n) => n.name));
+    const landing = filesRoute(
+      props.path[0].name,
+      props.path.slice(1).map((n) => n.name),
+    );
     await router.push({ ...landing, query: toFilterQuery(next) });
     return;
   }
@@ -109,45 +162,92 @@ async function apply(patch: Partial<ListingFilter>) {
  * the question is "what else was written around then", and a file at 23:50 and one at 00:10 are twenty minutes
  * apart. Setting it clears the Modified chip's preset, which is a window over the same column.
  */
-const rows = computed<{ key: string; value: string; filter?: () => void }[]>(() => {
-  const node = props.node;
-  const group = node.kind === 'file' ? typeGroupOf(node.fileType) : null;
-  return [
-    { key: 'type', value: typeLabel.value, ...(group ? { filter: () => void apply({ fileType: group }) } : {}) },
-    // The location is not a filter but an address: clicking it opens the folder the node sits in.
-    { key: 'location', value: location.value, ...(props.path.length ? { filter: () => void openLocation() } : {}) },
-    // The MIME type as the server recorded it, and "the other files of exactly this type" when clicked. Shown only
-    // where there is one: a row the server typed nothing for is the Created case again, and an empty line would
-    // read as a claim about the file rather than about what is known of it.
-    ...(node.kind === 'file' && node.mime
-      ? [{ key: 'mime', value: node.mime, filter: () => void apply({ mime: node.mime!.toLowerCase() }) }]
-      : []),
-    {
-      key: 'size',
-      value: node.kind === 'folder' ? '—' : formatSize(node.size),
-      ...(node.kind === 'file' ? { filter: () => void apply({ size: sizeBandOf(node.size) }) } : {}),
-    },
-    {
-      key: 'modified',
-      value: formatDateTime(node.modifiedAt),
-      ...(node.modifiedAt ? { filter: () => void apply({ around: { field: 'modified', at: node.modifiedAt!, span: 'day' }, modified: 'any' }) } : {}),
-    },
-    // A listing row carries no creation date on every backend; the row is dropped rather than shown empty.
-    ...(node.createdAt
-      ? [
-          {
-            key: 'created',
-            value: formatDateTime(node.createdAt),
-            filter: () => void apply({ around: { field: 'created', at: node.createdAt!, span: 'day' }, modified: 'any' }),
-          },
-        ]
-      : []),
-    { key: 'owner', value: ownerLabel.value, filter: () => void apply({ personId: node.ownerId }) },
-  ];
-});
+const rows = computed<{ key: string; value: string; filter?: () => void }[]>(
+  () => {
+    const node = props.node;
+    const group = node.kind === "file" ? typeGroupOf(node.fileType) : null;
+    return [
+      {
+        key: "type",
+        value: typeLabel.value,
+        ...(group ? { filter: () => void apply({ fileType: group }) } : {}),
+      },
+      // The location is not a filter but an address: clicking it opens the folder the node sits in.
+      {
+        key: "location",
+        value: location.value,
+        ...(props.path.length ? { filter: () => void openLocation() } : {}),
+      },
+      // The MIME type as the server recorded it, and "the other files of exactly this type" when clicked. Shown only
+      // where there is one: a row the server typed nothing for is the Created case again, and an empty line would
+      // read as a claim about the file rather than about what is known of it.
+      ...(node.kind === "file" && node.mime
+        ? [
+            {
+              key: "mime",
+              value: node.mime,
+              filter: () => void apply({ mime: node.mime!.toLowerCase() }),
+            },
+          ]
+        : []),
+      {
+        key: "size",
+        value: node.kind === "folder" ? "—" : formatSize(node.size),
+        ...(node.kind === "file"
+          ? { filter: () => void apply({ size: sizeBandOf(node.size) }) }
+          : {}),
+      },
+      {
+        key: "modified",
+        value: formatDateTime(node.modifiedAt),
+        ...(node.modifiedAt
+          ? {
+              filter: () =>
+                void apply({
+                  around: {
+                    field: "modified",
+                    at: node.modifiedAt!,
+                    span: "day",
+                  },
+                  modified: "any",
+                }),
+            }
+          : {}),
+      },
+      // A listing row carries no creation date on every backend; the row is dropped rather than shown empty.
+      ...(node.createdAt
+        ? [
+            {
+              key: "created",
+              value: formatDateTime(node.createdAt),
+              filter: () =>
+                void apply({
+                  around: {
+                    field: "created",
+                    at: node.createdAt!,
+                    span: "day",
+                  },
+                  modified: "any",
+                }),
+            },
+          ]
+        : []),
+      {
+        key: "owner",
+        value: ownerLabel.value,
+        filter: () => void apply({ personId: node.ownerId }),
+      },
+    ];
+  },
+);
 
 function openLocation() {
-  return router.push(filesRoute(props.path[0].name, props.path.slice(1).map((n) => n.name)));
+  return router.push(
+    filesRoute(
+      props.path[0].name,
+      props.path.slice(1).map((n) => n.name),
+    ),
+  );
 }
 
 // The feed is per node and reloads whenever the node or the store's revision changes, so an action the user just
@@ -156,7 +256,7 @@ const activity = ref<ActivityEvent[]>([]);
 watch(
   [() => props.node.id, () => files.revision, tab] as const,
   async ([id, , current]) => {
-    if (current !== 'activity') return;
+    if (current !== "activity") return;
     let list: ActivityEvent[];
     try {
       list = await repository.listActivity(id);
@@ -243,18 +343,20 @@ watch(
 // Minting and revoking a link are mutations like any other, so they go through the operations tray: called straight
 // on the store the rejection reached nobody and the panel simply went on showing the old state.
 function createLink() {
-  void operations.run(t('op.sharing'), async () => {
+  void operations.run(t("op.sharing"), async () => {
     await files.createShareLink(props.node.id);
   });
 }
 
 function removeLink() {
-  void operations.run(t('op.unsharing'), () => files.removeShareLink(props.node.id));
+  void operations.run(t("op.unsharing"), () =>
+    files.removeShareLink(props.node.id),
+  );
 }
 
 async function copyName() {
   await navigator.clipboard.writeText(props.node.name);
-  toast.push(t('toast.nameCopied'));
+  toast.push(t("toast.nameCopied"));
 }
 
 /**
@@ -265,8 +367,9 @@ async function copyName() {
  * "(а)" because filex records no gender for anybody and inventing one is worse than admitting both.
  */
 function sentence(event: ActivityEvent): string {
-  const detail = event.detail ?? '';
-  if (event.actorId === props.user?.id) return t(`activity.self.${event.kind}`, { detail });
+  const detail = event.detail ?? "";
+  if (event.actorId === props.user?.id)
+    return t(`activity.self.${event.kind}`, { detail });
   return t(`activity.${event.kind}`, { actor: event.actorName, detail });
 }
 </script>
@@ -281,21 +384,42 @@ function sentence(event: ActivityEvent): string {
     @resize="view.setDetailsWidth"
   >
     <div class="flex items-start">
-      <FolderIcon v-if="node.kind === 'folder'" :width="34" :height="28" :shared="node.shared" />
+      <FolderIcon
+        v-if="node.kind === 'folder'"
+        :width="34"
+        :height="28"
+        :shared="node.shared"
+      />
       <FileTypeTile v-else :type="node.fileType ?? 'other'" :size="28" />
       <div class="ml-2.5 min-w-0 flex-1">
         <!-- The panel is where the full name lives: it wraps instead of truncating, and the button beside it puts
              the same string on the clipboard, since a listing row only ever shows the head of a long name. -->
         <h2 class="flex items-start text-14 font-semibold leading-tight">
           <span class="min-w-0 break-words">{{ node.name }}</span>
-          <Star v-if="node.starred" :size="14" class="ml-1.5 mt-0.5 shrink-0 text-folder" fill="currentColor" :aria-label="t('panel.starred')" />
+          <Star
+            v-if="node.starred"
+            :size="14"
+            class="ml-1.5 mt-0.5 shrink-0 text-folder"
+            fill="currentColor"
+            :aria-label="t('panel.starred')"
+          />
         </h2>
         <p class="mt-1 text-11 leading-none text-text-3">{{ meta }}</p>
       </div>
-      <IconButton :label="t('panel.copyName')" :size="28" class="-mt-1 shrink-0 text-text-3" @click="copyName()">
+      <IconButton
+        :label="t('panel.copyName')"
+        :size="28"
+        class="-mt-1 shrink-0 text-text-3"
+        @click="copyName()"
+      >
         <Copy :size="16" />
       </IconButton>
-      <IconButton :label="t('panel.close')" :size="28" class="-mr-1.5 -mt-1 shrink-0" @click="emit('close')">
+      <IconButton
+        :label="t('panel.close')"
+        :size="28"
+        class="-mr-1.5 -mt-1 shrink-0"
+        @click="emit('close')"
+      >
         <X :size="16" />
       </IconButton>
     </div>
@@ -308,22 +432,52 @@ function sentence(event: ActivityEvent): string {
         v-if="node.fileType === 'image' && node.thumbUrl"
         type="button"
         :aria-label="t('menu.preview')"
-        class="mt-3 block h-[140px] w-full overflow-hidden rounded-lg border border-border bg-bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+        class="mt-3 flex w-full items-center justify-center overflow-hidden rounded-lg border border-border bg-bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+        :class="previewFit === 'wide' ? 'h-auto min-h-[240px]' : 'h-[240px]'"
         @click="actions.preview(node)"
       >
-        <img :src="node.thumbUrl" :alt="node.name" loading="lazy" decoding="async" class="h-full w-full object-cover" />
+        <img
+          :src="node.thumbUrl"
+          :alt="node.name"
+          loading="lazy"
+          decoding="async"
+          :class="{
+            'h-full w-full object-cover': previewFit === 'cover',
+            'h-auto w-full object-contain': previewFit === 'wide',
+            'h-full w-auto max-w-full object-contain': previewFit === 'tall',
+          }"
+          @load="measurePreview"
+        />
       </button>
-      <h3 class="text-12 font-semibold leading-none" :class="node.fileType === 'image' && node.thumbUrl ? 'mt-4' : 'mt-5'">{{ t('panel.general') }}</h3>
+      <h3
+        class="text-12 font-semibold leading-none"
+        :class="node.fileType === 'image' && node.thumbUrl ? 'mt-4' : 'mt-5'"
+      >
+        {{ t("panel.general") }}
+      </h3>
       <dl class="mt-2">
-        <div v-for="row in rows" :key="row.key" class="flex h-[25px] items-center text-11.5 leading-none">
-          <dt class="w-[76px] shrink-0 text-text-3">{{ t(`panel.${row.key}`) }}</dt>
+        <div
+          v-for="row in rows"
+          :key="row.key"
+          class="flex h-[25px] items-center text-11.5 leading-none"
+        >
+          <dt class="w-[76px] shrink-0 text-text-3">
+            {{ t(`panel.${row.key}`) }}
+          </dt>
           <!-- A property that can narrow the listing is a button; one that cannot stays text, rather than looking
                clickable and doing nothing. -->
           <dd class="min-w-0 truncate-safe text-text">
             <button
               v-if="row.filter"
               type="button"
-              :title="t(row.key === 'location' ? 'panel.openLocation' : 'panel.filterBy', { value: row.value })"
+              :title="
+                t(
+                  row.key === 'location'
+                    ? 'panel.openLocation'
+                    : 'panel.filterBy',
+                  { value: row.value },
+                )
+              "
               class="max-w-full truncate-safe rounded text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
               @click="row.filter()"
             >
@@ -337,15 +491,23 @@ function sentence(event: ActivityEvent): string {
       <template v-if="capabilities.can.tags">
         <div class="my-3 h-px bg-border" />
 
-        <h3 class="text-12 font-semibold leading-none">{{ t('panel.tags') }}</h3>
-        <p v-if="tagsUnknown" class="mt-2 text-11.5 leading-none text-text-3" role="alert">{{ t('panel.tagsUnknown') }}</p>
+        <h3 class="text-12 font-semibold leading-none">
+          {{ t("panel.tags") }}
+        </h3>
+        <p
+          v-if="tagsUnknown"
+          class="mt-2 text-11.5 leading-none text-text-3"
+          role="alert"
+        >
+          {{ t("panel.tagsUnknown") }}
+        </p>
         <!-- Each tag narrows the listing to what else carries it; the chip for it then appears above the rows. -->
         <ul v-else-if="tags.length" class="mt-2 flex flex-wrap gap-2">
           <li v-for="tag in tags" :key="tag">
             <button
               type="button"
               :title="t('panel.filterBy', { value: tag })"
-              class="flex h-7 items-center gap-1 rounded-full bg-primary-soft pl-2 pr-3 text-11.5 leading-none text-primary hover:bg-primary-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+              class="flex h-7 items-center gap-1 rounded-full bg-primary-soft pl-2 pr-3 text-11.5 leading-none text-primary-strong hover:bg-primary-tint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
               @click="filterByTag(tag)"
             >
               <Tag :size="12" />
@@ -353,49 +515,95 @@ function sentence(event: ActivityEvent): string {
             </button>
           </li>
         </ul>
-        <p v-else class="mt-2 text-11.5 leading-none text-text-3">{{ t('panel.noTags') }}</p>
+        <p v-else class="mt-2 text-11.5 leading-none text-text-3">
+          {{ t("panel.noTags") }}
+        </p>
       </template>
 
       <div class="my-3 h-px bg-border" />
 
-      <h3 class="text-12 font-semibold leading-none">{{ t('panel.peopleWithAccess') }}</h3>
+      <h3 class="text-12 font-semibold leading-none">
+        {{ t("panel.peopleWithAccess") }}
+      </h3>
       <ul class="mt-2 space-y-2">
         <li v-for="person in access" :key="person.id" class="flex items-center">
           <Avatar :initial="person.initial" :size="24" />
           <div class="ml-2">
-            <p class="text-11.5 leading-none">{{ personName(person.id, person.name) }}</p>
-            <p class="mt-1 text-11 leading-none text-text-3">{{ t(`panel.role.${person.role}`) }}</p>
+            <p class="text-11.5 leading-none">
+              {{ personName(person.id, person.name) }}
+            </p>
+            <p class="mt-1 text-11 leading-none text-text-3">
+              {{ t(`panel.role.${person.role}`) }}
+            </p>
           </div>
         </li>
       </ul>
 
       <div class="my-3 h-px bg-border" />
 
-      <h3 class="text-12 font-semibold leading-none">{{ t('panel.sharedLink') }}</h3>
+      <h3 class="text-12 font-semibold leading-none">
+        {{ t("panel.sharedLink") }}
+      </h3>
       <div class="mt-2 flex items-center">
-        <span class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-bg-muted text-text-2">
+        <span
+          class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-bg-muted text-text-2"
+        >
           <Link :size="14" />
         </span>
-        <p v-if="shareUnknown" class="ml-2 flex-1 text-11.5 leading-none text-text-3" role="alert">{{ t('panel.shareUnknown') }}</p>
+        <p
+          v-if="shareUnknown"
+          class="ml-2 flex-1 text-11.5 leading-none text-text-3"
+          role="alert"
+        >
+          {{ t("panel.shareUnknown") }}
+        </p>
         <template v-else-if="shareUrl">
-          <p class="ml-2 min-w-0 flex-1 truncate-safe text-11.5 leading-none">{{ shareUrl }}</p>
-          <IconButton :label="t('panel.copy')" :size="28" @click="actions.copyLink(shareUrl)"><Copy :size="16" /></IconButton>
-          <Button v-if="canShare" variant="ghost" class="!h-control-sm px-2" @click="removeLink()">{{ t('panel.remove') }}</Button>
+          <p class="ml-2 min-w-0 flex-1 truncate-safe text-11.5 leading-none">
+            {{ shareUrl }}
+          </p>
+          <IconButton
+            :label="t('panel.copy')"
+            :size="28"
+            @click="actions.copyLink(shareUrl)"
+            ><Copy :size="16"
+          /></IconButton>
+          <Button
+            v-if="canShare"
+            variant="ghost"
+            class="!h-control-sm px-2"
+            @click="removeLink()"
+            >{{ t("panel.remove") }}</Button
+          >
         </template>
         <template v-else>
-          <p class="ml-2 flex-1 text-11.5 leading-none text-text-3">{{ t('panel.notShared') }}</p>
-          <Button v-if="canShare" variant="outline" @click="createLink()">{{ t('panel.createLink') }}</Button>
-          <span v-else class="text-11 leading-none text-text-3">{{ t('common.notAllowed') }}</span>
+          <p class="ml-2 flex-1 text-11.5 leading-none text-text-3">
+            {{ t("panel.notShared") }}
+          </p>
+          <Button v-if="canShare" variant="outline" @click="createLink()">{{
+            t("panel.createLink")
+          }}</Button>
+          <span v-else class="text-11 leading-none text-text-3">{{
+            t("common.notAllowed")
+          }}</span>
         </template>
       </div>
     </template>
 
     <ul v-else class="mt-4 space-y-3" :aria-label="t('panel.tabActivity')">
       <li v-for="event in activity" :key="event.id" class="flex items-start">
-        <Avatar :initial="event.actorId === user?.id ? (user?.initial ?? '') : event.actorName.charAt(0)" :size="24" />
+        <Avatar
+          :initial="
+            event.actorId === user?.id
+              ? (user?.initial ?? '')
+              : event.actorName.charAt(0)
+          "
+          :size="24"
+        />
         <div class="ml-2 min-w-0">
           <p class="text-11.5 leading-snug">{{ sentence(event) }}</p>
-          <p class="mt-1 text-11 leading-none text-text-3">{{ formatDateTime(event.at) }}</p>
+          <p class="mt-1 text-11 leading-none text-text-3">
+            {{ formatDateTime(event.at) }}
+          </p>
         </div>
       </li>
     </ul>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { defineAsyncComponent, onBeforeUnmount, onMounted, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { repository } from '@/data';
 import { useDragStore } from '@/features/files/dragStore';
 import { useSettingsStore } from '@/features/settings/settingsStore';
@@ -17,6 +18,7 @@ import TopBar from './TopBar.vue';
 const AssistantPanel = defineAsyncComponent(() => import('@/features/assistant/AssistantPanel.vue'));
 const SettingsModal = defineAsyncComponent(() => import('@/features/settings/SettingsModal.vue'));
 
+const { t } = useI18n();
 const view = useViewStore();
 const settings = useSettingsStore();
 const files = useFilesStore();
@@ -122,10 +124,33 @@ onBeforeUnmount(() => {
   window.removeEventListener('dragleave', onWindowDragLeave);
   window.removeEventListener('drop', onWindowDrop);
 });
+
+/**
+ * Where "skip" lands: the listing itself when the page has one — it is a single keyboard scope with its own
+ * arrows — and otherwise the page's `main`, which is made focusable for the occasion.
+ */
+function skipToContent() {
+  const main = document.querySelector('main');
+  const listing = main?.querySelector<HTMLElement>('[role="grid"], [role="listbox"]');
+  if (listing) return listing.focus();
+  if (!main) return;
+  main.tabIndex = -1;
+  main.focus();
+}
 </script>
 
 <template>
   <div class="flex h-screen w-full overflow-hidden bg-bg text-text">
+    <!-- The first tab stop on every page. The shell's chrome — sidebar, header, breadcrumb, filters, sort — is
+         thirty-odd stops deep, so without this a keyboard-only person walked all of it before reaching a single
+         file. Off-screen until it takes focus. -->
+    <button
+      type="button"
+      class="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-bg focus:px-3 focus:py-2 focus:text-13 focus:shadow-menu focus:ring-2 focus:ring-primary-ring"
+      @click="skipToContent"
+    >
+      {{ t('nav.skipToContent') }}
+    </button>
     <Sidebar />
     <div class="flex min-w-0 flex-1 flex-col">
       <TopBar />

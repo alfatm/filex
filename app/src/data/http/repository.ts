@@ -1,4 +1,4 @@
-import { ACCOUNT_DISABLED, DUPLICATE_NAME, FileLimitExceeded, INVALID_CODE, INVALID_CREDENTIALS, NOT_FOUND, OPERATION_PENDING, RBAC_DISABLED, ROLE_FORBIDDEN, SIGN_IN_LIMITED, TOTP_REQUIRED, UploadConflict, UploadRateLimited, WRONG_PASSWORD, type Repository } from '../repository';
+import { ACCOUNT_DISABLED, DUPLICATE_NAME, FileLimitExceeded, FORBIDDEN, INVALID_CODE, INVALID_NAME, INVALID_CREDENTIALS, NOT_FOUND, OPERATION_PENDING, RBAC_DISABLED, ROLE_FORBIDDEN, SIGN_IN_LIMITED, TOTP_REQUIRED, UploadConflict, UploadRateLimited, WRONG_PASSWORD, type Repository } from '../repository';
 import { windowBounds } from '../dateWindow';
 import { MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
@@ -402,6 +402,9 @@ function quoted(text: string): string {
  */
 function asDuplicateName(error: unknown): never {
   if (error instanceof HttpError && error.status === 409) throw new Error(DUPLICATE_NAME);
+  // These three verbs send nothing a server can call malformed except the name, so a 400 IS a refused name.
+  // Without this the modal fell through to the server's own sentence ("400: bad folder name").
+  if (error instanceof HttpError && error.status === 400) throw new Error(INVALID_NAME);
   // A new file is a write like an upload is, so it meets the same two quota refusals; `asQuotaRefusal` ends at the
   // role one, which is the third thing any of these three verbs can be told.
   return asQuotaRefusal(error);
@@ -1083,7 +1086,11 @@ export class HttpRepository implements Repository {
       // Only the server SAYING there is nothing here becomes `NOT_FOUND`. Everything else — a 500, a proxy, a
       // dropped connection — is a failure to ask, and the page has to say that instead of telling the person
       // their folder has been deleted.
-      if (error instanceof HttpError && (error.status === 404 || error.status === 403)) throw new Error(NOT_FOUND);
+      if (error instanceof HttpError && error.status === 404) throw new Error(NOT_FOUND);
+      // A 403 is not a 404: the folder is there and this account may not read it. Telling somebody their folder
+      // "may have been renamed, moved or deleted" for a permission refusal sends them looking for a file that
+      // never went anywhere.
+      if (error instanceof HttpError && error.status === 403) throw new Error(FORBIDDEN);
       throw error;
     }
     this.project(files);

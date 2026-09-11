@@ -9,6 +9,7 @@ const { t } = useI18n();
 <template>
   <ListingPage
     listing="starred"
+    :columns="['location', 'lastModified', 'fileSize']"
     :title="t('nav.starred')"
     :empty-icon="Star"
     :empty-title="t('empty.starred.title')"
