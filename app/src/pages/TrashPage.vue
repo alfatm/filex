@@ -13,6 +13,12 @@ const files = useFilesStore();
 const modals = useModalsStore();
 const capabilities = useCapabilitiesStore();
 
+/** Purging needs both: an install that offers it, and a role that carries it — with a sentence each. */
+const purgeAllowed = computed(() => capabilities.can.deleteForever && capabilities.allows('files.purge'));
+const purgeHint = computed(() =>
+  purgeAllowed.value ? undefined : capabilities.can.deleteForever ? t('common.notAllowed') : t('common.unavailable'),
+);
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** What the banner says on a server that reports no countdown at all — filex's own default, and what it said before. */
 const DEFAULT_RETENTION_DAYS = 30;
@@ -50,8 +56,8 @@ const retentionDays = computed(() => {
         <!-- Emptying the trash is admin-only in filex today; the snapshot decides whether the button can act. -->
         <Button
           variant="outline"
-          :disabled="!files.ordered.length || !capabilities.can.deleteForever"
-          :title="capabilities.can.deleteForever ? undefined : t('common.unavailable')"
+          :disabled="!files.ordered.length || !purgeAllowed"
+          :title="purgeHint"
           class="disabled:opacity-50"
           @click="modals.open({ kind: 'delete', variant: 'emptyTrash', nodes: [] })"
         >

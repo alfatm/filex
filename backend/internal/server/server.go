@@ -704,6 +704,9 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 	// Database-backed settings seeded from the environment on first boot only.
 	// The env var is inert once a row exists (see package dbsetting).
 	antivirus.SeedSettings(ctx, store)
+	// The quota defaults (migration 00042). Seeded here, next to every other
+	// first-boot seeding, so the rows exist before anything resolves them.
+	quota.SeedSettings(ctx, store)
 	// The assistant's provider settings, seeded the same way. The key is sealed
 	// on the way in, so an install with no FILEX_SECRET_KEY is told the key was
 	// not stored rather than having it written to the database in the clear.

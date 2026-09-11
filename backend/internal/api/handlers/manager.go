@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"path"
 	"sort"
@@ -19,8 +20,8 @@ import (
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/e2e" /* wiring:e2 */
 	"github.com/brf-tech/filex/backend/internal/filebody"
-	"github.com/brf-tech/filex/backend/internal/metrics"
 	"github.com/brf-tech/filex/backend/internal/model"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/quota"
 	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/search"
@@ -63,17 +64,34 @@ type Manager struct {
 // ceiling. The identity comes from quotastore.OwnerFrom, not from the session,
 // so the public drop link is measured against the LINK CREATOR's quota — they
 // are the account whose disk is being filled.
-func (h *Manager) checkQuota(ctx context.Context, size int64) error {
-	if h.Quota == nil || size <= 0 {
+// addFiles is how many NEW file slots the write claims — 0 for an overwrite,
+// which adds bytes but no file.
+func (h *Manager) checkQuota(ctx context.Context, size, addFiles int64) error {
+	if h.Quota == nil || (size <= 0 && addFiles <= 0) {
 		return nil
 	}
-	if err := h.Quota.CheckCanWrite(ctx, quotastore.OwnerFrom(ctx), size); err != nil {
-		if errors.Is(err, quota.ErrQuotaExceeded) {
-			metrics.GuardRefusals.WithLabelValues(metrics.GuardQuota).Inc()
-		}
-		return err
+	return h.Quota.CheckCanWrite(ctx, quotastore.OwnerFrom(ctx), size, addFiles)
+}
+
+// recordUpload spends `size` of the acting account's upload-window allowance.
+// Called ONLY after the bytes have actually landed: a failed or refused write
+// costs the instance nothing and must not be charged.
+//
+// A ledger failure is logged, never returned — the bytes are on storage and
+// failing the request afterwards would be a lie. The cost is one uncounted
+// upload against the window.
+func (h *Manager) recordUpload(ctx context.Context, size int64) {
+	if h.Quota == nil || size <= 0 {
+		return
 	}
-	return nil
+	owner := quotastore.OwnerFrom(ctx)
+	if owner <= 0 {
+		return
+	}
+	if err := h.Quota.RecordUpload(ctx, owner, size); err != nil {
+		slog.Warn("quota: record upload",
+			slog.Int64("user", owner), slog.Int64("size", size), slog.String("err", err.Error()))
+	}
 }
 
 // AttachStaged wires the staged ingest path so every surface that writes
@@ -353,6 +371,17 @@ func (h *Manager) listVuefinder(w http.ResponseWriter, r *http.Request, action s
 		h.vfStream(w, r, current, rel, false)
 		return
 	case "download":
+		// The rule, plainly: VIEWING IS NOT GATED, TAKING A COPY IS. `preview`
+		// above — and thumbnails — stay open to anyone the ACL lets see the
+		// file, because a role that may read a document in the browser but not
+		// save a copy of it is a real configuration and gating both would make
+		// "no downloads" mean "no reading". Everything that hands the bytes
+		// over as a file to keep needs files.download: this verb,
+		// /api/files/download/zip, /api/ai/download, and /api/files/read
+		// with download=1.
+		if !requirePerm(w, r, perm.OpDownload) {
+			return
+		}
 		h.vfStream(w, r, current, rel, true)
 		return
 	default:
@@ -616,10 +645,29 @@ func (h *Manager) vfIndex(w http.ResponseWriter, r *http.Request, s *model.Stora
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
-	nodes, err := h.Store.ListNodesByParent(r.Context(), s.ID, parentID)
+	// The filter chips narrow inside the query, the way the flat listings'
+	// do. `subfolders` is the destination picker's tree walk and takes none.
+	facets := listingFacets(r)
+	var nodes []*model.Node
+	if facets.Any() && !dirsOnly {
+		nodes, err = h.Store.ListNodesByParentFiltered(r.Context(), s.ID, parentID, facets)
+	} else {
+		nodes, err = h.Store.ListNodesByParent(r.Context(), s.ID, parentID)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
+	}
+
+	// `total` is the UNFILTERED count: a filtered answer with fewer rows than
+	// the folder has is how the client tells "narrowed" from "empty".
+	var total int
+	if !dirsOnly {
+		total, err = h.Store.CountNodesByParent(r.Context(), s.ID, parentID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 
 	// Pre-sync escape hatch: brand-new storages have an empty cache
@@ -628,7 +676,15 @@ func (h *Manager) vfIndex(w http.ResponseWriter, r *http.Request, s *model.Stora
 	// first sync has run — afterwards the cache is authoritative
 	// (truly-empty dirs return [] without firing an extra driver
 	// list call).
-	if len(nodes) == 0 && s.LastSyncAt == nil {
+	//
+	// Under a filter an empty page says nothing about the cache — a folder
+	// of notes asked for images is not an unsynced storage — so the question
+	// is put to the unfiltered count.
+	cacheEmpty := len(nodes) == 0
+	if !dirsOnly {
+		cacheEmpty = total == 0
+	}
+	if cacheEmpty && s.LastSyncAt == nil {
 		handled, derr := h.vfIndexFromDriver(w, r, s, rel, storageNames, dirsOnly, set)
 		if handled {
 			return
@@ -659,6 +715,7 @@ func (h *Manager) vfIndex(w http.ResponseWriter, r *http.Request, s *model.Stora
 		"read_only": s.ReadOnly,
 		"perm":      permString(set, rel),
 		"files":     files,
+		"total":     total,
 	}
 	/* wiring:e2 — E2E-encrypted folder awareness: badge encrypted dir rows
 	   (e2e:true) and, when the listed dir sits inside an encrypted subtree,
@@ -764,6 +821,13 @@ func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *m
 		writeJSON(w, http.StatusOK, map[string]any{"folders": files})
 		return true, nil
 	}
+	// The same chips vfIndex puts inside its query, applied in Go over what
+	// the driver said — and `total` counts the same thing there and here: the
+	// folder's entries before the filter.
+	total := len(files)
+	if facets := listingFacets(r); facets.Any() {
+		files = projectDriverObjects(s.Name, clean, keepDriverObjects(clean, objs, facets), false, set)
+	}
 	resp := map[string]any{
 		"adapter":   s.Name,
 		"storages":  storageNames,
@@ -771,6 +835,7 @@ func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *m
 		"read_only": s.ReadOnly,
 		"perm":      permString(set, clean),
 		"files":     files,
+		"total":     total,
 	}
 	/* wiring:e2 — cold-cache fallback: a freshly-created encrypted folder
 	   (marker uploaded seconds ago, sync not yet run) must still present
@@ -793,6 +858,32 @@ func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *m
 	/* /wiring:e2 */
 	writeJSON(w, http.StatusOK, resp)
 	return true, nil
+}
+
+// keepDriverObjects narrows a driver listing by the facets, through the same
+// predicate the cache path's SQL means. Each object is read as the node row
+// the sync would mint for it: a driver knows no owner, so an owner facet keeps
+// nothing here — exactly what the cache answers for a row the sync found.
+func keepDriverObjects(dir string, objs []storage.Object, f db.NodeFacets) []storage.Object {
+	out := make([]storage.Object, 0, len(objs))
+	for _, o := range objs {
+		rel := o.Path
+		if rel == "" {
+			rel = path.Join(dir, o.Name)
+		}
+		n := &model.Node{Name: o.Name, Path: "/" + strings.Trim(rel, "/"), Type: model.NodeTypeFile, Size: o.Size}
+		if o.Kind == storage.KindDirectory {
+			n.Type = model.NodeTypeDirectory
+		}
+		if !o.Mtime.IsZero() {
+			mt := o.Mtime
+			n.BackendMtime = &mt
+		}
+		if f.Matches(n) {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // projectDriverObjects shapes storage.Object entries into the same
@@ -1060,7 +1151,18 @@ func (h *Manager) Stat(w http.ResponseWriter, r *http.Request) {
 //
 // Auth: requires an authenticated user (route is mounted behind the auth
 // middleware). Future RBAC checks slot in here once per-storage ACLs land.
+//
+// ⚠ files.download applies to `download=1` AND ONLY TO IT. This one handler is
+// both halves of the rule at ?q=preview / ?q=download: without the flag it
+// serves the body inline, which is viewing and stays open; with it, it sets
+// `Content-Disposition: attachment` and hands over a file to keep, which is
+// the act files.download names. Gating the whole route would take the viewer
+// away with the download; not gating it at all — which is what it did — left
+// "no downloads" true of one button and false of the URL behind it.
 func (h *Manager) Read(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("download") == "1" && !requirePerm(w, r, perm.OpDownload) {
+		return
+	}
 	if h.StorageResolver == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "no storage resolver"})
 		return

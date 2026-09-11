@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -62,6 +63,7 @@ type stagedFixture struct {
 	srv      *httptest.Server
 	client   *http.Client
 	store    db.Store
+	sqlDB    *sql.DB // raw handle, for tests that have to age a row
 	storage  *model.Storage
 	rootDir  string // the local driver's root on disk
 	dataDir  string // <data>/uploads is the staging area
@@ -160,7 +162,7 @@ func newStagedFixtureWith(t *testing.T, tweak func(*api.Deps)) *stagedFixture {
 	require.NoError(t, err)
 
 	return &stagedFixture{
-		srv: srv, client: client, store: store, storage: st,
+		srv: srv, client: client, store: store, sqlDB: sqlDB, storage: st,
 		rootDir: rootDir, dataDir: dataDir, deps: deps,
 		userID: u.ID, adminEml: email, adminPw: pw,
 	}

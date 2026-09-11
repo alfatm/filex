@@ -33,6 +33,9 @@ import {
   Cable,
   Sparkles,
   AppWindow,
+  UsersRound,
+  UserCog,
+  Gauge,
 } from 'lucide-vue-next';
 import { useI18n } from 'vue-i18n';
 import LogoMark from './LogoMark.vue';
@@ -86,7 +89,10 @@ const items = computed<NavItem[]>(() => [
   { to: { name: 'tagged' }, label: t('nav.tagged'), icon: Tag, group: 'main' },
 
   { to: { name: 'users' }, label: t('nav.users'), icon: Users, group: 'access' },
-  { to: { name: 'grants' }, label: t('nav.grants'), icon: ShieldCheck, group: 'access' },
+  { to: { name: 'groups' }, label: t('nav.groups'), icon: UsersRound, group: 'access' },
+  { to: { name: 'roles' }, label: t('nav.roles'), icon: UserCog, group: 'access' },
+  { to: { name: 'quotas' }, label: t('nav.quotas'), icon: Gauge, group: 'access' },
+  { to: { name: 'grants' }, label: t('nav.access'), icon: ShieldCheck, group: 'access' },
   {
     to: { name: 'auth-providers' },
     label: t('nav.authProviders'),

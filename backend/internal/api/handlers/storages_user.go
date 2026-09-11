@@ -66,6 +66,12 @@ type userStorage struct {
 	// with" them; on an RBAC-off drive a grant is inert and the files are just
 	// the account's own.
 	Shared bool `json:"shared,omitempty"`
+	// ViaGroups names the groups through which the caller holds any grant on
+	// this drive (migration 00043). `shared` says access is not by role;
+	// this says whose access it actually is, which is the difference between
+	// "somebody gave this to me" and "I can see it because I am on the team".
+	// Always an array, empty when access is entirely personal.
+	ViaGroups []string `json:"via_groups"`
 }
 
 // List returns the enabled storages the caller can see, in store order.
@@ -87,6 +93,7 @@ func (h *StoragesUser) List(w http.ResponseWriter, r *http.Request) {
 	root, confined := confine.RootFrom(r.Context())
 	visible := make([]*model.Storage, 0, len(storages))
 	shared := make(map[int64]bool, len(storages))
+	viaGroups := make(map[int64][]string, len(storages))
 	user := auth.UserFrom(r.Context())
 	for _, s := range storages {
 		if confined && root.Adapter != "" && root.Adapter != s.Name {
@@ -102,6 +109,7 @@ func (h *StoragesUser) List(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			shared[s.ID] = len(set.Grants()) > 0
+			viaGroups[s.ID] = set.ViaGroups()
 		}
 		visible = append(visible, s)
 	}
@@ -112,7 +120,13 @@ func (h *StoragesUser) List(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]userStorage, 0, len(visible))
 	for _, s := range visible {
-		out = append(out, userStorage{Name: s.Name, ReadOnly: s.ReadOnly, UsedBytes: usage[s.ID], Shared: shared[s.ID]})
+		via := viaGroups[s.ID]
+		if via == nil {
+			via = []string{}
+		}
+		out = append(out, userStorage{
+			Name: s.Name, ReadOnly: s.ReadOnly, UsedBytes: usage[s.ID], Shared: shared[s.ID], ViaGroups: via,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"storages": out})
 }

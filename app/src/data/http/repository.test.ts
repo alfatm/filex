@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setUnauthorizedHandler } from './client';
 import { HttpRepository } from './repository';
 import type { WireFileNode } from './map';
-import type { AssistantReport, SearchHit } from '../types';
+import type { UploadRateLimited } from '../repository';
+import { noQuota, ROLE_PERMISSIONS, type AssistantReport, type SearchHit } from '../types';
 
 /** One recorded call, in the order the repository made it. */
 interface Call {
@@ -81,8 +82,8 @@ describe('HttpRepository', () => {
     const storages = await new HttpRepository().listStorages();
     // The account's own 250 is the sum, not each drive's figure — which is what every card used to show.
     expect(storages).toEqual([
-      { id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 200, totalBytes: 1000 }, shared: false },
-      { id: 'archive', name: 'archive', rootId: 'archive://', quota: { usedBytes: 50, totalBytes: 1000 }, shared: false },
+      { id: 'main', name: 'main', rootId: 'main://', quota: { ...noQuota(), usedBytes: 200, totalBytes: 1000 }, shared: false, viaGroups: [] },
+      { id: 'archive', name: 'archive', rootId: 'archive://', quota: { ...noQuota(), usedBytes: 50, totalBytes: 1000 }, shared: false, viaGroups: [] },
     ]);
   });
 
@@ -91,7 +92,7 @@ describe('HttpRepository', () => {
       ['star/list', { nodes: [{ id: 2, storage_id: 1, name: 'report.pdf', path: '/Docs/report.pdf', type: 'file', size: 5, storage: 'main' }] }],
       ['q=index', index(row({ id: 3, path: 'main://Docs/notes.md', basename: 'notes.md', type: 'file' }), row({ id: 2, path: 'main://Docs/report.pdf', basename: 'report.pdf', type: 'file' }))],
     ];
-    const files = await new HttpRepository().listFolder('main://Docs');
+    const { nodes: files } = await new HttpRepository().listFolder('main://Docs');
     expect(files.map((n) => [n.name, n.starred])).toEqual([['notes.md', false], ['report.pdf', true]]);
     expect(calls[0].url).toContain('path=main%3A%2F%2FDocs');
   });
@@ -108,6 +109,18 @@ describe('HttpRepository', () => {
     const created = await new HttpRepository().createFolder('main://Docs', 'Reports');
     expect(calls[0]).toMatchObject({ method: 'POST', body: { path: 'main://Docs', name: 'Reports' } });
     expect(created).toMatchObject({ id: 'main://Docs/Reports', name: 'Reports', kind: 'folder' });
+  });
+
+  it('creates an empty file under the parent address and answers with the row the server now lists', async () => {
+    routes = [['q=index', index(row({ id: 9, path: 'main://Docs/Untitled.txt', basename: 'Untitled.txt', type: 'file', size: 0 }))], ['q=newfile', { ok: true }]];
+    const created = await new HttpRepository().createFile('main://Docs', 'Untitled.txt');
+    expect(calls[0]).toMatchObject({ method: 'POST', url: '/api/files/manager?q=newfile', body: { path: 'main://Docs', name: 'Untitled.txt' } });
+    expect(created).toMatchObject({ id: 'main://Docs/Untitled.txt', name: 'Untitled.txt', kind: 'file' });
+  });
+
+  it('reports a taken file name as the shared duplicate error too', async () => {
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 409, text: async () => '{"error":"exists"}' }) as Response);
+    await expect(new HttpRepository().createFile('main://Docs', 'Untitled.txt')).rejects.toThrow('duplicateName');
   });
 
   it('sends the numeric id to the metadata endpoints, learning it from the listing', async () => {
@@ -144,6 +157,34 @@ describe('HttpRepository', () => {
     await expect(new HttpRepository().changePassword('nope', 'longenough')).rejects.toThrow('wrongPassword');
     vi.stubGlobal('fetch', async () => ({ ok: false, status: 500, text: async () => '{"error":"boom"}' }) as Response);
     await expect(new HttpRepository().changePassword('nope', 'longenough')).rejects.toThrow('500');
+  });
+
+  it('maps a second-factor enrolment into the app’s spelling', async () => {
+    routes = [['/api/auth/totp/enroll', { secret: 'JBSWY3DP', otpauth_url: 'otpauth://totp/filex:ada?secret=JBSWY3DP', qr_svg: '<svg></svg>', recovery_codes: ['AAAAA-BBBBB', 'CCCCC-DDDDD'] }]];
+    const enrollment = await new HttpRepository().totpEnroll();
+    expect(calls[0]).toMatchObject({ method: 'POST', url: '/api/auth/totp/enroll' });
+    expect(enrollment).toEqual({ secret: 'JBSWY3DP', otpauthUrl: 'otpauth://totp/filex:ada?secret=JBSWY3DP', qrSvg: '<svg></svg>', recoveryCodes: ['AAAAA-BBBBB', 'CCCCC-DDDDD'] });
+  });
+
+  it('reads a refused verification code as the code being wrong, not as a lost session', async () => {
+    const lost = vi.fn();
+    setUnauthorizedHandler(lost);
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 401, text: async () => '{"error":"invalid code"}' }) as Response);
+    await expect(new HttpRepository().totpVerify('000000')).rejects.toThrow('invalidCode');
+    expect(lost).not.toHaveBeenCalled();
+    // No enrolment to confirm is a different failure, and keeps the server's words.
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 400, text: async () => '{"error":"no pending TOTP enrollment"}' }) as Response);
+    await expect(new HttpRepository().totpVerify('000000')).rejects.toThrow('no pending TOTP enrollment');
+  });
+
+  it('tells the wrong password apart from the wrong code when switching the second factor off', async () => {
+    routes = [['/api/auth/totp/disable', { ok: true, totp_enabled: false }]];
+    await new HttpRepository().totpDisable('right', 'AAAAA-BBBBB');
+    expect(calls[0]).toMatchObject({ method: 'POST', body: { password: 'right', code: 'AAAAA-BBBBB' } });
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 401, text: async () => '{"error":"password incorrect"}' }) as Response);
+    await expect(new HttpRepository().totpDisable('nope', '123456')).rejects.toThrow('wrongPassword');
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 401, text: async () => '{"error":"invalid code"}' }) as Response);
+    await expect(new HttpRepository().totpDisable('right', '000000')).rejects.toThrow('invalidCode');
   });
 
   it('reports a name collision as the shared duplicate error the modals show inline', async () => {
@@ -215,7 +256,7 @@ describe('HttpRepository', () => {
     // The app loads the account before any listing (bootstrap does), which is what lets an unowned row be labelled
     // with the caller's real id rather than the "me" placeholder.
     await repo.currentUser();
-    const listed = await repo.listFolder('main://');
+    const { nodes: listed } = await repo.listFolder('main://');
 
     expect(listed.map((n) => [n.name, n.ownerId, n.ownerName])).toEqual([
       ['hers.txt', '4', 'Ayşe'],
@@ -569,6 +610,71 @@ describe('HttpRepository', () => {
     ).rejects.toThrow('storage offline');
   });
 
+  // ── a target the server refuses ────────────────────────────────────────────
+  //
+  // Whether a name is taken is the server's answer now: `if_exists: 'fail'` makes `begin` — and `commit`, for a
+  // file that appeared meanwhile — refuse with a 409 whose `code` says which refusal it is. The store needs the
+  // phase to know whether the bytes are already staged, and the session id to finish or drop that session.
+
+  /** A fetch that refuses one URL with a 409 body and answers the rest from `routes`. */
+  function refusing(pattern: string, method: string, body: unknown) {
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const raw = init?.body;
+      const parsed = raw instanceof Blob ? { bytes: raw.size } : raw ? JSON.parse(String(raw)) : undefined;
+      const call: Call = { url, method: init?.method ?? 'GET', body: parsed, headers: init?.headers as Record<string, string> | undefined };
+      calls.push(call);
+      if (url.includes(pattern) && call.method === method) return { ok: false, status: 409, text: async () => JSON.stringify(body) } as Response;
+      return { ok: true, status: 200, text: async () => JSON.stringify(answer(call)) } as Response;
+    });
+  }
+
+  it('reports a taken name at begin as a conflict with no session, and sends the rule it was given', async () => {
+    refusing('/upload/begin', 'POST', { error: 'a file with this name already exists', code: 'EXISTS' });
+    await expect(
+      new HttpRepository().uploadFile('main://Docs', { name: 'a.txt', size: 3, blob: new Blob(['abc']) }, { ifExists: 'fail' }),
+    ).rejects.toMatchObject({ name: 'UploadConflict', reason: 'exists', phase: 'begin', sessionId: null });
+    expect(calls[0].body).toMatchObject({ if_exists: 'fail' });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('reports a name taken by commit time as a conflict carrying the session, with the bytes already staged', async () => {
+    routes = [
+      ['/upload/begin', { id: 'u20', chunk_size: 16, offset: 0 }],
+      ['/upload/u20', { offset: 3 }],
+    ];
+    refusing('/upload/u20/commit', 'POST', { error: 'a file with this name already exists', code: 'EXISTS' });
+    await expect(
+      new HttpRepository().uploadFile('main://Docs', { name: 'a.txt', size: 3, blob: new Blob(['abc']) }, { ifExists: 'fail' }),
+    ).rejects.toMatchObject({ reason: 'exists', phase: 'commit', sessionId: 'u20' });
+    const commit = calls.find((c) => c.url.includes('/upload/u20/commit'))!;
+    expect(commit.body).toEqual({ if_exists: 'fail' });
+  });
+
+  it('finishes a refused session with commitUpload, sending no byte again', async () => {
+    routes = [
+      ['/upload/u21/commit', { op_id: 21 }],
+      ['/api/files/ops/21', { id: 21, kind: 'upload-commit', status: 'ok' }],
+      ['/star/list', { nodes: [] }],
+      ['q=index', index(row({ id: 9, path: 'main://Docs/a.txt', basename: 'a.txt', type: 'file', size: 3 }))],
+    ];
+    const node = await new HttpRepository().commitUpload('u21', 'main://Docs', 'a.txt', { ifExists: 'replace' });
+    expect(calls[0]).toMatchObject({ method: 'POST', url: expect.stringContaining('/upload/u21/commit'), body: { if_exists: 'replace' } });
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+    expect(node).toMatchObject({ id: 'main://Docs/a.txt' });
+  });
+
+  it('tells a target somebody else is uploading to apart from a taken name', async () => {
+    refusing('/upload/begin', 'POST', { error: 'this file is being uploaded right now', code: 'UPLOAD_IN_PROGRESS' });
+    await expect(
+      new HttpRepository().uploadFile('main://Docs', { name: 'a.txt', size: 3, blob: new Blob(['abc']) }, { ifExists: 'replace' }),
+    ).rejects.toMatchObject({ reason: 'inProgress', phase: 'begin' });
+    // Any other 409 is not about the target and reaches the caller as the server stated it.
+    refusing('/upload/begin', 'POST', { error: 'session is not staging' });
+    await expect(
+      new HttpRepository().uploadFile('main://Docs', { name: 'a.txt', size: 3, blob: new Blob(['abc']) }),
+    ).rejects.toThrow('session is not staging');
+  });
+
   it('copies through the ops queue and waits for the job to finish', async () => {
     let polled = 0;
     routes = [
@@ -782,6 +888,51 @@ describe('HttpRepository', () => {
     // No such route (an older filex) — the panel is simply not offered, rather than the whole snapshot failing.
     routes = [['/api/files/capabilities', { upload: true }]];
     expect((await new HttpRepository().capabilities()).assistant).toBe(false);
+  });
+
+  /*
+   * The role permissions gate every menu in the app, so the one answer that must NOT be read as "nothing" is an
+   * older server's silence: it has no such rule to state, and reading its absence as a refusal would empty every
+   * menu the moment the app ships ahead of the backend.
+   */
+  it('reads the caller’s role permissions, and an older server’s silence as all of them', async () => {
+    routes = [
+      ['/api/files/capabilities', { upload: true, permissions: ['files.upload', 'files.download', 'not.a.permission'] }],
+      ['/api/assistant/status', { enabled: false }],
+    ];
+    const allowed = (await new HttpRepository().capabilities()).allowed;
+    // An id this build has no surface for is dropped rather than carried around as a string nothing can ask about.
+    expect([...allowed].sort()).toEqual(['files.download', 'files.upload']);
+    expect(allowed.has('files.delete')).toBe(false);
+
+    routes = [['/api/files/capabilities', { upload: true }]];
+    const older = (await new HttpRepository().capabilities()).allowed;
+    expect([...older].sort()).toEqual([...ROLE_PERMISSIONS].sort());
+  });
+
+  // 413 and 429 both say "not this upload", and each carries the figure the row has to print: the ceiling that was
+  // met, or how long the window still has to run.
+  it('reads the two quota refusals of an upload, and takes the wait from the header when the body has none', async () => {
+    const refuse = (status: number, body: unknown, headers?: Record<string, string>) =>
+      vi.stubGlobal('fetch', async () => ({ ok: false, status, headers: new Headers(headers ?? {}), text: async () => JSON.stringify(body) }) as Response);
+    const upload = () => new HttpRepository().uploadFile('main://Docs', { name: 'a.txt', size: 3, blob: new Blob(['abc']) });
+
+    refuse(413, { error: 'file limit reached', code: 'FILE_LIMIT_EXCEEDED', limit: 5000, used: 5000 });
+    await expect(upload()).rejects.toMatchObject({ name: 'FileLimitExceeded', limit: 5000, used: 5000 });
+
+    refuse(429, { error: 'too many uploads', code: 'UPLOAD_RATE_LIMITED', retry_after_seconds: 720 });
+    await expect(upload()).rejects.toMatchObject({ name: 'UploadRateLimited', retryAfterSeconds: 720 });
+
+    // A proxy that answers before filex does sends the header and no body field; the row still has a number to say.
+    refuse(429, { error: 'too many uploads', code: 'UPLOAD_RATE_LIMITED' }, { 'retry-after': '90' });
+    await expect(upload()).rejects.toMatchObject({ name: 'UploadRateLimited', retryAfterSeconds: 90 });
+
+    // And a proxy that sends NEITHER. `Number(null)` is 0, which is finite, so this used to decode as "wait no
+    // time at all" and the row re-sent into the refusal it had just met, as fast as the network allowed.
+    refuse(429, { error: 'too many uploads', code: 'UPLOAD_RATE_LIMITED' });
+    const noWait = (await upload().catch((e: unknown) => e)) as UploadRateLimited;
+    expect(noWait).toMatchObject({ name: 'UploadRateLimited' });
+    expect(noWait.retryAfterSeconds).toBeGreaterThan(0);
   });
 
   it('streams one turn, reassembling events that arrive split across chunks', async () => {
@@ -1060,7 +1211,7 @@ describe('HttpRepository', () => {
       ['/manager/trash', { entries: [] }],
     ];
     const repo = new HttpRepository();
-    const filter = { fileType: 'documents', modified: 'any', size: 'large', personId: '7' } as const;
+    const filter = { fileType: 'documents', modified: 'any', size: 'large', personId: '7', name: '' } as const;
 
     await repo.listStarred(filter);
     calls.length = 0; // Recent marks its rows starred, which asks star/list again — without the chips, and rightly so.
@@ -1081,7 +1232,7 @@ describe('HttpRepository', () => {
   it('turns the Modified chip into a moment, not a number of days', async () => {
     vi.setSystemTime(Date.parse('2026-09-09T00:00:00Z'));
     routes = [['/star/list', { nodes: [] }]];
-    await new HttpRepository().listStarred({ fileType: 'any', modified: 'week', size: 'any', personId: null });
+    await new HttpRepository().listStarred({ fileType: 'any', modified: 'week', size: 'any', personId: null, name: '' });
 
     const query = new URLSearchParams(calls[0].url.split('?')[1]);
     expect(query.get('modified_after')).toBe(String(Date.parse('2026-09-02T00:00:00Z')));
@@ -1231,15 +1382,39 @@ describe('HttpRepository', () => {
     expect(calls.at(-1)).toMatchObject({ method: 'POST', body: { node_id: 42, starred: true } });
   });
 
-  // Shared-with-me is the exception: a grant can name a path the indexer never
-  // walked, so its rows are not node rows and the endpoint takes no facets. It
-  // does build the whole set before paging, so the fix is to ask for all of it.
-  it('asks shared-with-me for its full page, because that listing is narrowed here', async () => {
+  // Shared-with-me builds the whole set before paging it, so its full page
+  // with the facets in the query is the filtered set, exactly.
+  it('sends the chips to shared-with-me and asks for its full page', async () => {
     routes = [['/shared-with-me', { files: [] }]];
-    await new HttpRepository().listShared({ fileType: 'documents', modified: 'any', size: 'any', personId: null });
+    await new HttpRepository().listShared({ fileType: 'documents', modified: 'any', size: 'any', personId: null, name: 'plan' });
     const query = new URLSearchParams(calls[0].url.split('?')[1]);
     expect(query.get('limit')).toBe('500');
-    expect(query.get('ext')).toBeNull();
+    expect(query.get('ext')).toBe('md,pdf');
+    expect(query.get('name')).toBe('plan');
+  });
+
+  // The folder listing is the server's to filter too. Below a thousand entries the store holds the folder whole and
+  // sieves it in memory, and `total` — the count BEFORE the filter — is how it knows which case it is in.
+  it('sends the chips and the name box to the folder listing and reads the unfiltered total', async () => {
+    routes = [
+      ['/star/list', { nodes: [] }],
+      ['q=index', { ...index(row({ id: 3, path: 'main://Docs/notes.md', basename: 'notes.md', type: 'file', size: 5 * 1024 * 1024 })), total: 1500 }],
+    ];
+    const listing = await new HttpRepository().listFolder('main://Docs', { fileType: 'documents', modified: 'any', size: 'medium', personId: null, name: 'Notes' });
+    const query = new URLSearchParams(calls[0].url.split('?')[1]);
+    expect(query.get('q')).toBe('index');
+    expect(query.get('ext')).toBe('md,pdf');
+    expect(query.get('name')).toBe('Notes');
+    expect(query.get('size_min')).toBe(String(1024 * 1024));
+    expect(listing.nodes.map((n) => n.name)).toEqual(['notes.md']);
+    expect(listing.total).toBe(1500);
+  });
+
+  it('takes the row count for the total when an older server answers none', async () => {
+    routes = [['/star/list', { nodes: [] }], ['q=index', index(row({ id: 3, path: 'main://Docs/notes.md', basename: 'notes.md', type: 'file' }))]];
+    const listing = await new HttpRepository().listFolder('main://Docs');
+    expect(listing.total).toBe(1);
+    expect(new URLSearchParams(calls[0].url.split('?')[1]).has('ext')).toBe(false);
   });
 
   // The server wraps each matched term in « », and the search page printed
@@ -1327,8 +1502,8 @@ describe('HttpRepository', () => {
 
     // The caller is always an option; the point is that the OTHER owner is one too, learned from the rows.
     expect(await repo.listFilterPeople()).toEqual([
-      { id: '9', name: 'Grace', initial: 'G', role: 'owner' },
-      { id: '1', name: 'Ada', initial: 'A', role: 'owner' },
+      { id: '9', name: 'Grace', initial: 'G', role: 'owner', principal: 'user' },
+      { id: '1', name: 'Ada', initial: 'A', role: 'owner', principal: 'user' },
     ]);
   });
 

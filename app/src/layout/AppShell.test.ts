@@ -4,6 +4,7 @@ import { nextTick } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { repository } from '@/data';
+import { noQuota } from '@/data/types';
 import { useDragStore } from '@/features/files/dragStore';
 import { i18n } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
@@ -119,7 +120,7 @@ describe('AppShell drive usage', () => {
   it('reads the drive list again after a mutation', async () => {
     const { wrapper, files } = await mountShell();
     const listed = vi.spyOn(repository, 'listStorages').mockResolvedValue([
-      { id: 'demo', name: 'demo', rootId: 'demo://', quota: { usedBytes: 42, totalBytes: 100 }, shared: false },
+      { id: 'demo', name: 'demo', rootId: 'demo://', quota: { ...noQuota(), usedBytes: 42, totalBytes: 100 }, shared: false, viaGroups: [] },
     ]);
 
     await files.reload();

@@ -226,6 +226,33 @@ func ActionForPath(method, p, id, name string) (string, string, string) {
 	case method == http.MethodPost && strings.HasSuffix(p, "/quota/recompute") && strings.HasPrefix(p, "/api/admin/users/"):
 		return "user.quota_recompute", "user", id
 
+	// ── roles ──
+	// Who may do what, installation-wide. Worth a trail of its own: taking
+	// "delete forever" away from the `user` role changes what every account in
+	// the install may do, and the change leaves no other trace.
+	case method == http.MethodPut && strings.HasPrefix(p, "/api/admin/roles/") && name != "":
+		return "role.permissions", "role", name
+
+	// ── groups + grants (migration 00043) ──
+	// The generic /api/admin/* fallback below would name these "groups.create"
+	// / "grants.update"; spelled out here so the audit page reads in the same
+	// singular voice as user.* and storage.*, and so a membership change is
+	// distinguishable from a rename.
+	case method == http.MethodPost && (p == "/api/admin/groups/" || p == "/api/admin/groups"):
+		return "group.create", "group", ""
+	case strings.HasPrefix(p, "/api/admin/groups/") && strings.Contains(p, "/members"):
+		return "group.members", "group", id
+	case method == http.MethodPatch && strings.HasPrefix(p, "/api/admin/groups/") && id != "":
+		return "group.update", "group", id
+	case method == http.MethodDelete && strings.HasPrefix(p, "/api/admin/groups/") && id != "":
+		return "group.delete", "group", id
+	case method == http.MethodPost && (p == "/api/admin/grants/" || p == "/api/admin/grants"):
+		return "grant.create", "grant", ""
+	case method == http.MethodPatch && strings.HasPrefix(p, "/api/admin/grants/") && id != "":
+		return "grant.update", "grant", id
+	case method == http.MethodDelete && strings.HasPrefix(p, "/api/admin/grants/") && id != "":
+		return "grant.delete", "grant", id
+
 	// ── self-service ──
 	case method == http.MethodPatch && p == "/api/auth/profile":
 		return "profile.update", "profile", ""

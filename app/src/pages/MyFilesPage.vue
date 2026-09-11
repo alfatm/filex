@@ -144,9 +144,10 @@ watch(
       <div role="group" :aria-label="t('filter.title')" class="flex items-center gap-[10px]">
         <FilterChip v-for="id in FILTERS" :key="id" :id="id" />
       </div>
-      <!-- Narrows the open folder by name on the client; it is cleared on every navigation (see the store). -->
+      <!-- Narrows the open folder by name — in memory for a small folder, on the server for a large one (see the
+           store); it is cleared on every navigation. -->
       <Input
-        v-model="files.nameFilter"
+        :model-value="files.filter.name"
         type="search"
         :icon="Folder"
         :height="38"
@@ -154,6 +155,7 @@ watch(
         class="!rounded-full"
         :placeholder="t('filter.name')"
         :label="t('filter.name')"
+        @update:model-value="files.setName(String($event))"
       />
       <SortControl v-if="view.mode === 'list'" variant="pill" class="ml-auto mr-[10px]" />
       <template v-else>

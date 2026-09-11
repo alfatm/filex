@@ -9,14 +9,21 @@ withDefaults(
     width?: number;
     type?: 'text' | 'search' | 'number' | 'password';
     label?: string;
+    autocomplete?: string;
+    inputmode?: 'text' | 'numeric';
   }>(),
-  { placeholder: '', icon: undefined, height: 40, width: undefined, type: 'text', label: undefined },
+  { placeholder: '', icon: undefined, height: 40, width: undefined, type: 'text', label: undefined, autocomplete: undefined, inputmode: undefined },
 );
 // `type="number"` inputs hand v-model a number (Vue casts), every other type a string.
 const model = defineModel<string | number>({ required: true });
 const emit = defineEmits<{ enter: [] }>();
 const input = ref<HTMLInputElement>();
-defineExpose({ focus: () => input.value?.focus(), el: input });
+defineExpose({
+  focus: () => input.value?.focus(),
+  /** Highlights `start..end` of the text, the way a name is offered with its extension left alone. */
+  select: (start: number, end: number) => input.value?.setSelectionRange(start, end),
+  el: input,
+});
 </script>
 
 <template>
@@ -30,6 +37,8 @@ defineExpose({ focus: () => input.value?.focus(), el: input });
       v-model="model"
       :type="type"
       :placeholder="placeholder"
+      :autocomplete="autocomplete"
+      :inputmode="inputmode"
       :aria-label="label"
       class="min-w-0 flex-1 bg-transparent text-15 leading-none text-text placeholder:text-text-3 focus:outline-none"
       @keydown.enter.prevent="emit('enter')"

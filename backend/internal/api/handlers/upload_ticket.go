@@ -431,9 +431,13 @@ func (h *TicketUpload) Upload(w http.ResponseWriter, r *http.Request) {
 // lands in the log with enough context to find it.
 func (h *TicketUpload) failWrite(w http.ResponseWriter, err error, dest string, size int64) {
 	code, status := "storage_unavailable", http.StatusServiceUnavailable
+	var rate quota.ErrUploadRateLimited
 	switch {
-	case errors.Is(err, quota.ErrQuotaExceeded):
+	case errors.Is(err, quota.ErrQuotaExceeded), errors.Is(err, quota.ErrFileLimitExceeded):
 		code, status = "quota_exceeded", http.StatusInsufficientStorage
+	case errors.As(err, &rate):
+		// Temporary: the ticket stays valid and the same upload works later.
+		code, status = "upload_rate_limited", http.StatusTooManyRequests
 	case errors.Is(err, storage.ErrReadOnly):
 		code, status = "read_only", http.StatusForbidden
 	case errors.Is(err, errAIForbidden):
@@ -445,9 +449,11 @@ func (h *TicketUpload) failWrite(w http.ResponseWriter, err error, dest string, 
 		slog.String("code", code),
 		slog.String("err", err.Error()),
 	)
+	countQuotaRefusal(err)
 	hint := map[string]string{
 		"storage_unavailable": "The storage backend refused the write — this is not your request. The ticket is still valid: retry it later, and tell the user storage is down if it keeps failing.",
 		"quota_exceeded":      "The ticket owner is out of storage. Free space or raise the quota; retrying will not help until then.",
+		"upload_rate_limited": "The ticket owner has used their upload allowance for this period. The ticket is still valid — retry later; the allowance comes back as the oldest uploads age out of the window.",
 		"read_only":           "The destination storage is read-only. Mint a ticket for a writable storage instead.",
 		"forbidden":           "The ticket owner no longer has permission to write there. Ask for access, or mint a ticket for a path you can write.",
 	}[code]

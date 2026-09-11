@@ -123,6 +123,12 @@ type Set struct {
 
 // LoadSet builds the ACL set for user u on storage s. For admins and RBAC-off
 // storages it skips the grant query entirely (they never consult grants).
+//
+// Two sources feed one set: the grants addressed to the account itself, and the
+// grants addressed to any group the account is in (migration 00043). They are
+// merged rather than ranked — Effective takes the highest level covering a path
+// from either source, so adding somebody to a group can only widen access and
+// never narrow what they were given personally.
 func (r *Resolver) LoadSet(ctx context.Context, u *model.User, s *model.Storage) (*Set, error) {
 	set := &Set{user: u, storage: s}
 	if u != nil {
@@ -135,7 +141,47 @@ func (r *Resolver) LoadSet(ctx context.Context, u *model.User, s *model.Storage)
 	if err != nil {
 		return nil, err
 	}
+	for _, g := range grants {
+		g.Principal = model.PrincipalUser
+	}
 	set.grants = grants
+
+	groups, err := r.store.ListGroupsOfUser(ctx, u.ID)
+	if err != nil {
+		return nil, err
+	}
+	if len(groups) == 0 {
+		return set, nil
+	}
+	ids := make([]int64, 0, len(groups))
+	byID := make(map[int64]*model.Group, len(groups))
+	for _, g := range groups {
+		ids = append(ids, g.ID)
+		byID[g.ID] = g
+	}
+	ggrants, err := r.store.ListFileGroupGrantsByStorageGroups(ctx, s.ID, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, gg := range ggrants {
+		grp := byID[gg.GroupID]
+		row := &model.FileGrant{
+			ID:         gg.ID,
+			StorageID:  gg.StorageID,
+			PathPrefix: gg.PathPrefix,
+			IsDir:      gg.IsDir,
+			Level:      gg.Level,
+			CreatedBy:  gg.CreatedBy,
+			CreatedAt:  gg.CreatedAt,
+			Principal:  model.PrincipalGroup,
+			GroupID:    gg.GroupID,
+		}
+		if grp != nil {
+			row.GroupName = grp.Name
+			row.MemberCount = grp.MemberCount
+		}
+		set.grants = append(set.grants, row)
+	}
 	return set, nil
 }
 
@@ -222,6 +268,26 @@ func (s *Set) Grants() []*model.FileGrant {
 		return nil
 	}
 	return s.grants
+}
+
+// ViaGroups names the groups this caller holds at least one grant through on
+// this storage, in the order the grants were loaded, deduped. Empty (never nil)
+// when access is entirely personal — the drive list prints it so a person can
+// tell "I was given this" from "my team was given this".
+func (s *Set) ViaGroups() []string {
+	out := []string{}
+	if s == nil {
+		return out
+	}
+	seen := map[string]bool{}
+	for _, g := range s.grants {
+		if !g.IsGroup() || g.GroupName == "" || seen[g.GroupName] {
+			continue
+		}
+		seen[g.GroupName] = true
+		out = append(out, g.GroupName)
+	}
+	return out
 }
 
 // roleBase is the capability a role has on an RBAC-off storage before ceiling.

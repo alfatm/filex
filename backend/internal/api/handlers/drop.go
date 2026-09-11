@@ -423,12 +423,20 @@ func (h *Drop) handleDrop(w http.ResponseWriter, r *http.Request, tok string) {
 func (h *Drop) failWrite(w http.ResponseWriter, err error, stage string, st *model.Storage, dest string, files int) {
 	code := "storage_unavailable"
 	status := http.StatusServiceUnavailable
-	if errors.Is(err, quota.ErrQuotaExceeded) {
-		// Not an outage: the owner is out of room. Different message, and a
-		// 507 so a client can tell the two apart without parsing prose.
+	var rate quota.ErrUploadRateLimited
+	switch {
+	case errors.Is(err, quota.ErrQuotaExceeded), errors.Is(err, quota.ErrFileLimitExceeded):
+		// Not an outage: the owner is out of room (bytes, or file slots).
+		// Different message, and a 507 so a client can tell the two apart
+		// without parsing prose.
 		code = "quota_exceeded"
 		status = http.StatusInsufficientStorage
+	case errors.As(err, &rate):
+		// Temporary, unlike the two above: the same submission works later.
+		code = "upload_rate_limited"
+		status = http.StatusTooManyRequests
 	}
+	countQuotaRefusal(err)
 	msg := "no error" // saved==0 with every file open+ingest succeeding is impossible, but never log a nil deref
 	if err != nil {
 		msg = err.Error()

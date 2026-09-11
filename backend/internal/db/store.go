@@ -67,6 +67,15 @@ type Store interface {
 	// without one, because drivers differ on that.
 	ListLiveNodesInTrash(ctx context.Context, storageID int64, trashPrefix string) ([]*model.Node, error)
 	ListNodesByParent(ctx context.Context, storageID int64, parentID *int64) ([]*model.Node, error)
+	// ListNodesByParentFiltered is ListNodesByParent narrowed by the facets,
+	// inside the query and in the same order. The folder listing is not paged,
+	// so this is not about reach the way the capped listings' facets are; it
+	// is so that one folder and one flat listing mean the same thing by `ext`.
+	ListNodesByParentFiltered(ctx context.Context, storageID int64, parentID *int64, f NodeFacets) ([]*model.Node, error)
+	// CountNodesByParent counts the live children of a folder, unfiltered — the
+	// `total` a filtered folder listing reports so the client can tell a
+	// narrowed answer from an empty folder.
+	CountNodesByParent(ctx context.Context, storageID int64, parentID *int64) (int, error)
 	// AggNodes returns a lightweight {id, parent_id, is_dir, size} row for every
 	// live node of a storage — the input to folder-size aggregation.
 	AggNodes(ctx context.Context, storageID int64) ([]NodeAgg, error)
@@ -137,12 +146,23 @@ type Store interface {
 	UpdateUserLocale(ctx context.Context, id int64, locale, tz string) error
 	UpdateUserRole(ctx context.Context, id int64, role string) error
 	TouchLastLogin(ctx context.Context, id int64) error
+
+	// Roles — the per-role operation allow-list in roles.permissions_json
+	// (vocabulary in internal/perm, rewritten by migration 00044). Get returns
+	// sql.ErrNoRows for a role that has no row; nothing here creates roles,
+	// because there is no dynamic role-creation surface (model.ValidRole).
+	GetRolePermissions(ctx context.Context, role string) ([]string, error)
+	SetRolePermissions(ctx context.Context, role string, ops []string) error
 	DeleteUser(ctx context.Context, id int64) error
 
 	// TOTP / 2FA
 	SetTotpPendingSecret(ctx context.Context, id int64, secret string, recoveryCodes []string) error
 	ActivateTotp(ctx context.Context, id int64) error
 	ClearTotp(ctx context.Context, id int64) error
+	// ConsumeTotpRecoveryCode removes ONE recovery code equal to `code` (both
+	// sides compared through model.NormalizeRecoveryCode) and reports whether it
+	// did. Atomic: two logins racing on the same code cannot both get true.
+	ConsumeTotpRecoveryCode(ctx context.Context, userID int64, code string) (bool, error)
 
 	// Sessions
 	CreateSession(ctx context.Context, userID int64, token string, expiresAt time.Time, ip, ua string) (*model.Session, error)
@@ -236,6 +256,30 @@ type Store interface {
 	UpdateFileGrantLevel(ctx context.Context, id int64, level string) error
 	DeleteFileGrant(ctx context.Context, id int64) error
 
+	// Groups — named sets of accounts (migration 00043). providerID scopes a
+	// listing to one tenant; nil means "every tenant" (single-tenant installs,
+	// supertenant callers, background workers).
+	CreateGroup(ctx context.Context, g *model.Group) (*model.Group, error)
+	GetGroup(ctx context.Context, id int64) (*model.Group, error)
+	UpdateGroup(ctx context.Context, id int64, name, description string) error
+	DeleteGroup(ctx context.Context, id int64) error
+	ListGroups(ctx context.Context, q string, providerID *int64, limit, offset int) ([]*model.Group, int, error)
+	SearchGroups(ctx context.Context, q string, providerID *int64, limit int) ([]*model.Group, error)
+	ListGroupMembers(ctx context.Context, groupID int64) ([]*model.User, error)
+	SetGroupMembers(ctx context.Context, groupID int64, userIDs []int64) error
+	AddGroupMember(ctx context.Context, groupID, userID int64) error
+	RemoveGroupMember(ctx context.Context, groupID, userID int64) error
+	ListGroupsOfUser(ctx context.Context, userID int64) ([]*model.Group, error)
+
+	// File grants addressed to a group (migration 00043).
+	CreateFileGroupGrant(ctx context.Context, g *model.FileGroupGrant) (*model.FileGroupGrant, error)
+	GetFileGroupGrant(ctx context.Context, id int64) (*model.FileGroupGrant, error)
+	UpdateFileGroupGrantLevel(ctx context.Context, id int64, level string) error
+	DeleteFileGroupGrant(ctx context.Context, id int64) error
+	ListFileGroupGrantsByStorageGroups(ctx context.Context, storageID int64, groupIDs []int64) ([]*model.FileGroupGrant, error)
+	ListFileGroupGrantsByPath(ctx context.Context, storageID int64, pathPrefix string) ([]*model.FileGroupGrant, error)
+	ListAllFileGroupGrants(ctx context.Context) ([]*model.FileGroupGrant, error)
+
 	// Shares
 	CreateShare(ctx context.Context, share *model.Share) (*model.Share, error)
 	GetShareByID(ctx context.Context, id int64) (*model.Share, error)
@@ -282,10 +326,29 @@ type Store interface {
 	// ListIdleStagedUploads returns rows whose last activity is older than
 	// `before` — the staging sweeper's input.
 	ListIdleStagedUploads(ctx context.Context, before time.Time, limit int) ([]*model.StagedUpload, error)
+	// ActiveStagedUploadForTarget is the active-upload lock: another session
+	// (id != excludeID) on the same (storage_id, storage_key) whose bytes are
+	// moving — `committing` at any age, or `staging` touched at or after
+	// `since`. nil, nil when there is none.
+	ActiveStagedUploadForTarget(ctx context.Context, storageID int64, storageKey string, since time.Time, excludeID string) (*model.StagedUpload, error)
+	// ClaimStagedUploadCommit moves one session from staging/failed to
+	// committing, but only while no OTHER session holds the same target — in a
+	// single statement, so two commits racing on one file cannot both win.
+	// Reports whether the claim was taken.
+	ClaimStagedUploadCommit(ctx context.Context, id string, since time.Time) (bool, error)
 	// SumOpenStagedUploadBytes is the quota RESERVATION: the declared size of
-	// every not-yet-committed upload the user owns. Derived rather than stored,
-	// so it can never drift from the rows it describes and a row leaving the
-	// open set releases its reservation by construction.
+	// every upload the user is still STAGING. Derived rather than stored, so it
+	// can never drift from the rows it describes and a row leaving `staging`
+	// releases its reservation by construction.
+	//
+	// ⚠ `staging` ONLY — `committing` and `failed` are deliberately excluded,
+	// and that exclusion is not an oversight. A row leaves `staging` at commit,
+	// and commit is also the moment the node is published (so users.usage_bytes
+	// already holds these bytes) and the moment the upload ledger row is
+	// written (so the rate window already holds them too). Counting a
+	// `committing` row here as well charged the same bytes twice against both
+	// ceilings for as long as the background transfer was queued: a committed
+	// 60 MB upload plus a 30 MB begin read as 150 MB against a 100 MB window.
 	SumOpenStagedUploadBytes(ctx context.Context, userID int64) (int64, error)
 
 	// SetNodeTransferState sets nodes.transfer_state: "staged" while the bytes
@@ -458,6 +521,45 @@ type Store interface {
 	// user cannot start a session; nothing they own is touched.
 	SetUserEnabled(ctx context.Context, userID int64, enabled bool) error
 	RecomputeUserUsage(ctx context.Context, userID int64) (int64, error)
+	// GetUserLimits reads the tri-state override columns (migration 00042):
+	// 0 = inherit the instance default, -1 = unlimited, N = this user's limit.
+	GetUserLimits(ctx context.Context, userID int64) (quotaBytes, quotaFiles, quotaUploadBytes int64, err error)
+	// SetUserLimits writes whichever of the three overrides is non-nil, so a
+	// PATCH that names one column does not silently reset the other two.
+	SetUserLimits(ctx context.Context, userID int64, quotaBytes, quotaFiles, quotaUploadBytes *int64) error
+	// GetUserFileUsage returns usage_files.
+	GetUserFileUsage(ctx context.Context, userID int64) (int64, error)
+	// IncrementUserFileUsage adjusts usage_files (delta may be negative);
+	// the result is clamped at 0.
+	IncrementUserFileUsage(ctx context.Context, userID int64, delta int64) error
+	// RecomputeUserFileUsage rebuilds usage_files from the node rows, the way
+	// RecomputeUserUsage rebuilds usage_bytes — trashed rows included.
+	RecomputeUserFileUsage(ctx context.Context, userID int64) (int64, error)
+	// SearchUsers is the admin quota table's listing: a substring match on
+	// email or display name, paged. q == "" lists everyone.
+	//
+	// providerID confines the listing to one tenant, exactly as ListGroups'
+	// does; nil means every tenant (single-tenant installs, supertenant
+	// callers). It is a parameter rather than a tenantstore wrapper because
+	// tenantstore confines storage listings only — a tenant-scoped caller that
+	// forgets to pass its provider would enumerate every tenant's accounts.
+	SearchUsers(ctx context.Context, q string, providerID *int64, limit, offset int) ([]*model.User, int64, error)
+
+	// Upload rate ledger (migration 00042). One row per COMPLETED upload;
+	// rows older than the window are swept.
+	//
+	// stagedUploadID is an IDEMPOTENCY key, "" for the surfaces that have
+	// none. A staged commit whose transfer failed is retried on purpose, and
+	// the retry reaches this call again: passing the staged-upload id makes
+	// the second insert a no-op instead of a second charge for one stored
+	// object. The column carries a unique index, so this holds even if two
+	// callers race.
+	InsertUploadLedger(ctx context.Context, userID int64, bytes int64, stagedUploadID string) error
+	// SumUploadLedger returns the bytes uploaded since `since` and the
+	// creation time of the OLDEST row still inside that window — which is
+	// what a Retry-After is derived from. A zero time means no rows.
+	SumUploadLedger(ctx context.Context, userID int64, since time.Time) (int64, time.Time, error)
+	SweepUploadLedger(ctx context.Context, before time.Time) (int64, error)
 
 	// Node owner
 	SetNodeOwner(ctx context.Context, nodeID int64, ownerID *int64) error
@@ -659,7 +761,19 @@ type NodeFacets struct {
 	PathPrefix string
 	// Exts are lower-case and without the dot ("md", "pdf"). A node matches if
 	// its name ends in any of them; empty means any extension.
-	Exts          []string
+	Exts []string
+	// NameContains keeps the nodes whose name has it as a case-insensitive
+	// substring. Empty means any name.
+	//
+	// ⚠ "Case-insensitive" is whatever the reader folds case with, and the three
+	// readers do not agree: the SQL uses the database's own LOWER (ASCII-only on
+	// SQLite, locale-aware on Postgres), Matches below uses Go's full-Unicode
+	// one, and the app sieves a small folder with the browser's. They part ways
+	// only outside ASCII — Turkish İ/ı is the case that shows up in this
+	// product, since tr ships — so a needle with such a letter can match in a
+	// cold folder and miss in a cached one. Closing it means folding the name
+	// into a stored column; until then this is the known edge.
+	NameContains  string
 	ModifiedAfter *time.Time
 	SizeMin       *int64
 	SizeMax       *int64
@@ -682,7 +796,7 @@ type NodeFacets struct {
 
 // Any reports whether the facets narrow anything at all.
 func (f NodeFacets) Any() bool {
-	return f.PathPrefix != "" || len(f.Exts) > 0 || f.ModifiedAfter != nil ||
+	return f.PathPrefix != "" || len(f.Exts) > 0 || f.NameContains != "" || f.ModifiedAfter != nil ||
 		f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.FilesOnly ||
 		f.DirsOnly || f.SharedOnly
 }
@@ -722,6 +836,11 @@ func (f NodeFacets) Where(alias, modified string, bind func(any) string) []strin
 		}
 		where = append(where, "("+strings.Join(ors, " OR ")+")")
 	}
+	if f.NameContains != "" {
+		// The wildcards are part of the BOUND pattern rather than spelled around
+		// the placeholder: `||` and CONCAT are two spellings for three engines.
+		where = append(where, "LOWER("+alias+"name) LIKE "+bind("%"+likeEscape(strings.ToLower(f.NameContains))+"%")+likeEscapeClause)
+	}
 	if f.ModifiedAfter != nil {
 		where = append(where, alias+modified+" >= "+bind(*f.ModifiedAfter))
 	}
@@ -755,6 +874,100 @@ func (f NodeFacets) Where(alias, modified string, bind func(any) string) []strin
 			" AND (sh.max_uploads IS NULL OR sh.upload_count < sh.max_uploads))")
 	}
 	return where
+}
+
+// Matches is the exact predicate Where renders, over a node row rather than
+// inside a query. It is what keeps the answer right on the paths that never
+// run the query — a folder read straight off its driver, a shared-with-me row,
+// a search hit the index returned — and it has to mean exactly what the SQL
+// means, so it lives next to it.
+//
+// The date window tests backend_mtime alone, as the SQL does: a node filex
+// could never date cannot be inside a "modified since" window. SharedOnly is
+// not tested here — it is a join, not a property of the row — so a caller that
+// sets it must have already narrowed by it.
+// NeedsNodeRow reports whether any facet asks something only a catalogued node
+// can answer — its size, its modification time, its owner, where it sits, or
+// whether a link to it is open. A caller holding a row the indexer never walked
+// (a grant on a path with no node behind it) can answer the rest from the path
+// alone, and uses this to tell "cannot be judged" from "judged and rejected".
+func (f NodeFacets) NeedsNodeRow() bool {
+	return f.ModifiedAfter != nil || f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.SharedOnly ||
+		(f.PathPrefix != "" && f.PathPrefix != "/")
+}
+
+// MatchesPath applies the facets that a NAME and a kind are enough to decide:
+// files-only, dirs-only, the extension list and the name substring. It is the
+// same three rules Matches applies, against a node that does not exist, and the
+// caller is responsible for having checked NeedsNodeRow first.
+func (f NodeFacets) MatchesPath(name string, isDir bool) bool {
+	if f.FilesOnly && isDir {
+		return false
+	}
+	if f.DirsOnly && !isDir {
+		return false
+	}
+	lower := strings.ToLower(name)
+	if len(f.Exts) > 0 {
+		hit := false
+		for _, ext := range f.Exts {
+			if strings.HasSuffix(lower, "."+ext) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			return false
+		}
+	}
+	return f.NameContains == "" || strings.Contains(lower, strings.ToLower(f.NameContains))
+}
+
+func (f NodeFacets) Matches(n *model.Node) bool {
+	if n == nil {
+		return false
+	}
+	if f.FilesOnly && n.Type != model.NodeTypeFile {
+		return false
+	}
+	if f.DirsOnly && n.Type != model.NodeTypeDirectory {
+		return false
+	}
+	if f.PathPrefix != "" && f.PathPrefix != "/" && n.Path != f.PathPrefix && !strings.HasPrefix(n.Path, f.PathPrefix+"/") {
+		return false
+	}
+	if len(f.Exts) > 0 {
+		name := strings.ToLower(n.Name)
+		hit := false
+		for _, ext := range f.Exts {
+			if strings.HasSuffix(name, "."+ext) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			return false
+		}
+	}
+	if f.NameContains != "" && !strings.Contains(strings.ToLower(n.Name), strings.ToLower(f.NameContains)) {
+		return false
+	}
+	if f.ModifiedAfter != nil && (n.BackendMtime == nil || n.BackendMtime.Before(*f.ModifiedAfter)) {
+		return false
+	}
+	if f.SizeMin != nil && n.Size < *f.SizeMin {
+		return false
+	}
+	if f.SizeMax != nil && n.Size > *f.SizeMax {
+		return false
+	}
+	if f.OwnerID != nil {
+		owner := n.OwnerID
+		if owner == nil || *owner != *f.OwnerID {
+			return false
+		}
+	}
+	return true
 }
 
 // likeEscapeChar is the character that turns off LIKE's two wildcards in the

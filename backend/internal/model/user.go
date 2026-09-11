@@ -73,10 +73,29 @@ type User struct {
 	// /quota request per row.
 	QuotaBytes int64 `json:"quota_bytes"`
 	UsageBytes int64 `json:"used_bytes"`
+	// The part-two limits (migration 00042). Every one of these three is a
+	// TRI-STATE override, not a plain number: 0 inherits the instance default
+	// (settings `quota.default_*`), -1 is unlimited for this user whatever the
+	// default says, N is this user's own limit. QuotaBytes above reads the
+	// same way now — its old "0 == unlimited" meaning is what the default
+	// itself carries, so existing rows keep behaving as they did.
+	QuotaFiles       int64 `json:"quota_files"`
+	QuotaUploadBytes int64 `json:"quota_upload_bytes"`
+	UsageFiles       int64 `json:"usage_files"`
 	// Enabled (migration 00022) gates whether the account may start a
 	// session — local login, OIDC and /dav alike. Disabling is not a soft
 	// delete: files, quota and grants are untouched.
 	Enabled bool `json:"enabled"`
+}
+
+// NormalizeRecoveryCode reduces a TOTP recovery code to the form it is
+// compared in: upper-case, no spaces, no hyphens. Codes are handed out as
+// `XXXXX-XXXXX` and people type them back with or without the hyphen, in
+// either case, sometimes with a space — none of that is a different code.
+// The store applies it to both sides of the match, the handlers use it to
+// tell a recovery code from a six-digit TOTP.
+func NormalizeRecoveryCode(code string) string {
+	return strings.ToUpper(strings.NewReplacer(" ", "", "-", "").Replace(code))
 }
 
 // IsAdmin returns true if the user has the admin role.

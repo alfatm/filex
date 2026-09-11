@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import { repository } from '@/data';
-import type { SearchHit, SearchResult } from '@/data/types';
+import { noQuota, type SearchHit, type SearchResult } from '@/data/types';
 import { emptyQuery, fromUrlQuery, hitFolderLabel, toUrlQuery, useSearchStore } from './searchStore';
 
 describe('search URL mapping', () => {
@@ -65,7 +65,7 @@ describe('search URL mapping', () => {
   });
 
   it('labels a hit with the storage name and its folder path', () => {
-    const storages = [{ id: 'demo', name: 'Demo', rootId: 'demo', quota: { usedBytes: 0, totalBytes: 1 }, shared: false }];
+    const storages = [{ id: 'demo', name: 'Demo', rootId: 'demo', quota: { ...noQuota(), totalBytes: 1 }, shared: false, viaGroups: [] }];
     const node = { id: 'x' } as SearchResult['hits'][number]['node'];
     expect(hitFolderLabel({ node, storageId: 'demo', folderPath: '' }, storages)).toBe('/Demo');
     expect(hitFolderLabel({ node, storageId: 'demo', folderPath: 'Design/Assets' }, storages)).toBe('/Demo/Design/Assets');
@@ -74,7 +74,7 @@ describe('search URL mapping', () => {
 });
 
 describe('search store', () => {
-  it('opens neutral, resets to neutral and runs the mock search', async () => {
+  it('opens neutral, resets to neutral and publishes what the repository answers', async () => {
     setActivePinia(createPinia());
     const store = useSearchStore();
     expect(store.query).toEqual(emptyQuery());
@@ -85,11 +85,16 @@ describe('search store', () => {
     store.reset();
     expect(store.query).toEqual(emptyQuery());
 
+    const hits = [{ node: { id: 'a', name: 'Design' } }, { node: { id: 'b', name: 'overview.pdf' } }] as SearchHit[];
+    const spy = vi.spyOn(repository, 'search').mockResolvedValue({ hits, total: 2, capped: false });
     store.query.text = 'design';
     await store.run();
-    expect(store.total).toBe(store.hits.length);
-    expect(store.hits.map((h) => h.node.name).slice(0, 3)).toEqual(['Design', 'overview.pdf', 'beach.png']);
-    expect(store.hits).toHaveLength(14);
+    // The query travels as a plain copy of the form, not the reactive object.
+    expect(spy).toHaveBeenCalledWith({ ...emptyQuery(), text: 'design' });
+    expect(store.hits.map((h) => h.node.name)).toEqual(['Design', 'overview.pdf']);
+    expect(store.total).toBe(2);
+    expect(store.capped).toBe(false);
+    vi.restoreAllMocks();
   });
 
   describe('out-of-order responses', () => {

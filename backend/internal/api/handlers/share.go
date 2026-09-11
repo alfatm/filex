@@ -26,6 +26,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/notify"
 	"github.com/brf-tech/filex/backend/internal/pathkey"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/share"
 	"github.com/brf-tech/filex/backend/internal/sharezip"
 	"github.com/brf-tech/filex/backend/internal/storage"
@@ -168,6 +169,12 @@ type shareCreateRespInner struct {
 // The legacy embed.js posts `{ node_id, pin, expires_in, … }` and reads
 // the flat fields. We support both.
 func (h *Share) HandleCreate(w http.ResponseWriter, r *http.Request) {
+	// files.share — minting a PUBLIC link, the one action here that puts a
+	// file within reach of someone who has no account at all. Listing and
+	// revoking one's own links stay open.
+	if !requirePerm(w, r, perm.OpShare) {
+		return
+	}
 	var req shareCreateReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})

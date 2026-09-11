@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { Node, Storage } from '@/data/types';
+import { noQuota, type Node, type Storage } from '@/data/types';
 import { sharedDriveOf } from './owner';
 
-const drive = (name: string, rootId: string, shared: boolean): Storage => ({
+const drive = (name: string, rootId: string, shared: boolean, viaGroups: string[] = []): Storage => ({
   id: name,
   name,
   rootId,
-  quota: { usedBytes: 0, totalBytes: 0 },
+  quota: noQuota(),
   shared,
+  viaGroups,
 });
 
 const at = (id: string): Node =>
@@ -29,6 +30,14 @@ describe('who a listing row belongs to', () => {
     // The two repositories spell a root differently: `main://` over HTTP, `demo` in the mock. A rule that knew only
     // one of them would silently put the column back to naming the caller in the other.
     expect(sharedDriveOf(at('demo/Design/a.png'), [drive('demo', 'demo', true)])).toBe('demo');
+  });
+
+  // filex has group grants now, and a team drive reached through one is the team's rather than the mount's.
+  it('names the group a team drive is reached through, and the drive when no group leads to it', () => {
+    const viaDesign = drive('Marketing', 'shared://', true, ['Design', 'Ops']);
+    // The first group, not a list: the column is one line, and the answer to "whose is this" is the team.
+    expect(sharedDriveOf(at('shared://Q3/plan.md'), [viaDesign])).toBe('Design');
+    expect(sharedDriveOf(at('shared://'), [drive('Marketing', 'shared://', true)])).toBe('Marketing');
   });
 
   it('does not let one drive claim another whose name it is a prefix of', () => {

@@ -92,7 +92,6 @@
     "external": "External services",
     "authProviders": "Auth providers",
     "apiMcp": "API / MCP",
-    "grants": "Permissions",
     "audit": "Audit log",
     "sync": "Sync runs",
     "shares": "Shares",
@@ -118,7 +117,11 @@
     "updates": "Updates",
     "connections": "Connections",
     "plugins": "Plugins",
-    "assistant": "AI assistant"
+    "assistant": "AI assistant",
+    "access": "Access",
+    "quotas": "Quotas",
+    "roles": "Roles",
+    "groups": "Groups"
   },
   "login": {
     "title": "Sign in",
@@ -460,17 +463,44 @@
     "testFail": "Provider check failed"
   },
   "grants": {
-    "title": "Permissions",
-    "subtitle": "Every per-file/folder grant — who has what, where. Revoke any.",
-    "search": "Search user, path, storage…",
+    "title": "Access",
+    "subtitle": "Which storages enforce grants, and every grant that exists — for an account or for a group.",
+    "search": "Search principal, path, storage…",
     "user": "User",
     "storage": "Storage",
     "path": "Path",
     "level": "Level",
     "revoke": "Revoke",
-    "revokeConfirm": "Revoke {email}'s access to {path}?",
+    "revokeConfirm": "Revoke {principal}’s access to {path}?",
     "revokedOk": "Grant revoked",
-    "empty": "No grants yet."
+    "empty": "No grants yet.",
+    "principal": "Principal",
+    "principalAll": "All principals",
+    "principalUsers": "Users only",
+    "principalGroups": "Groups only",
+    "storagesTitle": "Storages",
+    "storagesHint": "A grant only applies to a storage with RBAC on. With RBAC off the storage is open to every authenticated account.",
+    "rbac": "RBAC",
+    "rbacSavedOk": "RBAC updated for {name}",
+    "noStorages": "No storages yet.",
+    "newTitle": "New grant",
+    "pathHint": "Relative to the storage root. Leave empty for the root itself.",
+    "isDir": "Folder",
+    "isDirHint": "On for a folder and everything under it, off for a single file.",
+    "principalKind": "Grant to",
+    "pickUser": "Account",
+    "pickGroup": "Group",
+    "searchUsers": "Search accounts…",
+    "searchGroups": "Search groups…",
+    "create": "Grant access",
+    "createdOk": "Grant created",
+    "levelChangedOk": "Level changed",
+    "group": "Group",
+    "levels": {
+      "viewer": "Viewer",
+      "editor": "Editor",
+      "owner": "Owner"
+    }
   },
   "apiMcp": {
     "title": "API / MCP",
@@ -1250,6 +1280,147 @@
     "signature": {
       "label": "Signature",
       "required": "This instance only accepts signed plugins: paste the detached signature over the binary's SHA-256, hex or base64, made with a key the operator trusts. Without it the install is refused."
+    }
+  },
+  "quotas": {
+    "title": "Quotas",
+    "subtitle": "One default for every account, and the exceptions you make by hand.",
+    "supertenantOnly": "Quotas are one setting for the whole instance and belong to the platform operator.",
+    "defaults": {
+      "title": "Defaults for every account",
+      "subtitle": "What an account gets when it carries no override of its own. 0 means unlimited.",
+      "storage": "Storage limit (GB)",
+      "files": "File limit (count)",
+      "upload": "Upload limit per window (GB)",
+      "window": "Upload window (hours)",
+      "windowHint": "Between 1 and 720 hours.",
+      "zeroUnlimited": "0 = unlimited",
+      "errInvalid": "Enter zero or more, and a window between 1 and 720 hours.",
+      "savedOk": "Defaults saved"
+    },
+    "accounts": {
+      "title": "Accounts",
+      "search": "Search email or name…",
+      "empty": "No accounts match.",
+      "account": "Account",
+      "storage": "Storage",
+      "files": "Files",
+      "upload": "Upload in window",
+      "default": "default",
+      "override": "override",
+      "recompute": "Recompute",
+      "recomputeOk": "Usage recomputed for {email}",
+      "savedOk": "Quota updated for {email}"
+    },
+    "editor": {
+      "title": "Quota for {email}",
+      "storage": "Storage limit",
+      "files": "File limit",
+      "upload": "Upload limit per window",
+      "inherit": "Inherit default ({value})",
+      "unlimited": "Unlimited",
+      "custom": "Custom",
+      "customGb": "Gigabytes",
+      "customCount": "Number of files",
+      "errCustom": "A custom limit has to be greater than zero."
+    }
+  },
+  "roles": {
+    "title": "Roles",
+    "subtitle": "What each role may do with files. Administrators always have everything.",
+    "empty": "The server returned no roles.",
+    "operation": "Operation",
+    "adminHint": "always everything",
+    "unsaved": "Unsaved",
+    "savedOk": "{name} saved",
+    "groups": {
+      "write": "Write",
+      "organise": "Organise",
+      "share": "Sharing",
+      "read": "Read"
+    },
+    "ops": {
+      "files": {
+        "upload": {
+          "label": "Upload files",
+          "hint": "Add new files to a folder."
+        },
+        "mkdir": {
+          "label": "Create folders",
+          "hint": "Make a new folder."
+        },
+        "rename": {
+          "label": "Rename",
+          "hint": "Change the name of a file or folder."
+        },
+        "move": {
+          "label": "Move",
+          "hint": "Move a file or folder somewhere else."
+        },
+        "copy": {
+          "label": "Copy",
+          "hint": "Duplicate a file or folder."
+        },
+        "delete": {
+          "label": "Delete",
+          "hint": "Send a file or folder to the trash."
+        },
+        "purge": {
+          "label": "Delete permanently",
+          "hint": "Remove an item from the trash for good."
+        },
+        "restore": {
+          "label": "Restore",
+          "hint": "Bring an item back from the trash."
+        },
+        "download": {
+          "label": "Download",
+          "hint": "Read and download file contents."
+        },
+        "share": {
+          "label": "Share links",
+          "hint": "Create and revoke public links."
+        },
+        "grant": {
+          "label": "Grant access",
+          "hint": "Give another account access to a path."
+        },
+        "tags": {
+          "label": "Tags",
+          "hint": "Add and remove tags."
+        },
+        "star": {
+          "label": "Stars",
+          "hint": "Mark items as favourites."
+        }
+      }
+    }
+  },
+  "groups": {
+    "title": "Groups",
+    "subtitle": "Tenant-wide user groups. A group holds RBAC grants, exactly like an account does.",
+    "empty": "No groups yet.",
+    "search": "Search groups…",
+    "addNew": "New group",
+    "newTitle": "New group",
+    "editTitle": "Edit group",
+    "createdOk": "Group created",
+    "updatedOk": "Group saved",
+    "deletedOk": "Group deleted",
+    "deleteConfirm": "Delete the group “{name}”?",
+    "deleteHint": "Members keep their accounts; every grant issued to this group is removed with it.",
+    "members": "Members",
+    "membersTitle": "Members",
+    "noMembers": "This group has no members yet.",
+    "addMember": "Add member",
+    "searchUsers": "Search accounts…",
+    "noCandidates": "No accounts match.",
+    "memberAddedOk": "Member added",
+    "memberRemovedOk": "Member removed",
+    "removeMemberConfirm": "Remove {email} from this group?",
+    "fields": {
+      "name": "Name",
+      "description": "Description"
     }
   }
 }

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { AlertCircle, Check, RotateCcw, X } from 'lucide-vue-next';
 import { useFormat } from '@/composables/useFormat';
 import { IconButton, ProgressBar } from '@/ui';
+import UploadConflictModal from './UploadConflictModal.vue';
 import { useUploadStore } from './uploadStore';
 
 const { t } = useI18n();
@@ -68,14 +69,12 @@ const mismatch = ref<number | null>(null);
             <button type="button" class="ml-2 text-primary hover:underline" @click="askForFile(item.id)">{{ t('upload.resume') }}</button>
             <button type="button" class="ml-2 text-text-3 hover:underline" @click="uploads.discard(item.id)">{{ t('upload.discard') }}</button>
           </p>
-          <!-- "Ask me what to do" lands HERE, beside the row it is about, rather than in a modal that would stop
-               the rest of the batch: the other transfers carry on while this one waits for an answer. -->
-          <p v-if="item.state === 'conflict'" class="mt-1 text-13 leading-none text-text-3">
-            {{ t('upload.conflictAsk', { name: item.name }) }}
-            <button type="button" class="ml-2 text-primary hover:underline" @click="uploads.decide(item.id, 'replace')">{{ t('upload.replace') }}</button>
-            <button type="button" class="ml-2 text-primary hover:underline" @click="uploads.decide(item.id, 'keepBoth')">{{ t('upload.keepBoth') }}</button>
-            <button type="button" class="ml-2 text-text-3 hover:underline" @click="uploads.decide(item.id, 'skip')">{{ t('upload.skip') }}</button>
-          </p>
+          <!-- The question itself is the modal below; the row only says it is the one waiting. The other transfers
+               carry on meanwhile: a row waiting for an answer holds no slot. -->
+          <!-- A row the server refused for a quota reason says WHY in its own words; the generic states below are
+               for rows that have nothing more specific to report. -->
+          <p v-if="item.error" class="mt-1 text-13 leading-tight" :class="item.state === 'failed' ? 'text-danger' : 'text-text-3'">{{ item.error }}</p>
+          <p v-else-if="item.state === 'conflict'" class="mt-1 text-13 leading-none text-text-3">{{ t('upload.waitingAnswer') }}</p>
           <p v-else-if="item.state === 'skipped'" class="mt-1 text-13 leading-none text-text-3">{{ t('upload.skipped') }}</p>
           <p v-else-if="item.state === 'queued'" class="mt-1 text-13 leading-none text-text-3">{{ t('upload.waiting') }}</p>
           <p v-if="mismatch === item.id" class="mt-1 text-13 leading-none text-danger">{{ t('upload.wrongFile') }}</p>
@@ -115,5 +114,14 @@ const mismatch = ref<number | null>(null);
     </ul>
     <!-- Off-screen rather than hidden: a display:none input cannot be clicked open in every browser. -->
     <input ref="picker" type="file" class="sr-only" @change="onPicked" />
+    <!-- One question at a time, about the first row waiting; the dialog portals to <body>, so it takes no room here.
+         "Apply to all" is only offered while other rows of the batch are still to come. -->
+    <UploadConflictModal
+      v-if="uploads.pendingConflict"
+      :key="uploads.pendingConflict.id"
+      :item="uploads.pendingConflict"
+      :offer-all="uploads.pendingCount > 1"
+      @decide="(answer, applyToAll) => uploads.decide(uploads.pendingConflict!.id, answer, { applyToAll })"
+    />
   </section>
 </template>

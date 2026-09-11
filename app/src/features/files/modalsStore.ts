@@ -7,6 +7,7 @@ export type DeleteVariant = 'trash' | 'forever' | 'emptyTrash';
 /** One modal at a time (spec §7): the host component renders whichever is active. */
 export type ActiveModal =
   | { kind: 'newFolder' }
+  | { kind: 'newFile' }
   | { kind: 'rename'; node: Node }
   | { kind: 'share'; node: Node }
   /** The destination picker; the kind is also the verb it runs (spec §7). */

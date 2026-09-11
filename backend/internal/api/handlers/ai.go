@@ -14,6 +14,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/confine"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/filebody"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/search"
 	"github.com/brf-tech/filex/backend/internal/share"
 	"github.com/brf-tech/filex/backend/internal/storage"
@@ -96,6 +97,9 @@ func (h *AI) Info(w http.ResponseWriter, r *http.Request) {
 
 // Download → GET /api/ai/download?path=<adapter://file> (streams bytes).
 func (h *AI) Download(w http.ResponseWriter, r *http.Request) {
+	if !requirePerm(w, r, perm.OpDownload) {
+		return
+	}
 	rc, mime, size, err := h.ops.Read(r.Context(), r.URL.Query().Get("path"))
 	if err != nil {
 		writeJSON(w, aiStatus(err), map[string]string{"error": err.Error()})
@@ -125,6 +129,12 @@ type aiUploadBody struct {
 // so a large capture never has to exist in memory, and above the chunk
 // threshold it goes through filex's staging area like every other client.
 func (h *AI) Upload(w http.ResponseWriter, r *http.Request) {
+	// An API token acts AS its owner, so the AI surface answers to the SAME
+	// per-role operation permissions as the browser. Otherwise taking upload
+	// away from a role would leave "mint yourself a token" as the way around it.
+	if !requirePerm(w, r, perm.OpUpload) {
+		return
+	}
 	ct := r.Header.Get("Content-Type")
 
 	if hasPrefix(ct, "multipart/form-data") {
@@ -206,6 +216,9 @@ type aiPathBody struct {
 
 // Delete → POST /api/ai/delete {"path":"…"}.
 func (h *AI) Delete(w http.ResponseWriter, r *http.Request) {
+	if !requirePerm(w, r, perm.OpDelete) {
+		return
+	}
 	var body aiPathBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
@@ -220,6 +233,9 @@ func (h *AI) Delete(w http.ResponseWriter, r *http.Request) {
 
 // Mkdir → POST /api/ai/mkdir {"path":"…"}.
 func (h *AI) Mkdir(w http.ResponseWriter, r *http.Request) {
+	if !requirePerm(w, r, perm.OpMkdir) {
+		return
+	}
 	var body aiPathBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
@@ -241,6 +257,9 @@ type aiMoveBody struct {
 
 // Move → POST /api/ai/move {"src":"…","dst":"…"}.
 func (h *AI) Move(w http.ResponseWriter, r *http.Request) {
+	if !requirePerm(w, r, perm.OpMove) {
+		return
+	}
 	var body aiMoveBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
@@ -299,6 +318,9 @@ type aiShareBody struct {
 // Share → POST /api/ai/share. Mints a public /s/<token> link for a file/folder
 // (folders download as a ZIP). Returns the URL + a one-time PIN if requested.
 func (h *AI) Share(w http.ResponseWriter, r *http.Request) {
+	if !requirePerm(w, r, perm.OpShare) {
+		return
+	}
 	var body aiShareBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
@@ -337,7 +359,14 @@ type aiZipBody struct {
 // Zip → POST /api/ai/zip {"sources":[…],"dest":"…"}. Packs the sources into a
 // .zip ON THE SERVER (folders recurse); the bytes never travel over the wire.
 // To download the result, mint a share link for `dest`.
+//
+// files.upload: `dest` is a new object in a storage. The archive bytes never
+// crossing the wire is a transport detail — the role still has to be allowed
+// to create a file.
 func (h *AI) Zip(w http.ResponseWriter, r *http.Request) {
+	if !requirePerm(w, r, perm.OpUpload) {
+		return
+	}
 	var body aiZipBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
@@ -359,7 +388,14 @@ type aiUnzipBody struct {
 
 // Unzip → POST /api/ai/unzip {"src":"…","dest":"…"}. Extracts a stored zip into
 // the dest dir ON THE SERVER (zip-slip protected, confined to the token root).
+//
+// files.upload, on the same reasoning as Archive.Extract: one call writes a
+// file per member, and files.mkdir is deliberately not also required for the
+// folders those members need.
 func (h *AI) Unzip(w http.ResponseWriter, r *http.Request) {
+	if !requirePerm(w, r, perm.OpUpload) {
+		return
+	}
 	var body aiUnzipBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})

@@ -82,6 +82,8 @@ const totpSecret = ref<string | null>(null);
 const totpRecoveryCodes = ref<string[]>([]);
 const totpRecoveryCodesText = computed(() => totpRecoveryCodes.value.join('\n'));
 const totpCode = ref('');
+// Turning 2FA off needs the current password as well as a code.
+const totpPassword = ref('');
 const totpBusy = ref(false);
 
 const localeOptions = [
@@ -177,10 +179,11 @@ async function verifyTotp() {
 async function disableTotp() {
   totpBusy.value = true;
   try {
-    await AuthApi.disableTotp(totpCode.value);
+    await AuthApi.disableTotp(totpPassword.value, totpCode.value);
     if (auth.user) auth.user.totp_enabled = false;
     showTotpDisable.value = false;
     totpCode.value = '';
+    totpPassword.value = '';
     toast.success('2FA disabled');
   } catch (e: unknown) {
     toast.error(extractError(e, t('errors.generic')));
@@ -378,10 +381,17 @@ async function disableTotp() {
 
     <Modal v-model="showTotpDisable" :title="t('profile.totp.disable')" size="sm">
       <Input
+        v-model="totpPassword"
+        type="password"
+        :label="t('common.currentPassword')"
+        autocomplete="current-password"
+      />
+      <Input
         v-model="totpCode"
         :label="t('profile.totp.code')"
         inputmode="numeric"
         autocomplete="one-time-code"
+        class="mt-3"
       />
       <template #footer>
         <Button variant="ghost" @click="showTotpDisable = false">{{ t('common.cancel') }}</Button>

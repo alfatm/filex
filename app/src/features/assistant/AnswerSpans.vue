@@ -43,7 +43,7 @@ async function open(address: string) {
   if (name) {
     try {
       const parent = await repository.resolvePath(files.storage.id, joinPath(path.slice(0, -1)));
-      const node = (await repository.listFolder(parent.id)).find((n) => n.name === name);
+      const node = (await repository.listFolder(parent.id)).nodes.find((n) => n.name === name);
       if (node?.kind === 'file') {
         actions.preview(node, [node]);
         return;

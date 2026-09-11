@@ -12,6 +12,8 @@ export class HttpError extends Error {
     readonly status: number,
     readonly body: unknown,
     message: string,
+    /** The answer's headers, for the few refusals that put part of their answer there (`Retry-After` on a 429). */
+    readonly headers: Headers | null = null,
   ) {
     super(message);
     this.name = 'HttpError';
@@ -70,7 +72,7 @@ async function settle<T>(response: Response, expectUnauthorized = false): Promis
     // starts failing. The callers for which a 401 is an answer rather than a surprise say so with
     // `expectUnauthorized`, so nothing announces a lost session from inside the sign-in or password forms.
     if (response.status === 401 && !expectUnauthorized) unauthorizedHandler?.();
-    throw new HttpError(response.status, payload, messageOf(response.status, payload));
+    throw new HttpError(response.status, payload, messageOf(response.status, payload), response.headers ?? null);
   }
   return payload as T;
 }

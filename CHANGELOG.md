@@ -22,6 +22,151 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in a real build the mock repository is aliased out of the bundle rather than
   left to tree-shaking, so a shipped app cannot quietly serve demo data. The
   demo itself has to be asked for by name: `vite build --mode demo`.
+- **Per-role operation permissions.** `roles.permissions_json` has existed since
+  the first migration and nothing ever read it: the four values it held were
+  documentation while enforcement came entirely from the role string plus item
+  grants. It is now the live allow-list of thirteen operations — `files.upload`,
+  `mkdir`, `rename`, `move`, `copy`, `delete`, `purge`, `restore`, `tags`,
+  `download`, `star`, `share`, `grant` — checked at every HTTP write and
+  download surface (`internal/perm`, migration `00044`), IN ADDITION to the
+  per-item ACL, never instead of it. `admin` keeps `*` and is not editable;
+  `user` gets every operation and `viewer` gets `files.download` + `files.star`,
+  so no installation changes behaviour on upgrade. `files.download` is separate
+  from viewing (preview and thumbnails stay open) and `files.purge` is separate
+  from `files.delete`, so "may move things to the trash but not empty it" is a
+  real setting. A refusal is a 403 carrying `{"code":"ROLE_FORBIDDEN","op":…}`
+  so a client can say which switch stopped it. Operators edit the grid at `GET`
+  / `PUT /api/admin/roles`; `GET /api/files/capabilities` now carries the
+  caller's own expanded `permissions` so the explorer can hide what the server
+  would refuse. ⚠ The protocol gateways (WebDAV/SFTP/FTPS/NFS/S3) are NOT wired
+  to it in this release — see `docs/RBAC.md`.
+- **User groups, and grants addressed to them.** Sharing a folder with a team
+  meant one grant per person, and taking somebody off the team meant finding
+  every one of those rows again. A group is now a first-class principal
+  (migration `00043`: `groups`, `group_members`, `file_group_grants`): grant a
+  path to the group once and access follows membership — add somebody and they
+  have it, remove them and it is gone, with nothing to revoke. Group grants are
+  merged with personal ones rather than replacing them, so the effective level
+  is the highest of the two and the account-role ceiling still caps the result.
+  Every row the permissions panel and the admin overview return now says which
+  kind it is (`principal: "user" | "group"`), `POST /api/files/permissions` and
+  `/invite` take a `group_id` where they took a `user_id`, and `PATCH`/`DELETE`
+  take `?principal=group` because the two tables have their own id spaces.
+  Admins manage groups at `/api/admin/groups` (CRUD plus membership replace/add/
+  remove, tenant-scoped like users) and can now create and relevel any grant
+  from `/api/admin/grants` instead of only revoking one. Shared-with-me rows
+  reached through a team carry `via_group`, each drive carries `via_groups`, and
+  an invite always reports its `mode` — including the case where the address had
+  no account and a public link was minted instead, which now says so. See
+  `docs/RBAC.md`.
+- **Two more quota ceilings, and instance defaults behind all three.** A per-user
+  byte ceiling was the only limit filex had, so an account could hold a million
+  empty files or move a terabyte a day without crossing it. There are now three:
+  storage bytes, a **file count** (`users.quota_files` / `users.usage_files`) and
+  an **upload rate** — bytes per sliding window, kept in a new `upload_ledger`
+  table with one row per completed upload (migration `00042`). Every per-user
+  column became a tri-state override — `0` inherits the instance default, `-1` is
+  unlimited for that account, `N` is a limit — which is why the upgrade changes
+  no behaviour: every existing row is `0` and every default starts unlimited.
+  The defaults are live-editable settings seeded once from
+  `FILEX_QUOTA_DEFAULT_BYTES`, `FILEX_QUOTA_DEFAULT_FILES`,
+  `FILEX_QUOTA_DEFAULT_UPLOAD_BYTES` and `FILEX_QUOTA_UPLOAD_WINDOW_HOURS`, and
+  operators edit them at `GET|PATCH /api/admin/quotas` with the account table at
+  `GET /api/admin/quotas/users` and one account's overrides at
+  `GET|PATCH /api/admin/users/{id}/quota`. Refusals are honest about which
+  resource ran out: `413 FILE_LIMIT_EXCEEDED` carries the limit and the count,
+  and the rate limit answers **`429 UPLOAD_RATE_LIMITED`** with a `Retry-After`
+  computed from the moment the oldest ledger row leaves the window — not a 413,
+  because the same request will succeed later. An **overwrite claims no new file
+  slot**, so an account at its file ceiling can still replace a file it already
+  owns, and a refused, aborted or failed upload spends no allowance at all. The
+  ledger is trimmed by the staged-upload sweeper. ⚠ WebDAV and the
+  S3/SFTP/FTP/NFS gateways enforce the two storage ceilings only — see
+  `docs/QUOTAS.md`.
+- **Four operator pages for the things access was already made of.** Quotas is
+  one card of instance defaults (storage, file count, upload bytes per window,
+  the window itself) over a paged account table that shows used-against-limit
+  for all three and labels every cell `default` or `override`, because the
+  per-account value is tri-state on the wire — `0` inherits the default, `-1` is
+  unlimited for that account, anything above zero is a limit — and an operator
+  who cannot tell an inherited limit from a deliberate exception cannot audit
+  one. Roles is the thirteen-operation grid against the roles, with the admin
+  column checked and disabled and one Save per column. Groups are tenant-scoped
+  user groups with their own page and membership editor, and Permissions became
+  Access: the RBAC switch for every storage (a grant is inert on a storage with
+  RBAC off, so the switch belongs where the grants are), a form that issues one
+  to an account **or to a group**, and a table that says which of the two each
+  row is and lets the level be changed in place.
+- **Access is granted to groups, and roles gate the app's own menus.** The
+  access modal takes a People | Group toggle: a group is found with a debounced
+  type-ahead over `GET /api/files/permissions/groups` and granted by id, group
+  rows show the group mark and their member count, and the role select and
+  Remove work for both principals (`?principal=group` on the grant's `PATCH` and
+  `DELETE`). `owner` is offered as a level to whoever may manage access; the
+  invite carries the NODE's own `is_dir` rather than a hard-coded `true`; an
+  address with no account behind it answers `mode: "shared"` and the modal shows
+  the public link filex minted instead of adding a row; a drive with access
+  rules switched off says who can switch them on. Alongside it, `GET
+  /api/files/capabilities` now reports the caller's role permissions, and every
+  menu, the selection bar, the trash banner, the New menu, the details panel's
+  share button and drag-and-drop consult them in addition to the driver
+  snapshot — with "Your role may not do this" where the role is the reason and
+  "Not available on this server" where the server is. A server that reports no
+  permissions is read as granting all of them, so nothing disappears on an app
+  that ships ahead of its backend. The Owner column on a drive reached through
+  groups names the group rather than the mount.
+- **Quotas say which ceiling was met.** `GET /api/files/quota/me` carries the
+  file count and the rolling upload window beside the byte total, so the sidebar
+  keeps its bar and adds a line ("1,240 / 5,000 files · 2.1 GB of 10 GB this
+  24 h") and Settings → Storage & uploads repeats all three read-only. An upload
+  refused with 413 `FILE_LIMIT_EXCEEDED` fails naming the ceiling; one refused
+  with 429 `UPLOAD_RATE_LIMITED` is not a failure at all — the row says how long
+  the server asked for and goes out again by itself when the window frees up.
+- **The folder listing and shared-with-me take the filter chips.** `GET
+  /api/files/manager?q=index` and `/api/files/manager/shared-with-me` accept
+  the facets the flat listings already did — `ext`, `modified_after`,
+  `size_min`, `size_max`, `owner_id` — plus `name`, a case-insensitive
+  substring of the file name, and the search handler's Go-side predicate is
+  now `NodeFacets.Matches` next to the SQL it mirrors. The folder listing
+  answers `total`, the folder's unfiltered entry count, so a narrowed answer
+  can be told from an empty folder; shared-with-me filters before it pages, so
+  its `total` counts the filtered set, and a row synthesised from a grant the
+  indexer never walked — nothing there for a chip to test — is dropped by any
+  chip.
+- **The app sends its filter chips to the server, and sieves in memory only
+  where that is free.** A folder listing goes out with the chips and the name
+  box as facets; when the answer's `total` says the folder has fewer than 1000
+  entries the app holds it whole and every chip change is answered from memory
+  without a request, and from 1000 up each change is a request (the name box
+  waits 250 ms for the typing to pause). Shared-with-me is filtered by the
+  server too. The `narrow()` sieve in `HttpRepository` is gone.
+- **An upload that would overwrite a file asks in a modal, with the server's
+  answer behind it.** Every transfer goes out with `if_exists`, so whether a
+  name is taken is what the server said at `begin` — or at `commit`, for a file
+  that appeared meanwhile — rather than a folder listing read in advance. Under
+  "ask" the question is one dialog at a time, about the first row waiting
+  (Replace / Keep both / Skip; Esc is Skip), with an "apply to all" box while
+  more rows of the batch are still to come; a Replace after a commit-time
+  refusal re-commits the staged session without sending a byte again. A target
+  another session is uploading to at that moment gets its own question — Retry
+  (the row goes out again after five seconds), Keep both or Skip. The three
+  inline buttons in the upload tray are gone; the row says it is waiting.
+- **A new, empty file from the explorer.** `POST /api/files/manager?q=newfile`
+  with `{"path":"main://dir","name":"notes.md"}` writes a zero-byte file and
+  answers with the parent listing, exactly as `newfolder` does. Same rules too:
+  ≥editor on the folder, `400` for a name with a slash, `409` when a file OR a
+  folder already holds the name — `Write` overwrites, so without that guard a
+  "new" file would have truncated an old one to nothing. The row is typed from
+  the extension, owned by whoever created it, and costs no quota.
+- **A TOTP recovery code is accepted at login — and used up.** The ten codes
+  shown at enrollment were stored and never read back: a lost phone meant a
+  locked account. Now a code typed into the `totp` field signs in when the
+  authenticator code does not, in any spelling (case, hyphen, spaces), and is
+  removed from the list atomically so it cannot serve twice. `POST
+  /api/auth/totp/disable` takes one in `code` for the same reason. Only input
+  shaped like a recovery code (ten letters/digits) is looked up, so a mistyped
+  six-digit TOTP never touches the list; a use is logged and audited as
+  `totp.recovery_used`.
 - **Download a selection, or a whole folder, as one zip.**
   `GET /api/files/download/zip?path=…&path=…` streams `archive/zip` built on the
   fly from any mix of files and folders. A GET, because the download has to be a
@@ -80,6 +225,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   missing rather than written into the file. The tool changes nothing and needs
   no approval. The turn stream carries it as a `report` frame; it is stored
   with the answer and comes back as `reports` on the message.
+- **The server decides upload conflicts.** `if_exists` on `upload/begin`, on
+  `upload/{id}/commit` and on the multipart `?action=upload`: `replace` is the
+  default and what every client already got, `fail` answers `409 EXISTS` before
+  a byte is written or a snapshot taken, and a commit refused that way keeps its
+  session so the same upload can be committed again with `replace`. Two
+  sessions aimed at one file used to race at commit and the last transfer to
+  finish silently won; now the target answers `409 UPLOAD_IN_PROGRESS` while
+  another session is moving its bytes to the driver, or has taken a chunk within
+  the last 30 seconds — a session silent longer than that is stalled, not
+  uploading, and blocks nobody. Migration 00041 indexes the target.
 
 - **The assistant panel can be resized, and it comes back the way it was
   left.** Drag its left edge (or focus the handle and use ←/→) between 320 and
@@ -107,6 +262,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   could claim the work was done. The instructions now say what is true: the
   plan tool call IS the plan, the card IS the approval, and nothing may be
   reported as done until the interface says what happened.
+- **New → File.** The app's New menu and the listing's context menu can create
+  an empty file in the open folder (`POST /api/files/manager?q=newfile`), the
+  way they create a folder: the offered name is highlighted up to its extension
+  so typing replaces "Untitled" and keeps the ".txt", a taken name is refused
+  under the field, and the new file is selected and can be undone. The entry
+  had been a "coming soon" placeholder.
+- **Two-factor authentication from the app's own Settings → Security.** On a
+  local account the row opens in place, like the password form: turning it on
+  shows the server-drawn QR (on white, so it scans in the dark theme), the
+  secret to type by hand with a Copy button, and asks for the first code before
+  anything is switched on; the ten recovery codes are then shown once, with
+  "Copy all". Turning it off asks for the current password and an authenticator
+  or recovery code, and says which of the two was wrong. An account whose second
+  step belongs to its provider keeps the read-only row.
 
 ### Changed
 
@@ -157,6 +326,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The two canned prompts under the assistant's mode chips ("Find contracts
   from July", "Search by tag: design"): they fit no real drive.
 
+### Fixed
+
+- **Turning 2FA off from Admin → Profile could never work.** The admin SPA
+  posted `{code}` alone to `/api/auth/totp/disable`, while the server wants the
+  current password too and checks it first — so every attempt was answered 401
+  "password incorrect" before the code was looked at. The dialog now asks for
+  the password as well and sends both.
+
 ### Security
 
 - **Any signed-in account could read and roll back another person's file
@@ -203,6 +380,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the app, which stops asking as soon as a round purges nothing, reported a
   trash it had emptied and had not. It now steps over pages that purged nothing
   until one produces a result or the listing runs out.
+- **A tenant admin could revoke another tenant's grants by id.** `DELETE
+  /api/admin/grants/{id}` resolved the row by bare integer and deleted it, so
+  enumerating dense grant ids was enough to strip access on a storage the caller
+  cannot reach — and the tenant it belonged to saw only that access had
+  vanished. Both mutations now load the grant, load its storage and answer 404
+  when the caller's scope cannot reach it, for the user and the group principal
+  alike.
 
 ## [0.34.0] - 2026-09-06
 

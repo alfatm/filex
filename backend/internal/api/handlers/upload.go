@@ -16,6 +16,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/pathkey"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/storage"
 	"github.com/brf-tech/filex/backend/internal/thumb"
 	"github.com/brf-tech/filex/backend/internal/writehook"
@@ -84,6 +85,12 @@ type initResponse struct {
 
 // Init kicks off a multipart upload — returns presigned PUT URLs for each part.
 func (u *Upload) Init(w http.ResponseWriter, r *http.Request) {
+	// files.upload, checked at Init: the presigned PUT URLs handed back below
+	// go straight to S3 and never pass through filex again, so this is the last
+	// point at which a refusal can still stop the bytes.
+	if !requirePerm(w, r, perm.OpUpload) {
+		return
+	}
 	var req initRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})

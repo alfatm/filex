@@ -41,6 +41,7 @@ function onSelect(id: string) {
   menu.close();
   if (node) return void actions.run(id, node);
   if (id === 'newFolder') modals.open({ kind: 'newFolder' });
+  else if (id === 'newFile') modals.open({ kind: 'newFile' });
   else if (id === 'paste') void clipboard.paste();
   else if (id === 'fileUpload') fileInput.value?.click();
   else if (id === 'selectAll') files.selectAll();

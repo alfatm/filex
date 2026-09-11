@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Node } from '@/data/types';
+import { noQuota, type Node } from '@/data/types';
 import { useModalsStore } from '@/features/files/modalsStore';
 import { i18n } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
@@ -17,7 +17,7 @@ vi.mock('@/data', () => ({
       return { id: 'main://Docs', name: 'Docs', kind: 'folder', parentId: 'main://', size: 0, ownerId: 'me', shared: false, starred: false };
     },
     async listFolder() {
-      return [spec];
+      return { nodes: [spec], total: 1 };
     },
   },
 }));
@@ -28,7 +28,7 @@ async function setup(text: string) {
   setActivePinia(createPinia());
   i18n.global.locale.value = 'en';
   const files = useFilesStore();
-  files.storages = [{ id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 0, totalBytes: 0 }, shared: false }];
+  files.storages = [{ id: 'main', name: 'main', rootId: 'main://', quota: noQuota(), shared: false, viaGroups: [] }];
   await router.push('/files');
   const wrapper = mount(AnswerText, { props: { text }, global: { plugins: [router, i18n] } });
   return wrapper;

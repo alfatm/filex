@@ -374,6 +374,52 @@ func TestStore_TOTP_Lifecycle(t *testing.T) {
 	assert.Empty(t, got3.TOTPSecret)
 }
 
+// ConsumeTotpRecoveryCode matches after normalising both sides (case, hyphen,
+// spaces) and removes exactly the one code it matched, once.
+func TestStore_ConsumeTotpRecoveryCode(t *testing.T) {
+	_, store := testutil.NewTestDB(t)
+	ctx := context.Background()
+	u, _ := store.CreateUser(ctx, "u@test.local", "h", model.RoleUser, "en", "UTC")
+	require.NoError(t, store.SetTotpPendingSecret(ctx, u.ID, "S", []string{"ABCDE-FGHIJ", "KLMNP-QRSTU", "VWXYZ-23456"}))
+	require.NoError(t, store.ActivateTotp(ctx, u.ID))
+
+	// Unknown code: nothing removed.
+	ok, err := store.ConsumeTotpRecoveryCode(ctx, u.ID, "ZZZZZ-ZZZZZ")
+	require.NoError(t, err)
+	assert.False(t, ok)
+
+	// Any spelling of a stored code matches, and only that code goes.
+	ok, err = store.ConsumeTotpRecoveryCode(ctx, u.ID, " klmnp qrstu ")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	got, _ := store.GetUser(ctx, u.ID)
+	assert.Equal(t, []string{"ABCDE-FGHIJ", "VWXYZ-23456"}, got.TOTPRecoveryCodes)
+
+	// Spent: the same code is refused the second time.
+	ok, err = store.ConsumeTotpRecoveryCode(ctx, u.ID, "KLMNP-QRSTU")
+	require.NoError(t, err)
+	assert.False(t, ok)
+
+	// Empty input never matches anything.
+	ok, err = store.ConsumeTotpRecoveryCode(ctx, u.ID, " - ")
+	require.NoError(t, err)
+	assert.False(t, ok)
+
+	// Down to none: the column is an empty list, not null.
+	for _, c := range []string{"ABCDE-FGHIJ", "VWXYZ-23456"} {
+		ok, err = store.ConsumeTotpRecoveryCode(ctx, u.ID, c)
+		require.NoError(t, err)
+		assert.True(t, ok, c)
+	}
+	got, _ = store.GetUser(ctx, u.ID)
+	assert.Empty(t, got.TOTPRecoveryCodes)
+
+	// Unknown user: false, no error.
+	ok, err = store.ConsumeTotpRecoveryCode(ctx, 999_999, "ABCDE-FGHIJ")
+	require.NoError(t, err)
+	assert.False(t, ok)
+}
+
 // ---------- Sync runs ----------
 
 func TestStore_SyncRuns(t *testing.T) {

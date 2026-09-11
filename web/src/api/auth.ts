@@ -49,7 +49,9 @@ export const AuthApi = {
     await api.post('/auth/totp/verify', { code });
   },
 
-  async disableTotp(code: string): Promise<void> {
-    await api.post('/auth/totp/disable', { code });
+  // The server wants both proofs and checks the password FIRST: a body without
+  // it is answered 401 "password incorrect" before the code is ever looked at.
+  async disableTotp(password: string, code: string): Promise<void> {
+    await api.post('/auth/totp/disable', { password, code });
   },
 };

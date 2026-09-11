@@ -49,7 +49,37 @@ export interface Node {
  * `model.Capabilities`); the second names features filex does not report yet, so the UI can hide them the day the
  * endpoint grows them instead of hard-coding "coming soon" — see docs/BACKEND-GAP.md.
  */
+/**
+ * What a ROLE may do, as filex's RBAC names the operations (`permissions` on `GET /api/files/capabilities`).
+ *
+ * Distinct from the rest of `Capabilities`, which answers for the INSTALLATION: a server that can move files still
+ * refuses the move when the caller's role has no `files.move`. Both have to say yes before an action is offered,
+ * and only this one produces "Your role may not do this" rather than "Not available on this server".
+ */
+export const ROLE_PERMISSIONS = [
+  'files.upload',
+  'files.mkdir',
+  'files.rename',
+  'files.move',
+  'files.copy',
+  'files.delete',
+  'files.purge',
+  'files.restore',
+  'files.download',
+  'files.share',
+  'files.grant',
+  'files.tags',
+  'files.star',
+] as const;
+
+export type RolePermission = (typeof ROLE_PERMISSIONS)[number];
+
 export interface Capabilities {
+  /**
+   * The caller's role permissions. Named `allowed` and not `permissions` because that field is already taken here
+   * by "this installation has an access-control surface at all", which is a different question.
+   */
+  allowed: Set<RolePermission>;
   upload: boolean;
   move: boolean;
   copy: boolean;
@@ -93,9 +123,19 @@ export function noBranding(): Branding {
   return { name: '', logoUrl: '', accent: '' };
 }
 
-/** Everything off: what an unreachable or older server is assumed to offer until it answers. */
+/**
+ * Every INSTALLATION feature off: what an unreachable or older server is assumed to offer until it answers.
+ *
+ * ⚠ `allowed` is the exception, and deliberately holds the lot. A role permission is a rule saying what a role may
+ * NOT do, so "we do not know" has to read as "nothing is withheld" — the same reading `HttpRepository.capabilities`
+ * already gives a server that sends no `permissions` field at all, and the two have to agree. Read as "none", a
+ * single failed snapshot at start-up (a proxy 502) would disable restore, share, rename, starring and download —
+ * actions with no installation-side gate behind them — and tell the person to ask an administrator about a
+ * transient failure. Nothing dangerous opens: every capability the server answers for stays false below.
+ */
 export function noCapabilities(): Capabilities {
   return {
+    allowed: new Set(ROLE_PERMISSIONS),
     upload: false,
     move: false,
     copy: false,
@@ -164,6 +204,12 @@ export interface UploadOptions {
    * opens a NEW session at offset 0, so an id that was not written down is a staged upload nobody can continue.
    */
   onSession?: (id: string) => void;
+  /**
+   * What to do about a file already at the target, decided by the SERVER at `begin` and again at `commit`.
+   * `replace` (the default when omitted) overwrites it; `fail` makes the call reject with `UploadConflict` instead,
+   * which is what lets the store ask the person — or pick another name — without listing the folder first.
+   */
+  ifExists?: 'replace' | 'fail';
 }
 
 /** A staged upload the server is still holding, and how far into it that server got. */
@@ -225,6 +271,20 @@ export interface AuthMethods {
 }
 
 /**
+ * A pending second-factor enrolment, as `POST /api/auth/totp/enroll` hands it back. The recovery codes are shown
+ * this once: no endpoint reads them back, and enrolling again replaces the set. (They are stored as written, the
+ * way the TOTP secret beside them is — whoever can read the users table can read both.)
+ */
+export interface TotpEnrollment {
+  /** The shared secret, base32, for typing into an authenticator that cannot scan. */
+  secret: string;
+  otpauthUrl: string;
+  /** The QR of `otpauthUrl`, drawn by the server as an inline `<svg>`. */
+  qrSvg: string;
+  recoveryCodes: string[];
+}
+
+/**
  * One place this account is signed in: filex has recorded ip, user agent and expiry for every session since its
  * first migration. `current` marks the session the app itself is calling with — the one row that gets no "end
  * session" button, because ending it is signing out.
@@ -250,7 +310,21 @@ export interface NotifyPrefs {
 
 export interface Quota {
   usedBytes: number;
+  /** 0 = no ceiling. */
   totalBytes: number;
+  usedFiles: number;
+  /** How many files the account may hold; 0 = no ceiling. */
+  totalFiles: number;
+  /** Bytes uploaded inside the rolling window, and what the window allows; 0 = no ceiling. */
+  uploadUsedBytes: number;
+  uploadTotalBytes: number;
+  /** Length of that rolling window, in hours. */
+  uploadWindowHours: number;
+}
+
+/** An account with no ceiling of any kind: what a server that does not meter answers, and the starting point. */
+export function noQuota(): Quota {
+  return { usedBytes: 0, totalBytes: 0, usedFiles: 0, totalFiles: 0, uploadUsedBytes: 0, uploadTotalBytes: 0, uploadWindowHours: 0 };
 }
 
 export interface Storage {
@@ -266,13 +340,47 @@ export interface Storage {
    * the column names the DRIVE, the way Drive names a shared drive.
    */
   shared: boolean;
+  /**
+   * Names of the groups through which the caller holds grants on this drive; empty when they reach it some other
+   * way. The Owner column names the FIRST of them rather than the drive: a team drive reached through "Design" is
+   * more usefully labelled by the team than by the mount it happens to live on.
+   */
+  viaGroups: string[];
 }
 
 export interface Person {
+  /** A user id, or `g:<group id>` for a group: the two id spaces are separate and the prefix keeps them apart. */
   id: string;
   name: string;
   initial: string;
   role: 'owner' | 'editor' | 'viewer';
+  /** Which kind of principal holds the grant; a group row is drawn with the group icon and its member count. */
+  principal: 'user' | 'group';
+  /** Groups only: how many accounts are in the group. */
+  memberCount?: number;
+}
+
+/** A group as the picker offers it. */
+export interface GroupOption {
+  id: string;
+  name: string;
+  memberCount: number;
+}
+
+/**
+ * What an invite did.
+ *
+ * `granted` — the account existed and now has the grant; `user_created` — filex made the account first; `shared` —
+ * there is NO account for that address, so a public link was minted instead. The last one adds nobody to the list,
+ * which is why the modal has to say so rather than silently showing an unchanged list.
+ *
+ * The middle one is spelled the server's way (`user_created`, not `created`): the admin explorer in
+ * `packages/core` has typed it so since before this app existed, and one name for one wire value beats a tidier one.
+ */
+export interface InviteOutcome {
+  mode: 'granted' | 'user_created' | 'shared';
+  /** The public link, present only for `shared`. */
+  url?: string;
 }
 
 /**
@@ -337,6 +445,17 @@ export interface ListingFilter {
   size: Exclude<SizePreset, 'custom'>;
   /** Matches the owner or, on Shared with me, whoever shared the node; null means anyone. */
   personId: string | null;
+  /** Case-insensitive substring of the name; "" means any name. Keeps folders, like Modified and People do. */
+  name: string;
+}
+
+/**
+ * A folder's children as the server answered them. `total` counts the LIVE children before `ListingFilter` was
+ * applied — what tells the store whether the folder is small enough to hold whole and sieve in memory.
+ */
+export interface FolderListing {
+  nodes: Node[];
+  total: number;
 }
 
 export type SizeUnit = (typeof SIZE_UNITS)[number];

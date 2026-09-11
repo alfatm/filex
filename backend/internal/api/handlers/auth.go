@@ -119,7 +119,10 @@ func (h *Auth) Login(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if !verifyTOTP(user.TOTPSecret, req.TOTP) {
+		// A recovery code from enrollment is accepted in the same field, once
+		// — see consumeTotpRecoveryCode. Only tried after the TOTP check
+		// fails and only for input shaped like one.
+		if !verifyTOTP(user.TOTPSecret, req.TOTP) && !consumeTotpRecoveryCode(r, h.Store, user.ID, req.TOTP) {
 			_ = h.Store.DeleteSession(r.Context(), token)
 			slog.Debug("login refused",
 				slog.String("reason", "invalid two-factor code"),

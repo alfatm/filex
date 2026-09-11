@@ -506,16 +506,16 @@ query params on the listing endpoint (`ext`, `modified_after`, `size_min`,
 `size_max`, `owner_id` — the advanced search's own words). That matters because
 the flat listings are capped: a chip applied to the page instead of to the query
 answers with the matches among the newest few hundred rows and looks exactly
-like an empty result. Two listings are still narrowed in the client, and both
-exactly — a folder listing is not paged, and shared-with-me is asked for its
-whole page because its rows are grants, not files, and carry nothing a query
-could test.
+like an empty result. The folder listing is the one exception, by size: a folder
+with fewer than 1000 entries (the server's `total`) is held whole and the chips
+sieve it in memory, so a chip costs no request there; from 1000 up every chip
+change is a request, and the name box waits 250 ms for the typing to pause.
 
 Beside the chips on My files sits a name box ("Filter in this folder…", pill
 h 38, w 265, folder icon). It narrows the open folder by substring, case
-insensitively, in the client — the folder listing is complete, so nothing is
-lost — and is cleared on every navigation, because it belongs to the folder
-it was typed in. It counts as a filter for the empty state and "Clear filters".
+insensitively, under the same rule as the chips — in memory for a small folder,
+on the server for a large one — and is cleared on every navigation, because it
+belongs to the folder it was typed in. It counts as a filter for the empty state and "Clear filters".
 
 ## 7b. Navigation, dragging and load states
 
@@ -587,7 +587,16 @@ Version history (`versions`), Manage access (`permissions`), Delete forever and
 Empty trash (`delete_forever`), a folder or mixed-selection download
 (`folder_download`), and the assistant's topbar trigger (`assistant`), which is
 hidden rather than disabled because it opens a panel, not an action. `?caps=`
-overrides the snapshot in dev builds.
+overrides the snapshot in dev builds. A second gate sits over the same entries:
+the caller's ROLE permissions (`files.upload`, `.move`, `.delete`, `.purge`,
+`.share`, `.grant`, `.tags`, `.star`, …), which disable an entry with "Your role
+may not do this" — the installation is asked first, so a feature the server does
+not have never reads as a role problem, and a server that reports no permissions
+at all is taken to grant them all. Manage access grants to a PERSON or to a
+GROUP, chosen with a People | Group toggle: a group row carries the group mark
+and its member count instead of a face and an address, and an address with no
+account behind it mints a public link, shown with a Copy button, instead of
+adding a row.
 
 **Tags** are edited in their own modal (item menu → Tags): a text field that
 takes one tag per Enter, the current tags as removable chips, Cancel / Save,

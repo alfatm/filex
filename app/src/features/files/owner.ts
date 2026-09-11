@@ -15,11 +15,23 @@ import type { Node, Storage } from '@/data/types';
 export function sharedDriveOf(node: Node, storages: Storage[]): string | null {
   for (const storage of storages) {
     if (!storage.shared) continue;
-    if (node.id === storage.rootId) return storage.name;
+    if (node.id === storage.rootId) return labelOf(storage);
     // The boundary matters: without it a drive called `main` would claim rows on a drive called `main2`.
     if (node.id.startsWith(storage.rootId) && (storage.rootId.endsWith('/') || node.id[storage.rootId.length] === '/')) {
-      return storage.name;
+      return labelOf(storage);
     }
   }
   return null;
+}
+
+/**
+ * What the column calls the drive.
+ *
+ * The GROUP where there is one: a drive reached through "Design" is the design team's, and naming the team says
+ * who the files belong to in a way the mount's name cannot. Several groups can lead to one drive; the first is
+ * named rather than a list, because the column is one line and the answer to "whose is this" is the team. A drive
+ * reached some other way keeps its own name.
+ */
+function labelOf(storage: Storage): string {
+  return storage.viaGroups[0] ?? storage.name;
 }

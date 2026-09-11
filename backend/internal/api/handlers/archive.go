@@ -20,6 +20,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/filebody"
 	"github.com/brf-tech/filex/backend/internal/httpx"
 	"github.com/brf-tech/filex/backend/internal/model"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/protocolsync"
 	"github.com/brf-tech/filex/backend/internal/search"
 	"github.com/brf-tech/filex/backend/internal/storage"
@@ -169,7 +170,23 @@ func (a *Archive) List(w http.ResponseWriter, r *http.Request) {
 //
 // DestDir is interpreted on the SAME storage as the source. Members
 // defaults to "all" when empty.
+//
+// Extracting is the widest write surface in the product: one request creates a
+// file per member. So it needs files.upload, and the refusal comes first —
+// before the body is read and before "is this storage writable" — because a
+// role that may not write at all should not learn anything about the
+// destination from the shape of the answer.
+//
+// files.upload ONLY, deliberately not files.mkdir as well. The folders this
+// creates are the ones the members need to land in, not folders the person
+// asked for; making extraction need both would mean an operator who took
+// folder-creation away from a role had also silently switched off unpacking a
+// zip. Creating a folder as an act of its own stays gated where it is
+// (?action=newfolder, /api/ai/mkdir, the ops queue).
 func (a *Archive) Extract(w http.ResponseWriter, r *http.Request) {
+	if !requirePerm(w, r, perm.OpUpload) {
+		return
+	}
 	var req archiveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
@@ -324,7 +341,14 @@ func (a *Archive) Extract(w http.ResponseWriter, r *http.Request) {
 //
 // If the destination zip exists, we download it, append the new entries,
 // then re-upload. Names are zip-slip protected on the read side.
+//
+// A new object lands in the storage, so this is files.upload like every other
+// write — the bytes being server-side rather than uploaded changes who moves
+// them, not whether the role may create a file.
 func (a *Archive) Add(w http.ResponseWriter, r *http.Request) {
+	if !requirePerm(w, r, perm.OpUpload) {
+		return
+	}
 	var req archiveRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
@@ -632,6 +656,12 @@ func zipRootName(name string, taken map[string]bool) string {
 // case — it ends the response and leaves the client with a short file, which is
 // the honest outcome and the reason each root is stat'ed and authorised first.
 func (a *Archive) DownloadZip(w http.ResponseWriter, r *http.Request) {
+	// A zip of a selection is still taking the bytes away, so it needs the same
+	// files.download as the single-file route — otherwise "no downloads" is one
+	// checkbox and one "Download as zip" button away from being untrue.
+	if !requirePerm(w, r, perm.OpDownload) {
+		return
+	}
 	paths := r.URL.Query()["path"]
 	if len(paths) == 0 {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing path"})

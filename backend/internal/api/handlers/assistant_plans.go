@@ -48,6 +48,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/pathkey"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/share"
 )
 
@@ -723,6 +724,24 @@ func (h *Assistant) runPlan(ctx context.Context, r *http.Request, plan *model.As
 	if err := json.Unmarshal([]byte(plan.ItemsJSON), &items); err != nil {
 		return []planItemResult{{State: itemFailed, Code: reasonBroken, Reason: "the stored plan could not be read"}}
 	}
+	// ⚠ The per-role operation gate (internal/perm), once per plan and before
+	// the first item runs. The assistant is a SECOND DOOR onto work the
+	// buttons gate: restoring a version, emptying the trash, tagging, moving,
+	// minting a link. A role that lost files.purge must not be able to empty
+	// its trash by asking for it in words.
+	//
+	// Reported as the assistant refusing, with the same `forbidden` code an
+	// ACL denial uses, rather than as a 403 over the whole request: the person
+	// pressed Approve on a card, and what they get back is that card with
+	// every line saying it was not done and why. A 500 would say the server
+	// broke; it did not.
+	if op, ok := planKindOp(plan.Kind); ok && !permAllowed(r, op) {
+		out := make([]planItemResult, 0, len(items))
+		for _, item := range items {
+			out = append(out, planItemResult{Path: item.Path}.skip(reasonForbidden, "your role may not do this: "+op))
+		}
+		return out
+	}
 	tools := newAssistantTools(*h.Tools, plan.SessionID)
 	// The origin a minted link lives on is a property of the request, and this
 	// is the only place a plan meets one.
@@ -732,6 +751,33 @@ func (h *Assistant) runPlan(ctx context.Context, r *http.Request, plan *model.As
 		out = append(out, tools.runItem(ctx, plan.Kind, item))
 	}
 	return out
+}
+
+// planKindOp maps a plan kind to the operation permission its work needs. The
+// same mapping requirePermForOpKind does for the ops queue, and for the same
+// reason: two doors onto one act, one rule.
+//
+// A kind with no operation reports false and runs as before —
+// PlanKindRevokeShare, because closing a link is not minting one and no other
+// revoke surface is gated either; a gate here that /api/files/share/{id} and
+// /api/ai/unshare do not have would make the assistant stricter than the
+// button beside it. PlanKindMove needs files.move alone, not files.mkdir as
+// well, for the reason Archive.Extract does not: the destination folder is
+// part of the move the person approved, not a folder they asked for.
+func planKindOp(kind string) (string, bool) {
+	switch kind {
+	case model.PlanKindTags:
+		return perm.OpTags, true
+	case model.PlanKindRestoreVersion:
+		return perm.OpRestore, true
+	case model.PlanKindCreateShare:
+		return perm.OpShare, true
+	case model.PlanKindEmptyTrash:
+		return perm.OpPurge, true
+	case model.PlanKindMove:
+		return perm.OpMove, true
+	}
+	return "", false
 }
 
 // runItem is one item's execution, fingerprint check included.

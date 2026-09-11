@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { repository } from '@/data';
-import { DUPLICATE_NAME } from '@/data/repository';
+import { DUPLICATE_NAME, FileLimitExceeded, UploadConflict, UploadRateLimited } from '@/data/repository';
 import type { Node, UploadSession } from '@/data/types';
 import { i18n } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
@@ -14,14 +14,36 @@ import { previewKind, previewList } from './preview';
 /**
  * Where a transfer stands.
  *
- * `queued` is waiting for a slot in the transfer pool, `conflict` is waiting for the person to say what to do
- * about a name that is already taken, and `interrupted` is the one that outlives the page: the server is still
- * holding a staged upload nobody is sending bytes to.
+ * `queued` is waiting for a slot in the transfer pool, `conflict` is waiting for the person to answer the question
+ * in the modal (a name that is taken, or a target somebody else is uploading to right now), and `interrupted` is
+ * the one that outlives the page: the server is still holding a staged upload nobody is sending bytes to.
  */
 export type UploadState = 'queued' | 'running' | 'conflict' | 'skipped' | 'done' | 'failed' | 'cancelled' | 'interrupted';
 
-/** What the tray offers on a row whose name is already taken; the same three the settings offer in advance. */
+/** What the modal offers on a row whose name is already taken; the same three the settings offer in advance. */
 export type ConflictChoice = Exclude<ConflictBehavior, 'ask'>;
+/** Which question a row in `conflict` is asking: the name is taken, or somebody is uploading to it at this moment. */
+export type ConflictKind = 'exists' | 'inProgress';
+/** The answers a question can take: the three choices, plus Retry for a target that is merely busy. */
+export type ConflictAnswer = ConflictChoice | 'retry';
+
+/**
+ * How long a row refused as "being uploaded right now" waits before it goes out again. The server holds a target
+ * for thirty seconds after its last chunk, so asking again at once would only be refused again.
+ */
+export const RETRY_DELAY_MS = 5000;
+
+/**
+ * How many times a row waits out a full upload window BY ITSELF before it is called a failure.
+ *
+ * One, because the second refusal is the proof that waiting is not the answer: the server hands back the WHOLE
+ * window when the request is larger than the window's entire allowance (backend `quota.checkRate`, whose own
+ * comment says no amount of waiting helps), so a 2 GB file under a 1 GB/24 h rule waits a day, is refused again,
+ * and waits another — forever, with the batch's promise held open behind it, which means the listing is never
+ * re-read and `files.uploadsLanded` never runs. A counted retry covers the honest case (the window really does
+ * free up) and stops there; the row keeps the same wording, so sending it again is the person's to decide.
+ */
+export const MAX_RATE_LIMIT_WAITS = 1;
 
 /**
  * How many transfers may be in flight at once.
@@ -30,6 +52,9 @@ export type ConflictChoice = Exclude<ConflictBehavior, 'ask'>;
  * localStorage; a drop of five hundred files used to open five hundred of them at the same instant.
  */
 export const MAX_PARALLEL_UPLOADS = 3;
+
+/** Under an hour the wait is said in minutes, above it in hours. Never in seconds: it is an estimate, not a clock. */
+const MINUTES_PER_HOUR = 60;
 
 export interface UploadItem {
   id: number;
@@ -43,6 +68,13 @@ export interface UploadItem {
   parentId: string;
   /** The server's id for the staged upload, once `begin` has answered. */
   sessionId?: string;
+  /** Which question the row is asking while it is in `conflict`. */
+  conflict?: ConflictKind;
+  /**
+   * What the server said about THIS row, in the reader's language: the quota refusals, which the generic "Upload
+   * failed" cannot explain and which the person can act on (wait, or delete something).
+   */
+  error?: string;
 }
 
 /** What survives a reload, per unfinished transfer. The bytes cannot: a `File` is not serialisable. */
@@ -58,8 +90,15 @@ interface Entry {
   item: UploadItem;
   file: File;
   parentId: string;
-  /** Set once the name question has been answered, so the answer is not asked again on the way back in. */
-  resolved?: boolean;
+  /** The person chose Replace for this row; it goes out with `ifExists: 'replace'` whatever the settings say. */
+  replace?: boolean;
+  /**
+   * A session with every byte staged whose commit was refused. The next step commits IT rather than uploading
+   * again, so a Replace after a commit-time refusal sends no byte twice.
+   */
+  staged?: string;
+  /** How many times this row has already waited out a full upload window on its own. */
+  rateWaits?: number;
 }
 
 const STORAGE_KEY = 'filex.app.uploads';
@@ -109,6 +148,17 @@ function freeName(name: string, taken: Set<string>): string {
   }
 }
 
+/**
+ * How long the server asked us to wait, as a sentence. Rounded UP and never shown in seconds: the number is the
+ * server's estimate of when the window frees up, and a countdown would promise a precision it does not have.
+ */
+function waitLabel(seconds: number, t: (key: string, named: Record<string, unknown>) => string): string {
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  return minutes >= MINUTES_PER_HOUR
+    ? t('upload.retryInHours', { hours: Math.ceil(minutes / MINUTES_PER_HOUR) })
+    : t('upload.retryInMinutes', { minutes });
+}
+
 export const useUploadStore = defineStore('uploads', () => {
   const files = useFilesStore();
   const modals = useModalsStore();
@@ -128,7 +178,11 @@ export const useUploadStore = defineStore('uploads', () => {
   /** One controller per running row, so cancelling one transfer leaves the others alone. */
   const running = new Map<number, AbortController>();
   /** What a row in `conflict` is waiting for: the answer its batch will act on. */
-  const answers = new Map<number, (choice: ConflictChoice) => void>();
+  const answers = new Map<number, (answer: ConflictAnswer, applyToAll: boolean) => void>();
+  /** How a row that is waiting on a clock lets its batch carry on: registered by the batch that is holding it. */
+  const releases = new Map<number, () => void>();
+  /** The row the modal asks about: the first one waiting for an answer. The rest wait their turn. */
+  const pendingConflict = computed(() => items.value.find((i) => i.state === 'conflict') ?? null);
 
   /**
    * `target` overrides the open folder: a drop on a folder card uploads into that folder. A folder upload arrives
@@ -263,7 +317,7 @@ export const useUploadStore = defineStore('uploads', () => {
       return made;
     } catch (error) {
       if ((error as Error).message !== DUPLICATE_NAME) throw error;
-      const existing = (await repository.listFolder(parentId)).find((n) => n.kind === 'folder' && n.name === name);
+      const existing = (await repository.listFolder(parentId)).nodes.find((n) => n.kind === 'folder' && n.name === name);
       if (!existing) throw error;
       return existing.id;
     }
@@ -272,8 +326,12 @@ export const useUploadStore = defineStore('uploads', () => {
   /**
    * One batch of files, at most `MAX_PARALLEL_UPLOADS` of them in flight.
    *
-   * A row waiting for an answer about its name holds no slot — it leaves the queue and the answer puts it back —
-   * so a batch does not stall behind the first three names the person has not decided about yet.
+   * Whether a name is taken is the SERVER's answer, not a listing's: every transfer goes out with `ifExists` and is
+   * refused — at `begin`, or at `commit` for a file that appeared meanwhile — when the rule wants to know. The
+   * folder is listed at most once per batch, and only to pick a free name for "keep both".
+   *
+   * A row waiting for an answer, or for the retry delay, holds no slot — it leaves the queue and the answer puts it
+   * back — so a batch does not stall behind the first three names the person has not decided about yet.
    *
    * The listing is re-read ONCE, when the last transfer of the batch is over. It used to be re-read by every
    * single file, which for a folder drop meant N listings of the folder, twice as many requests from the details
@@ -281,25 +339,58 @@ export const useUploadStore = defineStore('uploads', () => {
    */
   async function runBatch(entries: Entry[], fresh: Set<string>) {
     const queue = [...entries];
-    /** Names already in each target folder, learned at most once per folder per batch. */
+    /** Names already in each target folder, listed at most once per folder per batch — only to pick a free name. */
     const listed = new Map<string, Set<string>>();
-    const asking = new Set<number>();
+    /**
+     * Names this batch has sent to each folder. Two files of one batch under one name would otherwise collide with
+     * each other: the server sees the second only once the first has landed, or as "in progress" while it lands.
+     */
+    const claimed = new Map<string, Set<string>>();
+    /** Rows out of the queue but not over: waiting for an answer, for the retry delay or for a free name. */
+    const held = new Set<number>();
+    /** "Apply to all": the answer given for the rest of the batch, per question. */
+    const forAll: Partial<Record<ConflictKind, ConflictAnswer>> = {};
     const landed: Node[] = [];
     let active = 0;
     let finish!: () => void;
     const over = new Promise<void>((resolve) => (finish = resolve));
 
-    async function namesIn(parentId: string): Promise<Set<string>> {
+    async function taken(parentId: string): Promise<Set<string>> {
       const known = listed.get(parentId);
       if (known) return known;
       const names = fresh.has(parentId)
         ? new Set<string>()
-        // The open folder's listing is already in memory; a second copy of it is a request for nothing.
-        : files.folder?.id === parentId
+        // The open folder's listing is already in memory, when it is the whole folder; a second copy of it is a
+        // request for nothing.
+        : files.folder?.id === parentId && files.items.length === files.total
           ? new Set(files.items.map((n) => n.name))
-          : new Set((await repository.listFolder(parentId)).map((n) => n.name));
+          : new Set((await repository.listFolder(parentId)).nodes.map((n) => n.name));
       listed.set(parentId, names);
       return names;
+    }
+
+    function claimedIn(parentId: string): Set<string> {
+      let names = claimed.get(parentId);
+      if (!names) claimed.set(parentId, (names = new Set()));
+      return names;
+    }
+
+    /**
+     * A row that is out of the queue but not over. It keeps the batch's promise pending, so a row cancelled while
+     * it is merely WAITING on a clock — a full window, a busy target — has to let go of the hold itself: without
+     * that, the batch stayed open for the whole wait and neither the listing refresh nor `uploadsLanded` ran.
+     */
+    function hold(id: number) {
+      held.add(id);
+      releases.set(id, () => {
+        unhold(id);
+        pump();
+      });
+    }
+
+    function unhold(id: number) {
+      held.delete(id);
+      releases.delete(id);
     }
 
     function pump() {
@@ -311,53 +402,177 @@ export const useUploadStore = defineStore('uploads', () => {
           pump();
         });
       }
-      if (!active && !queue.length && !asking.size) finish();
+      if (!active && !queue.length && !held.size) finish();
     }
 
     async function step(entry: Entry) {
       // Cancelled while it waited for a slot: the row has already said what it is.
       if (entry.item.state !== 'queued') return;
-      const rule = settings.settings.conflictBehavior;
-      // "Replace" is the server's own behaviour for a name that is taken, so it needs to know nothing in advance.
-      if (rule !== 'replace' && !entry.resolved) {
-        const names = await namesIn(entry.parentId);
-        if (names.has(entry.item.name)) {
-          if (rule === 'skip') {
-            entry.item.state = 'skipped';
-            return;
-          }
-          if (rule === 'keepBoth') entry.item.name = freeName(entry.item.name, names);
-          else return ask(entry, names);
-        }
-        // Two files of one batch under one name would otherwise collide with each other, unseen by any listing.
-        names.add(entry.item.name);
+      const rule: ConflictBehavior = entry.replace ? 'replace' : settings.settings.conflictBehavior;
+      const names = claimedIn(entry.parentId);
+      // A staged row already owns its name; anything else that claimed it meanwhile is the server's to refuse.
+      if (rule !== 'replace' && !entry.staged && names.has(entry.item.name)) {
+        return conflict(entry, rule, new UploadConflict('exists', 'begin', null));
       }
+      // Whoever claimed the name owns the claim: a `replace` rule and a staged row both walk past the guard above
+      // with somebody else's claim standing, and releasing it below would let a third row of the same name through.
+      const claimedName = entry.item.name;
+      const ownsClaim = !names.has(claimedName);
+      names.add(claimedName);
       entry.item.state = 'running';
-      const node = await run(entry.item, (options) =>
-        files.addUploaded(entry.parentId, { name: entry.item.name, size: entry.file.size, blob: entry.file }, options),
-      );
-      if (node) landed.push(node);
+      const ifExists = rule === 'replace' ? 'replace' : 'fail';
+      try {
+        const node = await run(entry.item, (options) =>
+          entry.staged
+            ? repository.commitUpload(entry.staged, entry.parentId, entry.item.name, { ...options, ifExists })
+            : files.addUploaded(entry.parentId, { name: entry.item.name, size: entry.file.size, blob: entry.file }, { ...options, ifExists }),
+        );
+        if (node) landed.push(node);
+      } catch (error) {
+        // `run` reports every other failure into the row itself; the two it hands back are the ones a BATCH has to
+        // answer for: a refused target, and a window that is full and will free up on its own.
+        if (ownsClaim) names.delete(claimedName);
+        if (error instanceof UploadRateLimited) return waitOut(entry, error.retryAfterSeconds);
+        if (!(error instanceof UploadConflict)) throw error;
+        conflict(entry, rule, error);
+      }
     }
 
-    /** Puts the question in the tray, beside the row it is about, and steps out of the way until it is answered. */
-    function ask(entry: Entry, names: Set<string>) {
-      entry.item.state = 'conflict';
-      asking.add(entry.item.id);
-      answers.set(entry.item.id, (choice) => {
-        answers.delete(entry.item.id);
-        asking.delete(entry.item.id);
-        if (choice === 'skip') {
-          entry.item.state = 'skipped';
-        } else {
-          if (choice === 'keepBoth') entry.item.name = freeName(entry.item.name, names);
-          names.add(entry.item.name);
-          entry.resolved = true;
-          entry.item.state = 'queued';
-          // An answered row goes first: the person is waiting on that one.
-          queue.unshift(entry);
+    /**
+     * The account has uploaded its allowance for the current window. Nothing about this row is wrong and nobody has
+     * a decision to make, so it is not a question and not a failure: the row says how long the server asked for and
+     * goes out again by itself when that is up.
+     *
+     * Once, though — see `MAX_RATE_LIMIT_WAITS`. A second refusal means the window is not what stands in the way,
+     * and the row fails with the same sentence rather than waiting again behind a batch that can never settle.
+     */
+    function waitOut(entry: Entry, seconds: number) {
+      const said = t('upload.rateLimited', { wait: waitLabel(seconds, t) });
+      entry.rateWaits = (entry.rateWaits ?? 0) + 1;
+      if (entry.rateWaits > MAX_RATE_LIMIT_WAITS) {
+        entry.item.state = 'failed';
+        entry.item.progress = 0;
+        entry.item.error = said;
+        return;
+      }
+      entry.item.state = 'queued';
+      entry.item.progress = 0;
+      entry.item.error = said;
+      hold(entry.item.id);
+      setTimeout(() => {
+        unhold(entry.item.id);
+        // Cancelled while it waited: the row has already said what it is.
+        if (entry.item.state === 'queued') {
+          entry.item.error = undefined;
+          queue.push(entry);
         }
         pump();
+      }, Math.max(0, seconds) * 1000);
+    }
+
+    /**
+     * The server refused the target. The rule answers on its own where it can; "ask" — and a busy target under
+     * "replace", for which the settings have no answer — becomes the question in the modal.
+     */
+    function conflict(entry: Entry, rule: ConflictBehavior, refusal: UploadConflict) {
+      // A refusal at commit leaves every byte staged: the session is kept, to be committed or dropped by the answer.
+      if (refusal.phase === 'commit' && refusal.sessionId) entry.staged = refusal.sessionId;
+      if (refusal.reason === 'exists') {
+        // `replace` is never refused for a taken name; were it ever, asking is the honest answer.
+        const answer = rule === 'ask' ? forAll.exists : rule === 'replace' ? undefined : rule;
+        return answer ? apply(entry, answer) : ask(entry, 'exists');
+      }
+      const answer = rule === 'skip' || rule === 'keepBoth' ? rule : forAll.inProgress;
+      return answer ? apply(entry, answer) : ask(entry, 'inProgress');
+    }
+
+    /** Puts the question in front of the person and steps out of the way until it is answered. */
+    function ask(entry: Entry, kind: ConflictKind) {
+      entry.item.state = 'conflict';
+      entry.item.conflict = kind;
+      // Through `hold` and not `held.add`, for the same reason a clock-bound wait does: the question is drawn from
+      // `pendingConflict`, which looks for state 'conflict', so cancelling this row takes the modal off the screen
+      // and no answer is ever coming. Without a release registered, the batch's promise would stay pending for the
+      // rest of the session and the listing would never hear that the uploads finished.
+      hold(entry.item.id);
+      answers.set(entry.item.id, (answer, applyToAll) => {
+        answers.delete(entry.item.id);
+        unhold(entry.item.id);
+        if (applyToAll) {
+          forAll[kind] = answer;
+          // Rows of this batch already waiting with the same question take the answer too: with three transfers
+          // in flight, the second and third refusals are usually in by the time the first is answered.
+          for (const other of entries) {
+            if (other.item.state === 'conflict' && other.item.conflict === kind) answers.get(other.item.id)?.(answer, false);
+          }
+        }
+        apply(entry, answer);
+        pump();
       });
+    }
+
+    /** Acts on an answer — the rule's or the person's — and puts the row back on its way, or lets it go. */
+    function apply(entry: Entry, answer: ConflictAnswer) {
+      switch (answer) {
+        case 'skip':
+          entry.item.state = 'skipped';
+          void release(entry);
+          return;
+        case 'keepBoth':
+          entry.item.state = 'queued';
+          void rename(entry);
+          return;
+        case 'replace':
+          entry.replace = true;
+          requeue(entry);
+          return;
+        case 'retry':
+          entry.item.state = 'queued';
+          hold(entry.item.id);
+          setTimeout(() => {
+            unhold(entry.item.id);
+            // Cancelled while it waited: the row has already said what it is.
+            if (entry.item.state === 'queued') queue.unshift(entry);
+            pump();
+          }, RETRY_DELAY_MS);
+      }
+    }
+
+    /** An answered row goes first: the person is waiting on that one. */
+    function requeue(entry: Entry) {
+      entry.item.state = 'queued';
+      queue.unshift(entry);
+      pump();
+    }
+
+    /** A row that will not land under its staged session: whatever the server holds for it goes too. */
+    async function release(entry: Entry) {
+      const session = entry.staged;
+      entry.staged = undefined;
+      await drop(session);
+    }
+
+    /**
+     * "Keep both": a name the folder does not have, then out again. A staged session is bound to the refused name,
+     * so it is dropped and the bytes travel once more under the new one.
+     */
+    async function rename(entry: Entry) {
+      held.add(entry.item.id);
+      try {
+        await release(entry);
+        const names = await taken(entry.parentId);
+        // The server refused this name whatever the listing said — taken since it was read, or by this batch.
+        names.add(entry.item.name);
+        entry.item.name = freeName(entry.item.name, new Set([...names, ...claimedIn(entry.parentId)]));
+        entry.item.progress = 0;
+        if (entry.item.state === 'queued') queue.unshift(entry);
+      } catch {
+        // The folder could not be listed, so no name can be promised free; the row says so as a failed transfer.
+        entry.item.state = 'failed';
+      } finally {
+        held.delete(entry.item.id);
+        pump();
+      }
     }
 
     pump();
@@ -371,9 +586,15 @@ export const useUploadStore = defineStore('uploads', () => {
     }
   }
 
-  /** The person's answer to a name that is already taken; ignored for a row that is not asking. */
-  function decide(id: number, choice: ConflictChoice) {
-    answers.get(id)?.(choice);
+  /**
+   * The person's answer to the question a row in `conflict` is asking; ignored for a row that is not asking.
+   * `applyToAll` gives the same answer to every later question of that kind in the row's batch.
+   */
+  function decide(id: number, answer: ConflictAnswer, options: { applyToAll?: boolean } = {}) {
+    // A row that is no longer asking has nothing to answer: cancel already released it, and re-entering the
+    // conflict path would put a cancelled transfer back in the queue.
+    if (items.value.find((i) => i.id === id)?.state !== 'conflict') return;
+    answers.get(id)?.(answer, options.applyToAll ?? false);
   }
 
   /**
@@ -405,7 +626,20 @@ export const useUploadStore = defineStore('uploads', () => {
       }
       forget(item.sessionId ?? live()?.sessionId);
       return landed;
-    } catch {
+    } catch (error) {
+      // A refused target is not a failure: the caller decides — or asks — what happens to the row next. Neither is
+      // a full upload window, which the batch re-queues rather than reporting.
+      if (error instanceof UploadConflict || error instanceof UploadRateLimited) throw error;
+      // The account may hold no more files. That IS a failure — waiting will not fix it — and the row says which
+      // ceiling it met, because "Upload failed" sends the person looking for a network problem.
+      if (error instanceof FileLimitExceeded) {
+        const stopped = live();
+        if (stopped && stopped.state === 'running') {
+          stopped.state = 'failed';
+          stopped.error = t('upload.fileLimit', { limit: error.limit.toLocaleString() });
+        }
+        return undefined;
+      }
       // The store's own error banner is for the listing; a failed transfer belongs to its row in the tray.
       const row = live();
       // A cancelled row has already said what it is; a failure must not overwrite that.
@@ -425,6 +659,9 @@ export const useUploadStore = defineStore('uploads', () => {
     if (!row) return;
     running.get(id)?.abort();
     row.state = 'cancelled';
+    // A row waiting on a clock rather than on the network holds its batch open; the state above is what the timer
+    // reads, and this is what lets the batch settle now instead of when the wait is up.
+    releases.get(id)?.();
     await drop(row.sessionId);
   }
 
@@ -439,7 +676,16 @@ export const useUploadStore = defineStore('uploads', () => {
     if (file.name !== row.name || file.size !== row.size) return false;
     row.state = 'running';
     const session = row.sessionId;
-    await run(row, (options) => files.addResumed(session, row.parentId, { name: file.name, size: file.size, blob: file }, options));
+    try {
+      await run(row, (options) => files.addResumed(session, row.parentId, { name: file.name, size: file.size, blob: file }, options));
+    } catch (error) {
+      // No batch stands behind a resumed row to answer for it: a target somebody else is writing to right now — or
+      // a full upload window — is reported like a failed transfer, and the record stays for the next start to offer
+      // again.
+      if (error instanceof UploadRateLimited) row.error = t('upload.rateLimited', { wait: waitLabel(error.retryAfterSeconds, t) });
+      else if (!(error instanceof UploadConflict)) throw error;
+      row.state = 'failed';
+    }
     await files.uploadsLanded();
     return true;
   }
@@ -520,5 +766,5 @@ export const useUploadStore = defineStore('uploads', () => {
     );
   }
 
-  return { items, open, doneCount, failedCount, interruptedCount, pendingCount, start, cancel, decide, resume, discard, restore, clear };
+  return { items, open, doneCount, failedCount, interruptedCount, pendingCount, pendingConflict, start, cancel, decide, resume, discard, restore, clear };
 });

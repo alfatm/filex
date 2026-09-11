@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import { nextTick } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { describe, expect, it } from 'vitest';
+import { noQuota } from '@/data/types';
 import { i18n } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
 import Sidebar from './Sidebar.vue';
@@ -10,7 +11,7 @@ import Sidebar from './Sidebar.vue';
 const Page = { template: '<div />' };
 const ACTIVE = 'bg-primary-soft';
 
-const drive = (id: string) => ({ id, name: id, rootId: `${id}://`, quota: { usedBytes: 0, totalBytes: 0 }, shared: false });
+const drive = (id: string) => ({ id, name: id, rootId: `${id}://`, quota: noQuota(), shared: false, viaGroups: [] });
 
 /** Every sidebar row painted as the current one; on a files route there must be exactly one. */
 const activeRows = (wrapper: VueWrapper) => wrapper.findAll('a').filter((a) => a.classes().includes(ACTIVE)).map((a) => a.text());
@@ -59,8 +60,8 @@ describe('Sidebar storages', () => {
   it('keeps the home drive off the list and names it as the home in the quota block', async () => {
     const { files, wrapper } = await mountSidebar();
     files.storages = [
-      { id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 0, totalBytes: 0 }, shared: false },
-      { id: 'demo', name: 'demo', rootId: 'demo://', quota: { usedBytes: 0, totalBytes: 0 }, shared: false },
+      { id: 'main', name: 'main', rootId: 'main://', quota: noQuota(), shared: false, viaGroups: [] },
+      { id: 'demo', name: 'demo', rootId: 'demo://', quota: noQuota(), shared: false, viaGroups: [] },
     ];
     await nextTick();
 
@@ -80,8 +81,8 @@ describe('Sidebar storages', () => {
   it('marks "My files" for the home drive only, whatever files route is open', async () => {
     const { files, wrapper } = await mountSidebar();
     files.storages = [
-      { id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 0, totalBytes: 0 }, shared: false },
-      { id: 'demo', name: 'demo', rootId: 'demo://', quota: { usedBytes: 0, totalBytes: 0 }, shared: false },
+      { id: 'main', name: 'main', rootId: 'main://', quota: noQuota(), shared: false, viaGroups: [] },
+      { id: 'demo', name: 'demo', rootId: 'demo://', quota: noQuota(), shared: false, viaGroups: [] },
     ];
     const myFiles = () => wrapper.findAll('a').find((a) => a.text() === 'My files')!;
     await wrapper.vm.$router.push('/files/main');

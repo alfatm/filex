@@ -245,50 +245,8 @@ func keepMatching(nodes []*model.Node, f db.NodeFacets) []*model.Node {
 // matchesFacets is the exact predicate, over a node row rather than an id set.
 // It is what makes the answer right on the paths that never consult the index,
 // and what makes a truncated id set harmless for the hits that did come back.
-func matchesFacets(n *model.Node, f db.NodeFacets) bool {
-	if n == nil {
-		return false
-	}
-	if f.FilesOnly && n.Type != model.NodeTypeFile {
-		return false
-	}
-	if f.DirsOnly && n.Type != model.NodeTypeDirectory {
-		return false
-	}
-	if f.PathPrefix != "" && f.PathPrefix != "/" && n.Path != f.PathPrefix && !strings.HasPrefix(n.Path, f.PathPrefix+"/") {
-		return false
-	}
-	if len(f.Exts) > 0 {
-		name := strings.ToLower(n.Name)
-		hit := false
-		for _, ext := range f.Exts {
-			if strings.HasSuffix(name, "."+ext) {
-				hit = true
-				break
-			}
-		}
-		if !hit {
-			return false
-		}
-	}
-	// A node filex could never date cannot be inside a "modified since" window.
-	if f.ModifiedAfter != nil && (n.BackendMtime == nil || n.BackendMtime.Before(*f.ModifiedAfter)) {
-		return false
-	}
-	if f.SizeMin != nil && n.Size < *f.SizeMin {
-		return false
-	}
-	if f.SizeMax != nil && n.Size > *f.SizeMax {
-		return false
-	}
-	if f.OwnerID != nil {
-		owner := n.OwnerID
-		if owner == nil || *owner != *f.OwnerID {
-			return false
-		}
-	}
-	return true
-}
+// The predicate itself is NodeFacets.Matches, next to the SQL it mirrors.
+func matchesFacets(n *model.Node, f db.NodeFacets) bool { return f.Matches(n) }
 
 // sortByRank puts fallback rows in the same tier order the index path
 // uses. Without it an index-less install would answer the same query in

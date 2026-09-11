@@ -2,6 +2,7 @@
 import AccessModal from './AccessModal.vue';
 import DeleteModal from './DeleteModal.vue';
 import DestinationModal from './DestinationModal.vue';
+import NewFileModal from './NewFileModal.vue';
 import NewFolderModal from './NewFolderModal.vue';
 import PreviewModal from './PreviewModal.vue';
 import RenameModal from './RenameModal.vue';
@@ -16,6 +17,7 @@ const modals = useModalsStore();
 <template>
   <template v-if="modals.active">
     <NewFolderModal v-if="modals.active.kind === 'newFolder'" @close="modals.close()" />
+    <NewFileModal v-else-if="modals.active.kind === 'newFile'" @close="modals.close()" />
     <RenameModal v-else-if="modals.active.kind === 'rename'" :key="modals.active.node.id" :node="modals.active.node" @close="modals.close()" />
     <ShareModal v-else-if="modals.active.kind === 'share'" :node="modals.active.node" @close="modals.close()" />
     <DestinationModal

@@ -168,10 +168,37 @@ const routes: RouteRecordRaw[] = [
         meta: { breadcrumb: 'nav.updates' },
       },
       {
+        // The RBAC surface: which storages enforce grants, and every grant
+        // issued — to an account or to a group. Route name stays `grants`
+        // so existing links keep working; only the label says "Access".
         path: 'grants',
         name: 'grants',
         component: () => import('@/views/AdminGrants.vue'),
-        meta: { breadcrumb: 'nav.grants' },
+        meta: { breadcrumb: 'nav.access' },
+      },
+      {
+        path: 'groups',
+        name: 'groups',
+        component: () => import('@/views/Groups.vue'),
+        meta: { breadcrumb: 'nav.groups' },
+      },
+      {
+        path: 'groups/:id',
+        name: 'groups.edit',
+        component: () => import('@/views/GroupEdit.vue'),
+        meta: { breadcrumb: 'groups.editTitle', parent: 'groups' },
+      },
+      {
+        path: 'roles',
+        name: 'roles',
+        component: () => import('@/views/Roles.vue'),
+        meta: { breadcrumb: 'nav.roles' },
+      },
+      {
+        path: 'quotas',
+        name: 'quotas',
+        component: () => import('@/views/Quotas.vue'),
+        meta: { breadcrumb: 'nav.quotas' },
       },
       {
         path: 'audit',

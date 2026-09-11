@@ -39,6 +39,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/notify"
 	"github.com/brf-tech/filex/backend/internal/onlyoffice"
 	"github.com/brf-tech/filex/backend/internal/ops"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/plugin"
 	"github.com/brf-tech/filex/backend/internal/protocolauth"
 	"github.com/brf-tech/filex/backend/internal/protocolsync"
@@ -104,6 +105,11 @@ type Deps struct {
 	// ACL resolves per-user/per-item grants (RBAC feature). Constructed in
 	// BuildRouter from Store when nil.
 	ACL *acl.Resolver
+	// Perm resolves role → allowed OPERATIONS (internal/perm). Constructed in
+	// BuildRouter from Store when nil. It is a second, coarser gate beside the
+	// ACL: the ACL decides which items a person may touch, this decides which
+	// kinds of thing their role may do at all. Both must say yes.
+	Perm *perm.Service
 	// ProtocolAuth is the one door every non-HTTP protocol resolves its caller
 	// through (WebDAV today; S3, SFTP, FTPS, NFS and FUSE next). ONE instance is
 	// shared on purpose: a resolver per protocol would mean a credential cache
@@ -184,6 +190,11 @@ func BuildRouter(d *Deps) http.Handler {
 	if d.ACL == nil {
 		d.ACL = acl.New(d.Store)
 	}
+	// Per-role OPERATION permissions (internal/perm, migration 00044) — the
+	// coarse gate that sits BESIDE the ACL above, not instead of it.
+	if d.Perm == nil {
+		d.Perm = perm.New(d.Store)
+	}
 	if d.External == nil {
 		d.External = external.New(d.Store)
 	}
@@ -241,6 +252,11 @@ func BuildRouter(d *Deps) http.Handler {
 
 	r.Use(Logger)
 	r.Use(Recoverer)
+	// Per-role operation permissions travel on the request context, so any
+	// handler can ask "may this role do this" with one line (handlers/
+	// perm_guard.go). Mounted at the root, before auth: nothing is decided
+	// here — the check runs inside the handler, long after the caller is known.
+	r.Use(handlers.PermMiddleware(d.Perm))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   d.Cfg.CORS.AllowedOrigins,
 		AllowedMethods:   d.Cfg.CORS.AllowedMethods,
@@ -461,10 +477,13 @@ func BuildRouter(d *Deps) http.Handler {
 	trashH.AttachACL(d.ACL)
 	metaH := handlers.NewMeta(d.Store)
 	sharedH := handlers.NewShared(d.Store)
-	quotaH := handlers.NewQuota(d.Quota)
+	quotaH := handlers.NewQuota(d.Quota, d.Store)
 	saveTextH := handlers.NewSaveText(d.Store, d.StorageResolver)
 	saveTextH.AttachACL(d.ACL)
 	saveTextH.AttachSearchIndex(d.Index)
+	// The editor writes bytes like any other upload surface, so it answers to
+	// the same ceilings.
+	saveTextH.AttachQuota(d.Quota)
 	if d.Versions != nil {
 		// Snapshot the pre-edit bytes into version history before
 		// every save-text write (Ada, translated from Turkish: "not a
@@ -885,6 +904,7 @@ func BuildRouter(d *Deps) http.Handler {
 			r.Delete("/permissions/{id}", grantsH.Delete)
 			r.Get("/permissions/resolve", grantsH.Resolve)
 			r.Get("/permissions/users", grantsH.SearchUsers)
+			r.Get("/permissions/groups", grantsH.SearchGroups)
 			r.Post("/permissions/invite", grantsH.Invite)
 			r.Post("/permissions/share-mail", grantsH.ShareMail)
 
@@ -977,6 +997,14 @@ func BuildRouter(d *Deps) http.Handler {
 			r.Post("/assistant/provider/test", assistantProviderH.Test)
 			// Duplicate-file report — same (size, etag) grouping (v0.2 "Bul").
 			r.Get("/duplicates", handlers.NewDuplicates(d.Store).Report)
+
+			// Per-role operation permissions (internal/perm, migration 00044).
+			// GET carries the catalogue too, so the screen renders the same
+			// checkbox grid this build actually enforces rather than a list
+			// compiled into the SPA that could drift from it.
+			rolesAdmH := handlers.NewRolesAdmin(d.Perm)
+			r.Get("/roles", rolesAdmH.List)
+			r.Put("/roles/{name}", rolesAdmH.Update)
 
 			// Driver config contracts — what fields each storage driver
 			// needs, straight from the driver registry. Every admin
@@ -1093,7 +1121,23 @@ func BuildRouter(d *Deps) http.Handler {
 
 			// Global RBAC permissions overview — who has what, where.
 			r.Get("/grants", grantsH.AdminList)
+			r.Post("/grants", grantsH.AdminCreate)
+			r.Patch("/grants/{id}", grantsH.AdminUpdate)
 			r.Delete("/grants/{id}", grantsH.AdminDelete)
+
+			// User groups (migration 00043) — a named set of accounts a path
+			// can be granted to once instead of once per person.
+			groupsAdmH := handlers.NewGroupsAdmin(d.Store)
+			r.Route("/groups", func(r chi.Router) {
+				r.Get("/", groupsAdmH.List)
+				r.Post("/", groupsAdmH.Create)
+				r.Get("/{id}", groupsAdmH.Get)
+				r.Patch("/{id}", groupsAdmH.Update)
+				r.Delete("/{id}", groupsAdmH.Delete)
+				r.Put("/{id}/members", groupsAdmH.ReplaceMembers)
+				r.Post("/{id}/members", groupsAdmH.AddMember)
+				r.Delete("/{id}/members/{userId}", groupsAdmH.RemoveMember)
+			})
 
 			r.Route("/audit", func(r chi.Router) {
 				r.Get("/", auditH.List)
@@ -1119,6 +1163,15 @@ func BuildRouter(d *Deps) http.Handler {
 				r.Get("/{user_id}", quotaH.AdminGet)
 				r.Post("/{user_id}", quotaH.AdminSet)
 				r.Post("/{user_id}/recompute", quotaH.AdminRecompute)
+			})
+
+			// The INSTANCE defaults and the per-user table behind the admin
+			// quota page. Plural, and not under /quota/{user_id}, because
+			// these are about everybody.
+			r.Route("/quotas", func(r chi.Router) {
+				r.Get("/", quotaH.AdminDefaults)
+				r.Patch("/", quotaH.AdminSetDefaults)
+				r.Get("/users", quotaH.AdminUsers)
 			})
 
 			r.Route("/versions", func(r chi.Router) {

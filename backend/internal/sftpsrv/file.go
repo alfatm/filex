@@ -18,6 +18,7 @@ import (
 
 	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/filebody"
+	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/storage"
 )
 
@@ -327,7 +328,14 @@ func (w *writer) Close() error {
 	// after — checking afterwards means the disk already holds what the quota
 	// was meant to prevent.
 	if u := auth.UserFrom(ctx); u != nil && w.fs.srv.cfg.Quota != nil {
-		if err := w.fs.srv.cfg.Quota.CheckCanWrite(ctx, u.ID, w.high); err != nil {
+		// The file COUNT as well as the bytes. This passed 0 until 2026-09-11,
+		// so `quota_files` was an HTTP-only limit: a user refused 413
+		// FILE_LIMIT_EXCEEDED in the browser could still `sftp put` ten
+		// thousand files, and usage_files simply climbed past the ceiling
+		// because the node counter does not care which surface wrote the row.
+		addFiles := quotastore.AddFilesForWrite(ctx, w.fs.srv.cfg.Quota, w.fs.srv.cfg.Store,
+			w.drv, u.ID, w.target.Storage.ID, w.target.Rel)
+		if err := w.fs.srv.cfg.Quota.CheckCanStore(ctx, u.ID, w.high, addFiles); err != nil {
 			return err
 		}
 	}

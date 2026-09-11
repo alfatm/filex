@@ -20,6 +20,7 @@ import {
   Upload,
   Users,
 } from 'lucide-vue-next';
+import type { RolePermission } from '@/data/types';
 import { filesRoute } from '@/lib/path';
 import { useModalsStore } from '@/features/files/modalsStore';
 import { useUploadStore } from '@/features/files/uploadStore';
@@ -31,7 +32,7 @@ import { useViewStore } from '@/stores/view';
 import { Button, IconButton, ProgressBar } from '@/ui';
 import FloatingMenu, { type FloatingMenuEntry } from '@/ui/FloatingMenu.vue';
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const baseUrl = import.meta.env.BASE_URL;
 const { formatSize } = useFormat();
 const route = useRoute();
@@ -72,13 +73,48 @@ const connections = [
   { name: 'apiKeys', icon: KeyRound, label: 'nav.apiKeys' },
 ] as const;
 
+/**
+ * Both halves of the question, with a sentence each: an installation that cannot do it says "Not available on this
+ * server", a role that may not do it says "Your role may not do this".
+ */
+function gate(supported: boolean, permission: RolePermission) {
+  if (!supported) return { disabled: true, hint: t('common.unavailable') };
+  if (!capabilities.allows(permission)) return { disabled: true, hint: t('common.notAllowed') };
+  return {};
+}
+
 // Creating comes first, bringing something in second; the divider is the line between the two.
 const newItems = computed<FloatingMenuEntry[]>(() => [
-  { id: 'folder', label: t('new.folder'), icon: FolderPlus },
-  { id: 'file', label: t('new.file'), icon: FilePlus, disabled: true, hint: t('common.comingSoon') },
-  { id: 'fileUpload', label: t('new.fileUpload'), icon: Upload, dividerBefore: true },
-  { id: 'folderUpload', label: t('new.folderUpload'), icon: FolderUp },
+  { id: 'folder', label: t('new.folder'), icon: FolderPlus, ...gate(capabilities.can.mkdir, 'files.mkdir') },
+  { id: 'file', label: t('new.file'), icon: FilePlus, ...gate(capabilities.can.upload, 'files.upload') },
+  { id: 'fileUpload', label: t('new.fileUpload'), icon: Upload, dividerBefore: true, ...gate(capabilities.can.upload, 'files.upload') },
+  { id: 'folderUpload', label: t('new.folderUpload'), icon: FolderUp, ...gate(capabilities.can.upload, 'files.upload') },
 ]);
+
+/**
+ * The other two ways an account can be full, on one line under the bar.
+ *
+ * The bar measures BYTES HELD, and an upload refused for the file count or for the rolling upload window is not
+ * explained by a bar that is half empty — so each ceiling that exists says where it stands. A ceiling the account
+ * does not have is left out rather than printed as "unlimited", which is a row about nothing.
+ */
+const quotaLimits = computed(() => {
+  const quota = files.storage?.quota;
+  if (!quota) return '';
+  const count = (n: number) => n.toLocaleString(locale.value);
+  const parts: string[] = [];
+  if (quota.totalFiles) parts.push(t('quota.files', { used: count(quota.usedFiles), total: count(quota.totalFiles) }));
+  if (quota.uploadTotalBytes) {
+    parts.push(
+      t('quota.uploadWindow', {
+        used: formatSize(quota.uploadUsedBytes),
+        total: formatSize(quota.uploadTotalBytes),
+        hours: quota.uploadWindowHours,
+      }),
+    );
+  }
+  return parts.join(' · ');
+});
 
 const newMenu = ref<{ x: number; y: number } | null>(null);
 const fileInput = ref<HTMLInputElement>();
@@ -103,6 +139,7 @@ function openNewMenu(event: MouseEvent) {
 function onNewSelect(id: string) {
   newMenu.value = null;
   if (id === 'folder') modals.open({ kind: 'newFolder' });
+  else if (id === 'file') modals.open({ kind: 'newFile' });
   else if (id === 'fileUpload') fileInput.value?.click();
   else if (id === 'folderUpload') folderInput.value?.click();
 }
@@ -268,6 +305,7 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
             : t('quota.usedUnlimited', { used: formatSize(files.storage.quota.usedBytes) })
         }}
       </p>
+      <p v-if="quotaLimits" class="mt-1.5 text-13 leading-tight text-text-3">{{ quotaLimits }}</p>
       <!-- An account with no ceiling has nothing to fill, so it gets the figure without the bar. -->
       <ProgressBar
         v-if="files.storage.quota.totalBytes"

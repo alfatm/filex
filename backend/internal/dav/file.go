@@ -16,6 +16,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/filebody"
 	"github.com/brf-tech/filex/backend/internal/model"
+	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/storage"
 )
 
@@ -295,7 +296,11 @@ func (w *writeFile) Close() error {
 	// x/net/webdav turns a Close error into 405 — but a wrong status is not the
 	// same kind of mistake as writing past the limit and counting it afterwards.
 	if u := auth.UserFrom(ctx); u != nil && w.h.cfg.Quota != nil {
-		if err := w.h.cfg.Quota.CheckCanWrite(ctx, u.ID, w.size); err != nil {
+		// The file COUNT as well as the bytes, and through the same helper the
+		// pre-gate uses: this backstop passed 0 until 2026-09-11, so a chunked
+		// PUT was the one way over the count ceiling on /dav.
+		addFiles := quotastore.AddFilesForWrite(ctx, w.h.cfg.Quota, w.h.cfg.Store, w.drv, u.ID, w.st.ID, w.rel)
+		if err := w.h.cfg.Quota.CheckCanStore(ctx, u.ID, w.size, addFiles); err != nil {
 			return err
 		}
 	}

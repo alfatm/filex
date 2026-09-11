@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { noQuota } from '../types';
 import {
   fromFileNode,
   fromModelNode,
@@ -206,22 +207,41 @@ describe('trash rows → app model', () => {
 
 describe('storages', () => {
   it('is addressed by its name, and its root is the bare adapter form', () => {
-    const storage = toStorage({ name: 'main', read_only: false, used_bytes: 100 }, 1000);
-    expect(storage).toEqual({ id: 'main', name: 'main', rootId: 'main://', quota: { usedBytes: 100, totalBytes: 1000 }, shared: false });
+    const storage = toStorage({ name: 'main', read_only: false, used_bytes: 100 }, { ...noQuota(), totalBytes: 1000 });
+    expect(storage).toEqual({ id: 'main', name: 'main', rootId: 'main://', quota: { ...noQuota(), usedBytes: 100, totalBytes: 1000 }, shared: false, viaGroups: [] });
   });
 
   it('measures the drive’s own bytes against the account ceiling, not the account’s bytes against it', () => {
     const [main, backup] = [
-      toStorage({ name: 'main', read_only: false, used_bytes: 300 }, 1000),
-      toStorage({ name: 'backup', read_only: true, used_bytes: 700 }, 1000),
+      toStorage({ name: 'main', read_only: false, used_bytes: 300 }, { ...noQuota(), totalBytes: 1000 }),
+      toStorage({ name: 'backup', read_only: true, used_bytes: 700 }, { ...noQuota(), totalBytes: 1000 }),
     ];
     expect([main.quota.usedBytes, backup.quota.usedBytes]).toEqual([300, 700]);
     // A server too old to report it says nothing rather than repeating the account's figure under every drive.
-    expect(toStorage({ name: 'old', read_only: false }, 1000).quota.usedBytes).toBe(0);
+    expect(toStorage({ name: 'old', read_only: false }, { ...noQuota(), totalBytes: 1000 }).quota.usedBytes).toBe(0);
   });
 
   it('shows an unlimited account as no ceiling rather than a bar that never fills', () => {
-    expect(toQuota({ used_bytes: 5, quota_bytes: 0, unlimited: true })).toEqual({ usedBytes: 5, totalBytes: 0 });
-    expect(toQuota({ used_bytes: 5, quota_bytes: 50 })).toEqual({ usedBytes: 5, totalBytes: 50 });
+    expect(toQuota({ used_bytes: 5, quota_bytes: 0, unlimited: true })).toEqual({ ...noQuota(), usedBytes: 5 });
+    expect(toQuota({ used_bytes: 5, quota_bytes: 50 })).toEqual({ ...noQuota(), usedBytes: 5, totalBytes: 50 });
+  });
+
+  // Three ceilings, three ways of saying "none": a flag for bytes, a flag for the file count, and a plain 0 from a
+  // server that sends the number and no flag at all.
+  it('reads the file and rolling-upload ceilings, and each one’s own “unlimited”', () => {
+    expect(
+      toQuota({
+        used_bytes: 5,
+        quota_bytes: 50,
+        used_files: 1240,
+        quota_files: 5000,
+        upload_used_bytes: 21,
+        upload_quota_bytes: 100,
+        upload_window_hours: 24,
+      }),
+    ).toEqual({ usedBytes: 5, totalBytes: 50, usedFiles: 1240, totalFiles: 5000, uploadUsedBytes: 21, uploadTotalBytes: 100, uploadWindowHours: 24 });
+
+    const open = toQuota({ used_bytes: 5, quota_bytes: 50, used_files: 7, quota_files: 5000, files_unlimited: true, upload_quota_bytes: 100, upload_unlimited: true });
+    expect([open.totalFiles, open.uploadTotalBytes]).toEqual([0, 0]);
   });
 });

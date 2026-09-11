@@ -460,6 +460,25 @@ work on every driver. See [UPLOADS.md](UPLOADS.md).
 
 ---
 
+## Quotas
+
+Three per-user ceilings — storage bytes, file count and upload rate — each a
+tri-state override over an instance default (`0` inherit, `-1` unlimited, `N` a
+limit). See [QUOTAS.md](QUOTAS.md).
+
+⚠ These four live in the **database**, edited on the admin quota page
+(`GET|PATCH /api/admin/quotas`). The environment variables below are a **seed**:
+they apply on a boot where the setting has no stored row yet, and never again.
+
+| Env var | Setting | Default | Description |
+|---|---|---|---|
+| `FILEX_QUOTA_DEFAULT_BYTES` | `quota.default_bytes` | `0` (unlimited) | Storage ceiling for a user with no byte override. |
+| `FILEX_QUOTA_DEFAULT_FILES` | `quota.default_files` | `0` (unlimited) | File-count ceiling. Bytes are not the only finite resource: a million empty files costs almost no disk and still makes listings, scans and backups unusable. |
+| `FILEX_QUOTA_DEFAULT_UPLOAD_BYTES` | `quota.default_upload_bytes` | `0` (unlimited) | Bytes one account may upload within the window below. Deleting an upload does **not** give the allowance back — the transfer already happened. |
+| `FILEX_QUOTA_UPLOAD_WINDOW_HOURS` | `quota.upload_window_hours` | `24` | How far back the upload ledger is summed. 1–720. |
+
+---
+
 ## Antivirus (ClamAV)
 
 Optional. filex scans written files with ClamAV, reached either through a local

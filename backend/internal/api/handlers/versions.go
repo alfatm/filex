@@ -36,6 +36,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/confine"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/model"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/protocolsync"
 	"github.com/brf-tech/filex/backend/internal/realtime"
 	"github.com/brf-tech/filex/backend/internal/search"
@@ -171,6 +172,11 @@ func (h *Versions) Snapshot(w http.ResponseWriter, r *http.Request) {
 
 // Restore replaces the live content with a recorded version.
 func (h *Versions) Restore(w http.ResponseWriter, r *http.Request) {
+	// files.restore. Listing and snapshotting stay open: seeing that a version
+	// exists, and taking one, are not the act being gated here.
+	if !requirePerm(w, r, perm.OpRestore) {
+		return
+	}
 	var req restoreReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})

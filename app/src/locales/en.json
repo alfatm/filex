@@ -5,7 +5,8 @@
   "common": {
     "comingSoon": "Coming soon",
     "loading": "Loading",
-    "unavailable": "Not available on this server"
+    "unavailable": "Not available on this server",
+    "notAllowed": "Your role may not do this"
   },
   "login": {
     "title": "Sign in",
@@ -66,7 +67,9 @@
   },
   "quota": {
     "used": "{used} of {total} used",
-    "usedUnlimited": "{used} used"
+    "usedUnlimited": "{used} used",
+    "files": "{used} / {total} files",
+    "uploadWindow": "{used} of {total} this {hours} h"
   },
   "unit": {
     "b": "B",
@@ -118,6 +121,11 @@
     "newFolder": {
       "title": "New folder",
       "defaultName": "Untitled folder",
+      "create": "Create"
+    },
+    "newFile": {
+      "title": "New file",
+      "defaultName": "Untitled.txt",
       "create": "Create"
     },
     "rename": {
@@ -189,7 +197,17 @@
       "roleOf": "Role of {name}",
       "invite": "Invite",
       "people": "People with access",
-      "revoke": "Remove {name}"
+      "revoke": "Remove {name}",
+      "principal": "Grant access to",
+      "principalUser": "People",
+      "principalGroup": "Group",
+      "group": "Group",
+      "groupPlaceholder": "Search groups",
+      "groupResults": "Matching groups",
+      "members": "{count} member | {count} members",
+      "sharedInstead": "No account with that email — a public link was created instead.",
+      "roleForbidden": "Your role may not manage access",
+      "rbacOff": "Access rules are off for this drive; ask an administrator"
     }
   },
   "toast": {
@@ -230,13 +248,23 @@
     "cancelled": "Cancelled",
     "close": "Close",
     "waiting": "Waiting",
-    "conflictAsk": "“{name}” is already in this folder.",
     "replace": "Replace",
     "keepBoth": "Keep both",
     "skip": "Skip",
     "skipped": "Skipped — that name is already in this folder.",
+    "conflictTitle": "Replace “{name}”?",
+    "conflictBody": "A file named “{name}” is already in “{folder}”.",
+    "busyTitle": "“{name}” is being uploaded right now",
+    "busyBody": "Another upload is putting “{name}” into “{folder}” at this moment. Retry sends this one again in a few seconds.",
+    "retry": "Retry",
+    "applyAll": "Do the same for every other conflict in this batch",
+    "waitingAnswer": "Waiting for your answer",
     "folderDropped": "“{name}” is a folder; a drop cannot carry one. Use New → Upload folder. | {count} folders were left out; a drop cannot carry them. Use New → Upload folder.",
-    "defaultFolderGone": "Your default upload folder is gone; uploading to “{folder}” instead."
+    "defaultFolderGone": "Your default upload folder is gone; uploading to “{folder}” instead.",
+    "rateLimited": "Upload limit reached · try again in {wait}",
+    "retryInMinutes": "{minutes} min",
+    "retryInHours": "{hours} h",
+    "fileLimit": "File limit reached ({limit})"
   },
   "topbar": {
     "searchPlaceholder": "Search in {storage}…",
@@ -645,7 +673,12 @@
       "defaultFolder": "Default upload folder",
       "autoPreview": "Auto-open preview",
       "autoPreviewHint": "Automatically open preview after upload",
-      "conflict": "Upload conflict behavior"
+      "conflict": "Upload conflict behavior",
+      "outOf": "{used} of {total}",
+      "usedBytes": "Storage used",
+      "usedFiles": "Files stored",
+      "uploadWindow": "Uploaded recently",
+      "uploadWindowHint": "Counted over a rolling {hours}-hour window"
     },
     "notify": {
       "hint": "Choose what filex tells you about.",
@@ -669,6 +702,20 @@
       "twoFactorOn": "Enabled",
       "twoFactorOff": "Off",
       "twoFactorProvider": "Set by your provider",
+      "twoFactorTurnOn": "Turn on two-factor authentication",
+      "twoFactorTurnOff": "Turn off",
+      "twoFactorScan": "Scan this code with your authenticator app, then enter the 6-digit code it shows.",
+      "twoFactorKey": "Or enter this key by hand:",
+      "copy": "Copy",
+      "copied": "Copied",
+      "twoFactorCode": "6-digit code",
+      "twoFactorAnyCode": "Authenticator or recovery code",
+      "verify": "Verify",
+      "recoveryCodes": "Recovery codes",
+      "recoveryCodesHint": "Each code signs you in once if you lose your authenticator. They are shown only now — keep them somewhere safe.",
+      "copyAll": "Copy all",
+      "done": "Done",
+      "wrongCode": "That code is not right.",
       "password": "Password",
       "passwordHint": "Change your password",
       "submit": "Change password",

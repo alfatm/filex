@@ -13,7 +13,7 @@ import (
 // query string.
 //
 // The vocabulary is the advanced search's, word for word — `ext`,
-// `modified_after`, `size_min`, `size_max`, `owner_id` — because a client that
+// `modified_after`, `size_min`, `size_max`, `owner_id`, plus `name` — because a client that
 // has learned how to say "documents modified this week" to `/search` should
 // not have to learn a second way to say it to `/manager/recent`. Extensions
 // rather than a type-group name for the same reason as there: which extensions
@@ -51,6 +51,9 @@ func listingFacets(r *http.Request) db.NodeFacets {
 	if v := facetInt(q.Get("owner_id")); v > 0 {
 		f.OwnerID = &v
 	}
+	// `name` is a case-insensitive substring of the file name — the toolbar's
+	// quick filter, not the search box: it does not read contents or paths.
+	f.NameContains = strings.TrimSpace(q.Get("name"))
 	// A filter on extension or size is a filter for files: a folder has no
 	// extension and its size is a rollup of its subtree. A date or an owner
 	// keeps folders.

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import { OPERATION_PENDING } from '@/data/repository';
+import { OPERATION_PENDING, ROLE_FORBIDDEN } from '@/data/repository';
+import { i18n } from '@/i18n';
 
 /**
  * `running` — the request is in flight.
@@ -60,7 +61,9 @@ export const useOperationsStore = defineStore('operations', () => {
         return;
       }
       op.state = 'failed';
-      op.error = e instanceof Error ? e.message : String(e);
+      const message = e instanceof Error ? e.message : String(e);
+      // A sentinel is not a sentence: the tray row would otherwise read "roleForbidden".
+      op.error = message === ROLE_FORBIDDEN ? i18n.global.t('common.notAllowed') : message;
       return;
     }
     clearTimeout(reveal);

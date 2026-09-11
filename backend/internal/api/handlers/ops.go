@@ -17,6 +17,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/e2e"
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/ops"
+	"github.com/brf-tech/filex/backend/internal/perm"
 )
 
 // Ops handles async copy/move/delete tasks.
@@ -103,6 +104,9 @@ func (o *Ops) Submit(w http.ResponseWriter, r *http.Request) {
 	if refuseReadOnlySource(w, req.Kind, source) {
 		return
 	}
+	if !requirePermForOpKind(w, r, req.Kind) {
+		return
+	}
 	// RBAC: require ≥editor on each source (and, for copy/move, the dest).
 	for _, s := range req.Sources {
 		_, rel := splitAdapterPath(s)
@@ -180,6 +184,12 @@ type perVerbReq struct {
 }
 
 func (o *Ops) submitPerVerb(w http.ResponseWriter, r *http.Request, kind string) {
+	// Ahead of the queue-availability probe: the verb is known from the route,
+	// so "your role may not do this" can be answered without it — and it is the
+	// truer answer, being about the caller rather than about the deployment.
+	if !requirePermForOpKind(w, r, kind) {
+		return
+	}
 	if o.Service == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "ops queue unavailable"})
 		return
@@ -364,6 +374,29 @@ func (o *Ops) SubmitMove(w http.ResponseWriter, r *http.Request) {
 }
 func (o *Ops) SubmitDelete(w http.ResponseWriter, r *http.Request) {
 	o.submitPerVerb(w, r, "delete")
+}
+
+// requirePermForOpKind maps an ops verb to its operation and checks it. Both
+// submit surfaces (the generic /ops POST and the per-verb endpoints) go through
+// here, because they are two doors onto the same queue and a role gate that
+// covered only one of them would be trivially walked around.
+//
+// An unrecognised kind is left alone: the verb dispatch below is what decides
+// which kinds exist, and refusing here would turn "unsupported op" into
+// "your role may not do this".
+func requirePermForOpKind(w http.ResponseWriter, r *http.Request, kind string) bool {
+	var op string
+	switch kind {
+	case "copy":
+		op = perm.OpCopy
+	case "move":
+		op = perm.OpMove
+	case "delete":
+		op = perm.OpDelete
+	default:
+		return true
+	}
+	return requirePerm(w, r, op)
 }
 
 // List returns ops filtered by ?status=… (e.g. "running"). Used by the

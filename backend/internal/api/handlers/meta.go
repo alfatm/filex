@@ -22,6 +22,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/model"
+	"github.com/brf-tech/filex/backend/internal/perm"
 )
 
 const (
@@ -68,6 +69,11 @@ type tagsSetReq struct {
 
 // SetTags replaces the full tag list for a node.
 func (h *Meta) SetTags(w http.ResponseWriter, r *http.Request) {
+	// files.tags. Reading tags, and the Tagged-files page, stay open — what is
+	// gated is writing them.
+	if !requirePerm(w, r, perm.OpTags) {
+		return
+	}
 	var req tagsSetReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
@@ -167,6 +173,11 @@ type starReq struct {
 
 // SetStar toggles the starred flag for the current user on a node.
 func (h *Meta) SetStar(w http.ResponseWriter, r *http.Request) {
+	// files.star. Per-user metadata that changes nothing for anybody else,
+	// which is why the viewer role keeps it by default.
+	if !requirePerm(w, r, perm.OpStar) {
+		return
+	}
 	u := auth.UserFrom(r.Context())
 	if u == nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})

@@ -486,7 +486,10 @@ func (a *aiOps) WriteStream(ctx context.Context, p string, src io.Reader, size i
 	}
 
 	if a.staged.ShouldStage(size) {
-		node, serr := a.staged.IngestStream(ctx, s.ID, rel, src, size, currentUserID(ctx), "")
+		// uploadIdentity, not currentUserID: a ticketed upload (PUT /u/{ticket})
+		// runs as the MINTER via quotastore.WithOwner, and that is the account
+		// whose window this transfer spends.
+		node, serr := a.staged.IngestStream(ctx, s.ID, rel, src, size, uploadIdentity(ctx), "")
 		switch {
 		case serr == nil:
 			return &aiEntry{

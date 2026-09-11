@@ -1,7 +1,7 @@
-import { ACCOUNT_DISABLED, DUPLICATE_NAME, INVALID_CREDENTIALS, NOT_FOUND, OPERATION_PENDING, SIGN_IN_LIMITED, TOTP_REQUIRED, WRONG_PASSWORD, type Repository } from '../repository';
-import { matchesFilter, MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
+import { ACCOUNT_DISABLED, DUPLICATE_NAME, FileLimitExceeded, INVALID_CODE, INVALID_CREDENTIALS, NOT_FOUND, OPERATION_PENDING, RBAC_DISABLED, ROLE_FORBIDDEN, SIGN_IN_LIMITED, TOTP_REQUIRED, UploadConflict, UploadRateLimited, WRONG_PASSWORD, type Repository } from '../repository';
+import { MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
-import { noCapabilities, type Access, type ActivityEvent, type AssistantCard, type AssistantContext, type AssistantConversation, type AssistantMode, type AssistantReport, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type AuthOptions, type Branding, type Capabilities, type ListingFilter, type Node, type Person, type Credentials, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
+import { noCapabilities, ROLE_PERMISSIONS, type Access, type ActivityEvent, type AssistantCard, type AssistantContext, type AssistantConversation, type AssistantMode, type AssistantReport, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type AuthOptions, type Branding, type Capabilities, type FolderListing, type GroupOption, type InviteOutcome, type ListingFilter, type Node, type Person, type Quota, type RolePermission, type Credentials, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type TotpEnrollment, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
 import { i18n } from '@/i18n';
 import { isInside, joinPath, nameOf, parentPath, splitPath } from '@/lib/address';
 import { HttpError, putChunk, request, streamJSON } from './client';
@@ -21,6 +21,7 @@ import {
   type WireQuota,
   type WireStorage,
   type WireAuthMethods,
+  type WireTotpEnrollment,
   fromSession,
   type WireSession,
   type WireActivityEvent,
@@ -72,6 +73,9 @@ const POLL_GIVE_UP_MS = 60_000;
 
 /** What filex ships with (`model.MaxAssistantSessions`), used only until the first session listing states its own. */
 const DEFAULT_ASSISTANT_SESSION_MAX = 100;
+
+/** How many groups the invite row's picker asks for; it is a type-ahead, not a directory. */
+const GROUP_PICKER_LIMIT = 20;
 
 const NOTIFY_SETTINGS = '/api/notifications/settings';
 const ASSISTANT_SESSIONS = '/api/assistant/sessions';
@@ -220,7 +224,7 @@ const RECENT_LIMIT = 200;
  */
 const EMPTY_TRASH_ROUNDS = 40;
 const TRASH_LIMIT = 500;
-/** The server's own maximum for `shared-with-me`, which is narrowed here rather than in the query — see `listShared`. */
+/** The server's own maximum for `shared-with-me`; the facets go in the query, so the page is the filtered set. */
 const SHARED_LIMIT = 500;
 const SEARCH_LIMIT = 100;
 
@@ -299,6 +303,7 @@ function listingFacets(filter?: ListingFilter): Record<string, string | number |
   }
   const owner = Number(filter.personId);
   if (filter.personId && Number.isFinite(owner)) out.owner_id = owner;
+  if (filter.name.trim()) out.name = filter.name.trim();
   return out;
 }
 
@@ -340,7 +345,85 @@ function quoted(text: string): string {
  */
 function asDuplicateName(error: unknown): never {
   if (error instanceof HttpError && error.status === 409) throw new Error(DUPLICATE_NAME);
+  // A new file is a write like an upload is, so it meets the same two quota refusals; `asQuotaRefusal` ends at the
+  // role one, which is the third thing any of these three verbs can be told.
+  return asQuotaRefusal(error);
+}
+
+/** The two 409s of the staged upload that are about the TARGET, told apart by the body's `code`; every other error stands. */
+function asUploadConflict(error: unknown, phase: UploadConflict['phase'], sessionId: string | null): never {
+  if (error instanceof HttpError && error.status === 409) {
+    const code = codeOf(error);
+    if (code === 'EXISTS') throw new UploadConflict('exists', phase, sessionId);
+    if (code === 'UPLOAD_IN_PROGRESS') throw new UploadConflict('inProgress', phase, sessionId);
+  }
+  return asQuotaRefusal(error);
+}
+
+/** The `code` a filex refusal names itself with, or "" when the body carries none. */
+function codeOf(error: HttpError): string {
+  return typeof error.body === 'object' && error.body !== null && 'code' in error.body ? String((error.body as { code: unknown }).code) : '';
+}
+
+/** A number off a refusal's body, when the server put one there. */
+function numberOf(error: HttpError, field: string): number | null {
+  const body = error.body;
+  if (typeof body !== 'object' || body === null || !(field in body)) return null;
+  const value = (body as Record<string, unknown>)[field];
+  return typeof value === 'number' ? value : null;
+}
+
+/**
+ * The 403 that is about the caller's ROLE rather than about the node.
+ *
+ * Told apart by the body's `code`, exactly as the upload's two 409s are: an ordinary "you may not touch this file"
+ * still reaches the caller as the server's own sentence, and only `ROLE_FORBIDDEN` becomes the sentinel the UI
+ * answers with "Your role may not do this".
+ */
+function asRoleForbidden(error: unknown): never {
+  if (error instanceof HttpError && error.status === 403 && codeOf(error) === 'ROLE_FORBIDDEN') throw new Error(ROLE_FORBIDDEN);
   throw error;
+}
+
+/**
+ * How long a rate-limited upload waits when nothing said how long: neither `retry_after_seconds` in the body nor a
+ * readable `Retry-After` header. Short, because it is a guess, but never zero.
+ */
+const RETRY_AFTER_FALLBACK_SECONDS = 5;
+
+/**
+ * The two quota refusals an upload (or a new file) can meet, plus the role one. `QUOTA_EXCEEDED` is left as it is:
+ * the server's own sentence already says the account is full, and there is nothing per-file to add to it.
+ */
+function asQuotaRefusal(error: unknown): never {
+  if (error instanceof HttpError) {
+    const code = codeOf(error);
+    if (error.status === 413 && code === 'FILE_LIMIT_EXCEEDED') {
+      throw new FileLimitExceeded(numberOf(error, 'limit') ?? 0, numberOf(error, 'used') ?? 0);
+    }
+    if (error.status === 429 && code === 'UPLOAD_RATE_LIMITED') {
+      // The body states it; the `Retry-After` header is the fallback, for a proxy that answers before filex does.
+      // ⚠ An ABSENT header must not decode as a wait of zero — `Number(null)` and `Number('')` are both 0, which
+      // is finite, and a row that "waits" 0 s re-sends at once into the refusal it just met. A proxy that answers
+      // with neither the body field nor the header is exactly the case this fallback exists for, so an
+      // unreadable wait becomes the minimum below rather than no wait at all.
+      const header = error.headers?.get('retry-after');
+      const seconds = header === null || header === undefined ? NaN : Number(header);
+      throw new UploadRateLimited(
+        numberOf(error, 'retry_after_seconds') ?? (Number.isFinite(seconds) && seconds > 0 ? seconds : RETRY_AFTER_FALLBACK_SECONDS),
+      );
+    }
+  }
+  return asRoleForbidden(error);
+}
+
+/**
+ * Every MUTATING call goes through this rather than through `request`: a refusal the caller's role earned is not
+ * the same event as a refusal the node earned, and only one of the two is worth telling somebody to ask an
+ * administrator about.
+ */
+function write<T>(path: string, options: Parameters<typeof request>[1]): Promise<T> {
+  return request<T>(path, options).catch(asRoleForbidden);
 }
 
 /** `acl.Level` ↔ the roles the access modal offers. filex has no fourth level, so the mapping is total. */
@@ -348,11 +431,29 @@ const LEVELS: Record<string, Person['role']> = { owner: 'owner', editor: 'editor
 
 interface WireGrant {
   id: number;
-  user_id: number;
+  /** Absent on a group row, which carries `group_id` instead. Older servers send no `principal` and only users. */
+  principal?: 'user' | 'group';
+  user_id?: number;
   level: string;
   user_email?: string;
   user_display_name?: string;
+  group_id?: number;
+  group_name?: string;
+  member_count?: number;
   inherited?: boolean;
+}
+
+/** One row of `GET /api/files/permissions/groups`. */
+interface WireGroup {
+  id: number;
+  name: string;
+  member_count?: number;
+}
+
+/** What an invite did, and — when nobody had an account — the public link filex minted instead. */
+interface WireInvite {
+  mode?: InviteOutcome['mode'];
+  url?: string;
 }
 
 interface WireUser {
@@ -470,6 +571,8 @@ interface WireLoginRefusal {
 
 /** `model.Capabilities` — only the fields the app gates on. */
 interface WireCapabilities {
+  /** The caller's ROLE permissions. Absent on a server too old to report them — see `capabilities`. */
+  permissions?: string[];
   upload?: boolean;
   move?: boolean;
   copy?: boolean;
@@ -493,8 +596,12 @@ function childPath(parentId: string, name: string): string {
 export class HttpRepository implements Repository {
   /** `<storage>://<path>` → the numeric node id filex knows it by. Filled by every listing that mentions the node. */
   private readonly ids = new Map<string, number>();
-  /** `<node path>|<person id>` → the grant row's id, which is what PATCH and DELETE address. */
-  private readonly grants = new Map<string, number>();
+  /**
+   * `<node path>|<person id>` → the grant row, which is what PATCH and DELETE address. The principal is kept with
+   * it because those two verbs need `?principal=group` for a group's grant and nothing in the id space says so on
+   * its own — `g:` is this repository's own prefix, not the server's.
+   */
+  private readonly grants = new Map<string, { id: number; principal: 'user' | 'group' }>();
   /**
    * Numeric ids of the nodes this session put in the trash. `ids` has to forget the path — it is free again, and a
    * new node may take it — but `restore` addresses the trashed row by number, and Undo restores without ever
@@ -560,7 +667,7 @@ export class HttpRepository implements Repository {
   private owned(node: Node, named: boolean): Node {
     if (!named) return { ...node, ownerId: this.owner() };
     if (!this.people.has(node.ownerId)) {
-      this.people.set(node.ownerId, { id: node.ownerId, name: node.ownerName ?? node.ownerId, initial: initialOf(node.ownerName ?? '?'), role: 'owner' });
+      this.people.set(node.ownerId, { id: node.ownerId, name: node.ownerName ?? node.ownerId, initial: initialOf(node.ownerName ?? '?'), role: 'owner', principal: 'user' });
     }
     return node;
   }
@@ -595,13 +702,8 @@ export class HttpRepository implements Repository {
     return out;
   }
 
-  private index(path: string): Promise<WireIndex> {
-    return request<WireIndex>(MANAGER, { query: { q: 'index', path } });
-  }
-
-  /** The chips the listing endpoints do not take as query params yet; applied where the server would apply them. */
-  private static narrow(nodes: Node[], filter?: ListingFilter): Node[] {
-    return filter ? nodes.filter((n) => matchesFilter(n, filter)) : nodes;
+  private index(path: string, facets: Record<string, string | number | undefined> = {}): Promise<WireIndex> {
+    return request<WireIndex>(MANAGER, { query: { q: 'index', path, ...facets } });
   }
 
   /** Marks the rows the user has starred. One extra request per listing, and the only way filex reports the flag. */
@@ -625,8 +727,8 @@ export class HttpRepository implements Repository {
       request<WireQuota>('/api/files/quota/me'),
     ]);
     // The ceiling is the account's; what each drive HOLDS is the drive's own, and the two used to be the same figure.
-    const { totalBytes } = toQuota(quota);
-    this.storages = storages.map((s) => toStorage(s, totalBytes));
+    const account: Quota = toQuota(quota);
+    this.storages = storages.map((s) => toStorage(s, account));
     return this.storages;
   }
 
@@ -823,6 +925,37 @@ export class HttpRepository implements Repository {
     }
   }
 
+  async totpEnroll(): Promise<TotpEnrollment> {
+    const wire = await request<WireTotpEnrollment>('/api/auth/totp/enroll', { method: 'POST' });
+    return { secret: wire.secret, otpauthUrl: wire.otpauth_url, qrSvg: wire.qr_svg, recoveryCodes: wire.recovery_codes ?? [] };
+  }
+
+  /** A 401 here is the code being wrong, not the session having ended — the same reading as `changePassword`. */
+  async totpVerify(code: string): Promise<void> {
+    try {
+      await request('/api/auth/totp/verify', { method: 'POST', body: { code }, expectUnauthorized: true });
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 401) throw new Error(INVALID_CODE);
+      throw error;
+    }
+  }
+
+  /**
+   * Both refusals come back as a 401, so the server's own words are what tells the password apart from the code:
+   * `password incorrect` is the one it checks first, anything else refused is the code.
+   */
+  async totpDisable(password: string, code: string): Promise<void> {
+    try {
+      await request('/api/auth/totp/disable', { method: 'POST', body: { password, code }, expectUnauthorized: true });
+    } catch (error) {
+      if (error instanceof HttpError && error.status === 401) {
+        const detail = typeof error.body === 'object' && error.body !== null && 'error' in error.body ? String((error.body as { error: unknown }).error) : '';
+        throw new Error(detail === 'password incorrect' ? WRONG_PASSWORD : INVALID_CODE);
+      }
+      throw error;
+    }
+  }
+
   /**
    * filex reports what the STORAGE DRIVERS can do; the rest of the block names features it has endpoints for but
    * does not advertise — zipping a subtree, purging the trash, the per-node activity feed, tags, permissions and
@@ -833,6 +966,10 @@ export class HttpRepository implements Repository {
     const [wire, assistant] = await Promise.all([request<WireCapabilities>('/api/files/capabilities'), this.assistantEnabled()]);
     return {
       ...noCapabilities(),
+      // ⚠ A server too old to report role permissions is read as granting ALL of them. Reading it as "none" would
+      // empty every menu on the first install that upgrades the app before the backend — the flag says what a role
+      // may NOT do, and a server that has no such rule has nothing to withhold.
+      allowed: new Set<RolePermission>(wire.permissions ? (wire.permissions as RolePermission[]).filter((id) => ROLE_PERMISSIONS.includes(id)) : ROLE_PERMISSIONS),
       assistant,
       upload: wire.upload ?? false,
       move: wire.move ?? false,
@@ -870,9 +1007,10 @@ export class HttpRepository implements Repository {
 
   // ── the folder tree ─────────────────────────────────────────────────────────
 
-  async listFolder(folderId: string, filter?: ListingFilter): Promise<Node[]> {
-    const { files } = await this.index(folderId);
-    return HttpRepository.narrow(await this.withStars(this.project(files)), filter);
+  async listFolder(folderId: string, filter?: ListingFilter): Promise<FolderListing> {
+    const { files, total } = await this.index(folderId, listingFacets(filter));
+    // A server from before the facets answers no `total`, and applies no filter either: the rows are the folder.
+    return { nodes: await this.withStars(this.project(files)), total: total ?? files.length };
   }
 
   /**
@@ -1004,17 +1142,17 @@ export class HttpRepository implements Repository {
   }
 
   /**
-   * The one listing still narrowed here. Its rows are not node rows — a grant can name a path the indexer has never
-   * walked, and such a row has no size, date or owner for a query to test — so the endpoint takes no facets. What it
-   * does do is build the whole set before paging it, so asking for its maximum page makes the chips exact up to that
-   * many shared items rather than up to the default hundred.
+   * The facets travel with the request, like every other listing's: the endpoint builds the whole set before paging
+   * it, so its maximum page is the filtered set up to that many shared items rather than the matches among the
+   * first hundred.
    */
   async listShared(filter?: ListingFilter): Promise<Node[]> {
-    const { files } = await request<{ files: WireFileNode[] }>(`${MANAGER}/shared-with-me`, { query: { limit: SHARED_LIMIT } });
+    const { files } = await request<{ files: WireFileNode[] }>(`${MANAGER}/shared-with-me`, {
+      query: { limit: SHARED_LIMIT, ...listingFacets(filter) },
+    });
     // A row's address is its identity, which is how the grant's own fields find their node again after projection.
     const grants = new Map(files.map((row) => [row.path, row] as const));
-    const shared = this.project(files).map((n) => ({ ...n, shared: true, ...granter(grants.get(n.id)) }));
-    return HttpRepository.narrow(shared, filter);
+    return this.project(files).map((n) => ({ ...n, shared: true, ...granter(grants.get(n.id)) }));
   }
 
   async listTrash(filter?: ListingFilter): Promise<Node[]> {
@@ -1037,6 +1175,11 @@ export class HttpRepository implements Repository {
     return this.getNode(childPath(parentId, name));
   }
 
+  async createFile(parentId: string, name: string): Promise<Node> {
+    await request(MANAGER, { method: 'POST', query: { q: 'newfile' }, body: { path: parentId, name } }).catch(asDuplicateName);
+    return this.getNode(childPath(parentId, name));
+  }
+
   /**
    * The staged path, not the one-shot multipart POST. Three things come with it: the server accepts the file a
    * chunk at a time, so progress is a fact rather than a timer; a chunk that fails is the only thing retried; and
@@ -1048,9 +1191,9 @@ export class HttpRepository implements Repository {
     if (!blob) throw new Error('upload without bytes');
     const session = await request<WireUploadBegin>(`${UPLOAD}/begin`, {
       method: 'POST',
-      body: { path: parentId, name: file.name, size: blob.size, mime: blob.type || undefined, chunk_size: CHUNK_BYTES },
+      body: { path: parentId, name: file.name, size: blob.size, mime: blob.type || undefined, chunk_size: CHUNK_BYTES, if_exists: options?.ifExists },
       signal: options?.signal,
-    });
+    }).catch((error: unknown) => asUploadConflict(error, 'begin', null));
     // ⚠ Told to the caller BEFORE a byte moves. `begin` always opens a new
     // session at offset 0 — it never picks up an old one — so an id nobody
     // wrote down is a staged upload nobody can ever continue, only expire.
@@ -1090,6 +1233,19 @@ export class HttpRepository implements Repository {
     await request(`${UPLOAD}/${id}`, { method: 'DELETE' });
   }
 
+  async commitUpload(sessionId: string, parentId: string, name: string, options?: UploadOptions): Promise<Node> {
+    // No body at all when nothing is asked: the server's default is `replace`, and a body it was not written for
+    // is not something an older server has to read.
+    const commit = await request<WireUploadCommit>(`${UPLOAD}/${sessionId}/commit`, {
+      method: 'POST',
+      body: options?.ifExists ? { if_exists: options.ifExists } : undefined,
+      signal: options?.signal,
+    }).catch((error: unknown) => asUploadConflict(error, 'commit', sessionId));
+    await this.awaitOpId(commit.op_id ?? commit.opId, options?.signal);
+    this.forgetStorages();
+    return this.getNode(childPath(parentId, name));
+  }
+
   /** The chunk loop, from `from` to the end, then the commit. Shared by a fresh upload and a resumed one. */
   private async pump(
     id: string,
@@ -1109,11 +1265,7 @@ export class HttpRepository implements Repository {
       sent = accepted.offset ?? end;
       options?.onProgress?.(sent, blob.size);
     }
-
-    const commit = await request<WireUploadCommit>(`${UPLOAD}/${id}/commit`, { method: 'POST', signal: options?.signal });
-    await this.awaitOpId(commit.op_id ?? commit.opId, options?.signal);
-    this.forgetStorages();
-    return this.getNode(childPath(parentId, file.name));
+    return this.commitUpload(id, parentId, file.name, options);
   }
 
   async rename(id: string, name: string): Promise<Node> {
@@ -1149,7 +1301,7 @@ export class HttpRepository implements Repository {
   async restore(ids: string[]): Promise<void> {
     for (const id of ids) {
       const numeric = this.trashedNodeId(id);
-      await request(`${MANAGER}/restore`, { method: 'POST', body: { node_id: numeric } });
+      await write(`${MANAGER}/restore`, { method: 'POST', body: { node_id: numeric } });
       this.trashed.delete(id);
       this.ids.set(id, numeric);
     }
@@ -1158,7 +1310,7 @@ export class HttpRepository implements Repository {
   /** One entry at a time; purging a deleted FOLDER takes everything that went into the trash inside it. */
   async deleteForever(ids: string[]): Promise<void> {
     for (const id of ids) {
-      await request(`${MANAGER}/trash/${this.trashedNodeId(id)}`, { method: 'DELETE' });
+      await write(`${MANAGER}/trash/${this.trashedNodeId(id)}`, { method: 'DELETE' });
       this.trashed.delete(id);
       this.ids.delete(id);
     }
@@ -1172,7 +1324,7 @@ export class HttpRepository implements Repository {
    */
   async emptyTrash(): Promise<void> {
     for (let round = 0; round < EMPTY_TRASH_ROUNDS; round++) {
-      const answer = await request<WireTrashEmpty>(`${MANAGER}/trash/empty`, { method: 'POST' });
+      const answer = await write<WireTrashEmpty>(`${MANAGER}/trash/empty`, { method: 'POST' });
       if (!answer.more || !answer.purged) break;
     }
     this.trashed.clear();
@@ -1181,7 +1333,7 @@ export class HttpRepository implements Repository {
 
   async setStarred(ids: string[], starred: boolean): Promise<void> {
     for (const id of ids) {
-      await request(`${MANAGER}/star`, { method: 'POST', body: { node_id: this.nodeId(id), starred } });
+      await write(`${MANAGER}/star`, { method: 'POST', body: { node_id: this.nodeId(id), starred } });
     }
   }
 
@@ -1196,7 +1348,7 @@ export class HttpRepository implements Repository {
   }
 
   async setTags(id: string, tags: string[]): Promise<void> {
-    await request(`${MANAGER}/tags`, { method: 'POST', body: { node_id: this.nodeId(id), tags } });
+    await write(`${MANAGER}/tags`, { method: 'POST', body: { node_id: this.nodeId(id), tags } });
   }
 
   async move(ids: string[], targetFolderId: string, signal?: AbortSignal): Promise<void> {
@@ -1217,7 +1369,7 @@ export class HttpRepository implements Repository {
 
   /** Queues one job on `POST /api/files/{verb}` and waits for it. The submit's own 4xx is still a 4xx. */
   private async submitOp(verb: 'copy' | 'move' | 'delete', body: Record<string, unknown>, signal?: AbortSignal): Promise<void> {
-    const { op } = await request<{ op: WireOp }>(`/api/files/${verb}`, { method: 'POST', body });
+    const { op } = await write<{ op: WireOp }>(`/api/files/${verb}`, { method: 'POST', body });
     // Whatever the job does to the tree, it can also change what a drive holds.
     this.forgetStorages();
     await this.awaitOp(op, signal);
@@ -1263,7 +1415,7 @@ export class HttpRepository implements Repository {
   }
 
   async createShareLink(id: string): Promise<string> {
-    const { url } = await request<{ url: string }>('/api/files/share', { method: 'POST', body: { path: id } });
+    const { url } = await write<{ url: string }>('/api/files/share', { method: 'POST', body: { path: id } });
     return url;
   }
 
@@ -1278,7 +1430,7 @@ export class HttpRepository implements Repository {
   }
 
   async removeShareLink(id: string): Promise<void> {
-    for (const share of await this.shares(id)) await request(`/api/files/share/${share.uuid}`, { method: 'DELETE' });
+    for (const share of await this.shares(id)) await write(`/api/files/share/${share.uuid}`, { method: 'DELETE' });
   }
 
   /** The node's live links as filex reports them. `uuid` is the share id in string form — there is no `id` key. */
@@ -1307,36 +1459,72 @@ export class HttpRepository implements Repository {
     const seen = new Set<string>();
     const people: Person[] = [];
     for (const grant of [...direct, ...inherited]) {
-      const id = String(grant.user_id);
+      // A group row carries no user fields at all; the two id spaces are separate, so the group's is prefixed.
+      const group = grant.principal === 'group';
+      const id = group ? `g:${grant.group_id}` : String(grant.user_id);
       if (seen.has(id)) continue;
       seen.add(id);
-      this.grants.set(`${nodeId}|${id}`, grant.id);
-      const name = grant.user_display_name?.trim() || grant.user_email || id;
-      people.push({ id, name, initial: initialOf(name), role: LEVELS[grant.level] ?? 'viewer' });
+      this.grants.set(`${nodeId}|${id}`, { id: grant.id, principal: group ? 'group' : 'user' });
+      const name = group ? (grant.group_name?.trim() || id) : (grant.user_display_name?.trim() || grant.user_email || id);
+      people.push({
+        id,
+        name,
+        initial: initialOf(name),
+        role: LEVELS[grant.level] ?? 'viewer',
+        principal: group ? 'group' : 'user',
+        ...(group ? { memberCount: grant.member_count ?? 0 } : {}),
+      });
     }
     return { people, canManage: can_manage ?? false };
   }
 
-  /** By email, because that is the only handle the person adding someone has; filex resolves or creates the account. */
-  async addPerson(nodeId: string, email: string, role: Person['role']): Promise<void> {
-    await request('/api/files/permissions/invite', {
+  /**
+   * An address — the only handle the person granting access has — or a group id. filex resolves or creates the
+   * account behind an address; an address with no account and no way to make one gets a PUBLIC LINK instead, which
+   * is a different thing entirely and says so in `mode`.
+   *
+   * `is_dir` is the node's own kind. It used to go out as `true` for everything, so a grant on a FILE was recorded
+   * against a folder that does not exist.
+   */
+  async addPerson(nodeId: string, target: { email: string } | { groupId: string }, role: Person['role'], isDir: boolean): Promise<InviteOutcome> {
+    const who = 'email' in target ? { email: target.email } : { group_id: Number(target.groupId) };
+    const wire = await write<WireInvite>('/api/files/permissions/invite', {
       method: 'POST',
-      body: { path: nodeId, email, level: role, is_dir: true },
+      body: { path: nodeId, level: role, is_dir: isDir, ...who },
+    }).catch((error: unknown) => {
+      // The only 409 this route has: the drive keeps no access rules, so there is nothing to write a grant into.
+      if (error instanceof HttpError && error.status === 409) throw new Error(RBAC_DISABLED);
+      throw error;
     });
+    return { mode: wire.mode ?? 'granted', ...(wire.url ? { url: wire.url } : {}) };
+  }
+
+  async searchGroups(text: string): Promise<GroupOption[]> {
+    const { groups } = await request<{ groups: WireGroup[] | null }>('/api/files/permissions/groups', {
+      query: { q: text, limit: GROUP_PICKER_LIMIT },
+    });
+    return (groups ?? []).map((g) => ({ id: String(g.id), name: g.name, memberCount: g.member_count ?? 0 }));
   }
 
   async setPersonRole(nodeId: string, personId: string, role: Person['role']): Promise<void> {
-    await request(`/api/files/permissions/${this.grantId(nodeId, personId)}`, { method: 'PATCH', body: { level: role } });
+    const grant = this.grant(nodeId, personId);
+    await write(`/api/files/permissions/${grant.id}`, { method: 'PATCH', query: this.principalQuery(grant), body: { level: role } });
   }
 
   async removePerson(nodeId: string, personId: string): Promise<void> {
-    await request(`/api/files/permissions/${this.grantId(nodeId, personId)}`, { method: 'DELETE' });
+    const grant = this.grant(nodeId, personId);
+    await write(`/api/files/permissions/${grant.id}`, { method: 'DELETE', query: this.principalQuery(grant) });
   }
 
-  private grantId(nodeId: string, personId: string): number {
-    const id = this.grants.get(`${nodeId}|${personId}`);
-    if (id === undefined) throw new Error(`no grant known for ${personId} on ${nodeId}`);
-    return id;
+  /** Absent means the user grant, which is what every older client sent and what the server still defaults to. */
+  private principalQuery(grant: { principal: 'user' | 'group' }): { principal?: string } {
+    return grant.principal === 'group' ? { principal: 'group' } : {};
+  }
+
+  private grant(nodeId: string, personId: string): { id: number; principal: 'user' | 'group' } {
+    const grant = this.grants.get(`${nodeId}|${personId}`);
+    if (grant === undefined) throw new Error(`no grant known for ${personId} on ${nodeId}`);
+    return grant;
   }
 
   /**
@@ -1366,7 +1554,7 @@ export class HttpRepository implements Repository {
    * itself undoable. It is why the list grows by a row on every restore, and why no row on it is the live file.
    */
   async restoreVersion(nodeId: string, versionId: string): Promise<void> {
-    await request('/api/files/versions/restore', {
+    await write('/api/files/versions/restore', {
       method: 'POST',
       body: { node_id: this.nodeId(nodeId), version_id: Number(versionId), snapshot_current: true },
     });
@@ -1390,7 +1578,7 @@ export class HttpRepository implements Repository {
   async listFilterPeople(): Promise<Person[]> {
     const me = await this.currentUser();
     const options = new Map(this.people);
-    options.set(me.id, { id: me.id, name: me.name, initial: me.initial, role: 'owner' });
+    options.set(me.id, { id: me.id, name: me.name, initial: me.initial, role: 'owner', principal: 'user' });
     return [...options.values()];
   }
 

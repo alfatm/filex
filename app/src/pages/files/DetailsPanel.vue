@@ -9,6 +9,7 @@ import { reportUnhandled } from '@/lib/errors';
 import { useOperationsStore } from '@/features/files/operationsStore';
 import { useFileActions } from '@/features/files/useFileActions';
 import { sharedDriveOf } from '@/features/files/owner';
+import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
 import { Avatar, Button, IconButton, SidePanel, Tabs } from '@/ui';
@@ -23,6 +24,10 @@ const { formatDateTime, formatSize } = useFormat();
 const files = useFilesStore();
 const view = useViewStore();
 const actions = useFileActions();
+const capabilities = useCapabilitiesStore();
+
+/** Minting and revoking a public link is one permission; without it the panel still SHOWS the link it has. */
+const canShare = computed(() => capabilities.allows('files.share'));
 const operations = useOperationsStore();
 
 type PanelTab = 'details' | 'activity';
@@ -211,11 +216,12 @@ function sentence(event: ActivityEvent): string {
         <template v-else-if="shareUrl">
           <p class="ml-3 min-w-0 flex-1 truncate-safe text-15 leading-none">{{ shareUrl }}</p>
           <IconButton :label="t('panel.copy')" :size="36" @click="actions.copyLink(shareUrl)"><Copy :size="18" /></IconButton>
-          <Button variant="ghost" class="h-9 px-3" @click="removeLink()">{{ t('panel.remove') }}</Button>
+          <Button v-if="canShare" variant="ghost" class="h-9 px-3" @click="removeLink()">{{ t('panel.remove') }}</Button>
         </template>
         <template v-else>
           <p class="ml-3 flex-1 text-15 leading-none text-text-3">{{ t('panel.notShared') }}</p>
-          <Button variant="outline" @click="createLink()">{{ t('panel.createLink') }}</Button>
+          <Button v-if="canShare" variant="outline" @click="createLink()">{{ t('panel.createLink') }}</Button>
+          <span v-else class="text-13 leading-none text-text-3">{{ t('common.notAllowed') }}</span>
         </template>
       </div>
     </template>

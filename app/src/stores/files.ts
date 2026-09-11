@@ -3,7 +3,8 @@ import { computed, ref, watch } from 'vue';
 import { useSelection } from '@/composables/useSelection';
 import { emptyFilter, isFiltered } from '@/features/files/filters';
 import { repository } from '@/data';
-import { NOT_FOUND } from '@/data/repository';
+import { matchesFilter } from '@/data/listingFilter';
+import { NOT_FOUND, ROLE_FORBIDDEN } from '@/data/repository';
 import type { ListingFilter, Node, Person, Storage, UploadInput, UploadOptions, User } from '@/data/types';
 import { i18n } from '@/i18n';
 import { errorMessage } from '@/lib/errors';
@@ -22,6 +23,14 @@ type Listing = { kind: 'folder'; folderId: string } | { kind: ListingKind };
  * is what every installation calls it, and the server lists it like any other mount.
  */
 export const HOME_STORAGE = 'main';
+
+/**
+ * A folder with fewer live children than this is held whole and the chips sieve it in memory: one request per
+ * folder instead of one per chip change. From this size up the server filters, and every chip change is a request.
+ */
+const CLIENT_FILTER_MAX = 1000;
+/** How long the name box waits for the next keystroke before a large folder is asked again. */
+const NAME_DEBOUNCE_MS = 250;
 
 export const useFilesStore = defineStore('files', () => {
   const view = useViewStore();
@@ -73,11 +82,20 @@ export const useFilesStore = defineStore('files', () => {
   /** Whether this account may CHANGE the access list of the focused node; reading it needs far less. */
   const canManagePeople = ref(false);
   const focusPath = ref<Node[]>([]);
-  /** Chips above the listing. The repository applies them, so every change is a fresh load, as it will be over HTTP. */
+  /** Chips and the name box above the listing. Sent to the repository, except for a small folder — see `local`. */
   const filter = ref<ListingFilter>(emptyFilter());
-  /** The box beside the chips: narrows the open folder by name. A folder listing is not paged, so it is applied here, exactly. */
-  const nameFilter = ref('');
-  const filtered = computed(() => isFiltered(filter.value) || nameFilter.value.trim() !== '');
+  const filtered = computed(() => isFiltered(filter.value));
+  /**
+   * The open folder is small (under `CLIENT_FILTER_MAX` live children): `items` hold ALL of it, unfiltered, and
+   * `visible` sieves them here. Otherwise `items` are what the server answered for the filter. Flat listings are
+   * always the server's answer.
+   */
+  const local = ref(false);
+  /** How many rows the listing has before the filter: the server's count for a folder, the row count elsewhere. */
+  const total = ref(0);
+  const visible = computed(() =>
+    local.value && listing.value?.kind === 'folder' ? items.value.filter((n) => matchesFilter(n, filter.value)) : items.value,
+  );
   const filterPeople = ref<Person[]>([]);
   const listing = ref<Listing | null>(null);
   /** True while the newest load is in flight; the pages show a skeleton instead of an empty listing. */
@@ -115,9 +133,7 @@ export const useFilesStore = defineStore('files', () => {
           return a.name.localeCompare(b.name, i18n.global.locale.value, { sensitivity: 'base' }) * dir;
       }
     };
-    const query = nameFilter.value.trim().toLowerCase();
-    const named = query ? items.value.filter((n) => n.name.toLowerCase().includes(query)) : items.value;
-    return [...named].sort(cmp);
+    return [...visible.value].sort(cmp);
   });
   const folders = computed(() => sorted.value.filter((n) => n.kind === 'folder'));
   const files = computed(() => sorted.value.filter((n) => n.kind === 'file'));
@@ -156,7 +172,14 @@ export const useFilesStore = defineStore('files', () => {
     focusPath.value = chain;
   }, { immediate: true });
 
+  /** The debounce of the name box on a large folder; a chip change or a navigation cancels it. */
+  let nameTimer: ReturnType<typeof setTimeout> | undefined;
+
   async function load(target: Listing) {
+    // A pending name-box debounce belongs to the listing being left: it calls `refresh()`, which reads
+    // `listing.value` — still the OLD folder until this load resolves — so letting it fire would reload the
+    // folder the person just navigated away from and drop this navigation as the stale one.
+    clearTimeout(nameTimer);
     const seq = ++loadSeq;
     loading.value = true;
     error.value = null;
@@ -185,15 +208,27 @@ export const useFilesStore = defineStore('files', () => {
 
   async function read(target: Listing, seq: number) {
     if (target.kind === 'folder') {
-      const [node, chain, list] = await Promise.all([
+      // A folder already known to be small is asked for whole: the chips sieve it here, and a mutation in a filtered
+      // folder costs one request rather than two.
+      const sieve = local.value && folder.value?.id === target.folderId;
+      const [node, chain, first] = await Promise.all([
         repository.getNode(target.folderId),
         repository.getPath(target.folderId),
-        repository.listFolder(target.folderId, filter.value),
+        repository.listFolder(target.folderId, sieve ? emptyFilter() : filter.value),
       ]);
+      if (seq !== loadSeq) return;
+      const small = first.total < CLIENT_FILTER_MAX;
+      // The answer's size disagrees with what the request assumed: a small folder was asked for filtered (its rows
+      // must be the whole folder), or a folder that grew large was asked for whole. Once more, the other way.
+      const page = small === sieve || !isFiltered(filter.value)
+        ? first
+        : await repository.listFolder(target.folderId, small ? emptyFilter() : filter.value);
       if (seq !== loadSeq) return;
       folder.value = node;
       path.value = chain;
-      items.value = list;
+      items.value = page.nodes;
+      total.value = page.total;
+      local.value = small;
     } else {
       const loaders = {
         recent: repository.listRecent,
@@ -206,6 +241,8 @@ export const useFilesStore = defineStore('files', () => {
       folder.value = null;
       path.value = [];
       items.value = list;
+      total.value = list.length;
+      local.value = false;
     }
     listing.value = target;
   }
@@ -217,6 +254,7 @@ export const useFilesStore = defineStore('files', () => {
     folder.value = null;
     path.value = [];
     items.value = [];
+    total.value = 0;
     selection.clear();
     selection.focusedId.value = null;
   }
@@ -225,7 +263,7 @@ export const useFilesStore = defineStore('files', () => {
   // sees it clean rather than the old one vanishing a tick later.
   async function open(folderId: string) {
     // "Filter in this folder": the name box belongs to the folder it was typed in.
-    nameFilter.value = '';
+    filter.value = { ...filter.value, name: '' };
     selection.clear();
     selection.focusedId.value = null;
     await load({ kind: 'folder', folderId });
@@ -280,6 +318,7 @@ export const useFilesStore = defineStore('files', () => {
     loadSeq++;
     selection.clear();
     items.value = [];
+    total.value = 0;
     folder.value = null;
     path.value = [];
     listing.value = null;
@@ -289,7 +328,7 @@ export const useFilesStore = defineStore('files', () => {
 
   async function openListing(kind: ListingKind) {
     lastAddress = null;
-    nameFilter.value = '';
+    filter.value = { ...filter.value, name: '' };
     selection.clear();
     selection.focusedId.value = null;
     await load({ kind });
@@ -345,14 +384,30 @@ export const useFilesStore = defineStore('files', () => {
     }
   }
 
-  /** A chip changed: reload the listing through the repository rather than narrowing what is already in memory. */
+  /**
+   * A chip or the name box changed. A small folder is already whole in memory and `visible` follows the filter on
+   * its own; anything else is the server's question, asked at once for a chip and after a pause for typing.
+   */
   async function setFilter(next: ListingFilter) {
+    const previous = filter.value;
+    const nameOnly =
+      next.fileType === previous.fileType && next.modified === previous.modified && next.size === previous.size && next.personId === previous.personId;
     filter.value = next;
+    clearTimeout(nameTimer);
+    if (listing.value?.kind === 'folder' && local.value) return;
+    if (nameOnly) {
+      nameTimer = setTimeout(() => void refresh(), NAME_DEBOUNCE_MS);
+      return;
+    }
     await refresh();
   }
 
+  /** The name box: the same filter with a new `name`. */
+  function setName(name: string) {
+    return setFilter({ ...filter.value, name });
+  }
+
   function clearFilter() {
-    nameFilter.value = '';
     return setFilter(emptyFilter());
   }
 
@@ -361,6 +416,11 @@ export const useFilesStore = defineStore('files', () => {
     undo.clear();
     try {
       return await action();
+    } catch (error) {
+      // The one refusal no surface in this app can explain on its own: nothing is wrong with the file or the
+      // server — the caller's ROLE does not carry the verb, and only an administrator can change that.
+      if (errorMessage(error) === ROLE_FORBIDDEN) toast.push(t('common.notAllowed'));
+      throw error;
     } finally {
       // Also after a throw. A batch that failed halfway still changed the folder, and a queued job that outlived
       // the wait is changing it right now — leaving the old listing on screen would be the one wrong answer.
@@ -390,6 +450,16 @@ export const useFilesStore = defineStore('files', () => {
     const node = await mutate(() => repository.createFolder(parentId, name));
     if (folder.value?.id === parentId) selection.select(node.id);
     // Undo trashes the folder, so putting it back is a restore rather than a second create with a new id.
+    undo.record({ undo: () => trash([node]), redo: () => restore([node]) });
+    return node;
+  }
+
+  /** An empty file, landing where a new folder would; the same selection and the same Undo. */
+  async function createFile(name: string) {
+    const parentId = targetFolderId.value;
+    if (!parentId) throw new Error('storage not loaded');
+    const node = await mutate(() => repository.createFile(parentId, name));
+    if (folder.value?.id === parentId) selection.select(node.id);
     undo.record({ undo: () => trash([node]), redo: () => restore([node]) });
     return node;
   }
@@ -483,7 +553,7 @@ export const useFilesStore = defineStore('files', () => {
   }
 
   async function moveBack(fromFolderId: string, origins: Map<string, string[]>) {
-    const landed = await repository.listFolder(fromFolderId);
+    const { nodes: landed } = await repository.listFolder(fromFolderId);
     await mutate(async () => {
       for (const [parentId, names] of origins) {
         const ids = landed.filter((n) => names.includes(n.name)).map((n) => n.id);
@@ -529,8 +599,8 @@ export const useFilesStore = defineStore('files', () => {
     loading,
     error,
     filter,
-    nameFilter,
     filtered,
+    total,
     filterPeople,
     listing,
     revision,
@@ -551,9 +621,11 @@ export const useFilesStore = defineStore('files', () => {
     reload,
     retry,
     setFilter,
+    setName,
     clearFilter,
     bootstrap,
     createFolder,
+    createFile,
     addUploaded,
     addResumed,
     uploadsLanded,

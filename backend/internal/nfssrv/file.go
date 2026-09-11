@@ -14,6 +14,7 @@ import (
 	billy "github.com/go-git/go-billy/v5"
 
 	"github.com/brf-tech/filex/backend/internal/auth"
+	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/storage"
 )
 
@@ -255,7 +256,11 @@ func (h *file) Close() error {
 
 	ctx := context.WithoutCancel(h.fs.ctx)
 	if u := auth.UserFrom(ctx); u != nil && h.fs.srv.cfg.Quota != nil {
-		if err := h.fs.srv.cfg.Quota.CheckCanWrite(ctx, u.ID, h.size); err != nil {
+		// Bytes AND the file count — see the sftp twin for why passing 0 made
+		// `quota_files` an HTTP-only limit.
+		addFiles := quotastore.AddFilesForWrite(ctx, h.fs.srv.cfg.Quota, h.fs.srv.cfg.Store,
+			h.drv, u.ID, h.target.Storage.ID, h.target.Rel)
+		if err := h.fs.srv.cfg.Quota.CheckCanStore(ctx, u.ID, h.size, addFiles); err != nil {
 			return err
 		}
 	}

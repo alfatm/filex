@@ -101,7 +101,7 @@ async function openSubfolders(event: MouseEvent) {
   const current = files.folder;
   if (!current) return;
   const anchor = anchorBelow(event.currentTarget as HTMLElement, MENU_WIDTH);
-  const children = (await repository.listFolder(current.id)).filter((n) => n.kind === 'folder');
+  const children = (await repository.listFolder(current.id)).nodes.filter((n) => n.kind === 'folder');
   const here = crumbs.value.at(-1)?.parts ?? [];
   menu.value = {
     ...anchor,

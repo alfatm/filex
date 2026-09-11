@@ -60,6 +60,8 @@ export interface WireIndex {
   read_only: boolean;
   perm?: string;
   files: WireFileNode[];
+  /** Live children before the facets were applied; absent from a server older than the facets themselves. */
+  total?: number;
 }
 
 /** `model.Node` — what `/stat` and the per-user metadata listings answer with. */
@@ -221,6 +223,14 @@ export interface WireAuthMethods {
   totp_enabled: boolean;
 }
 
+/** `POST /api/auth/totp/enroll`. */
+export interface WireTotpEnrollment {
+  secret: string;
+  otpauth_url: string;
+  qr_svg: string;
+  recovery_codes: string[];
+}
+
 /** `sessionView` from `GET /api/auth/sessions`. The session token is never in the answer. */
 export interface WireSession {
   id: number;
@@ -249,13 +259,26 @@ export interface WireStorage {
   used_bytes?: number;
   /** The caller reaches this drive through grants rather than through their role — a shared drive. */
   shared?: boolean;
+  /** Names of the groups through which the caller holds grants here; absent or empty when there are none. */
+  via_groups?: string[];
 }
 
-/** `quota.Snapshot` from `/api/files/quota/me`; `unlimited` means the account has no ceiling. */
+/**
+ * `quota.Snapshot` from `/api/files/quota/me`. Three ceilings, each with its own "no ceiling" flag: total bytes,
+ * total file count, and bytes uploaded inside a rolling window.
+ */
 export interface WireQuota {
   used_bytes: number;
   quota_bytes: number;
   unlimited?: boolean;
+  used_files?: number;
+  /** 0 also means unlimited, which is why `files_unlimited` is read as well. */
+  quota_files?: number;
+  files_unlimited?: boolean;
+  upload_used_bytes?: number;
+  upload_quota_bytes?: number;
+  upload_window_hours?: number;
+  upload_unlimited?: boolean;
 }
 
 /** The id every node belongs to: filex has no per-node owner, so everything the user can see is theirs. */
@@ -478,17 +501,29 @@ export function fromTrashEntry(wire: WireTrashEntry): Node {
  * The quota is the ACCOUNT's, not the drive's: filex meters per user, so two drives draw two bars against the
  * same ceiling, each showing the share of it that drive takes.
  */
-export function toStorage(wire: WireStorage, limitBytes: number): Storage {
+export function toStorage(wire: WireStorage, account: Quota): Storage {
   return {
     id: wire.name,
     name: wire.name,
     rootId: joinPath(wire.name, ''),
-    quota: { usedBytes: wire.used_bytes ?? 0, totalBytes: limitBytes },
+    quota: { ...account, usedBytes: wire.used_bytes ?? 0 },
     shared: wire.shared ?? false,
+    viaGroups: wire.via_groups ?? [],
   };
 }
 
-/** An unlimited account is shown as an empty ceiling rather than a bar that can never fill. */
+/**
+ * An unlimited account is shown as an empty ceiling rather than a bar that can never fill — and each of the three
+ * ceilings says so its own way: a flag, or a plain 0 from a server that only sends the number.
+ */
 export function toQuota(wire: WireQuota): Quota {
-  return { usedBytes: wire.used_bytes, totalBytes: wire.unlimited ? 0 : wire.quota_bytes };
+  return {
+    usedBytes: wire.used_bytes,
+    totalBytes: wire.unlimited ? 0 : wire.quota_bytes,
+    usedFiles: wire.used_files ?? 0,
+    totalFiles: wire.files_unlimited ? 0 : (wire.quota_files ?? 0),
+    uploadUsedBytes: wire.upload_used_bytes ?? 0,
+    uploadTotalBytes: wire.upload_unlimited ? 0 : (wire.upload_quota_bytes ?? 0),
+    uploadWindowHours: wire.upload_window_hours ?? 0,
+  };
 }

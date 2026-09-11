@@ -17,10 +17,14 @@ import type {
   Person,
   ProfilePatch,
   Credentials,
+  FolderListing,
+  GroupOption,
+  InviteOutcome,
   SearchQuery,
   SearchResult,
   Session,
   Storage,
+  TotpEnrollment,
   UploadInput,
   UploadOptions,
   UploadSession,
@@ -28,11 +32,14 @@ import type {
   Version,
 } from './types';
 
-/** `createFolder` / `rename` reject with an Error carrying this message when a live sibling has the same name. */
+/** `createFolder` / `createFile` / `rename` reject with an Error carrying this message when a live sibling has the same name. */
 export const DUPLICATE_NAME = 'duplicateName';
 
-/** `changePassword` rejects with this when the current password does not match. */
+/** `changePassword` and `totpDisable` reject with this when the current password does not match. */
 export const WRONG_PASSWORD = 'wrongPassword';
+
+/** `totpVerify` and `totpDisable` reject with this when the authenticator (or recovery) code is not right. */
+export const INVALID_CODE = 'invalidCode';
 
 /**
  * `move` and `moveToTrash` reject with this when the server took the work but has not finished it yet: the job is
@@ -52,6 +59,67 @@ export const OPERATION_PENDING = 'operationPending';
  * a folder the caller may not see exists.
  */
 export const NOT_FOUND = 'notFound';
+
+/**
+ * `uploadFile`, `resumeUpload` and `commitUpload` reject with this when the server refused the target name with
+ * `UploadOptions.ifExists: 'fail'` (`exists`), or because another session is uploading to the same target right now
+ * (`inProgress`).
+ *
+ * A class rather than a message constant, on purpose: the store needs `phase` to know whether the bytes are already
+ * staged — a refusal at `commit` is finished with `commitUpload(sessionId, …, { ifExists: 'replace' })` without
+ * sending a byte again, while one at `begin` has no session and is re-uploaded — and `sessionId` to finish or drop
+ * that session. Only a `commit` refusal carries one; at `begin` none was created.
+ */
+export class UploadConflict extends Error {
+  constructor(
+    readonly reason: 'exists' | 'inProgress',
+    readonly phase: 'begin' | 'commit',
+    readonly sessionId: string | null,
+  ) {
+    super(reason);
+    this.name = 'UploadConflict';
+  }
+}
+
+/**
+ * Any mutation rejects with this when the caller's ROLE may not do it (403 `ROLE_FORBIDDEN`).
+ *
+ * Separate from an ordinary refusal because the sentence is different: nothing is wrong with the file, the folder
+ * or the server — the person's role simply does not carry that operation, and only an administrator can change it.
+ */
+export const ROLE_FORBIDDEN = 'roleForbidden';
+
+/**
+ * `addPerson` rejects with this when the drive has access rules switched off altogether (409). Nothing about the
+ * invite is wrong, so the modal says who can fix it instead of showing the server's own sentence about RBAC.
+ */
+export const RBAC_DISABLED = 'rbacDisabled';
+
+/**
+ * The account may hold no more files (413 `FILE_LIMIT_EXCEEDED`). A class rather than a message, like
+ * `UploadConflict`: the row has to print the ceiling, and a message constant cannot carry it.
+ */
+export class FileLimitExceeded extends Error {
+  constructor(
+    readonly limit: number,
+    readonly used: number,
+  ) {
+    super('fileLimitExceeded');
+    this.name = 'FileLimitExceeded';
+  }
+}
+
+/**
+ * This account has uploaded its allowance for the current window (429 `UPLOAD_RATE_LIMITED`). `retryAfterSeconds`
+ * is how long the server says to wait — the row re-queues itself after it rather than failing, because the transfer
+ * is going to be accepted, just not yet.
+ */
+export class UploadRateLimited extends Error {
+  constructor(readonly retryAfterSeconds: number) {
+    super('uploadRateLimited');
+    this.name = 'UploadRateLimited';
+  }
+}
 
 /** filex refuses anything shorter, so the form says so before a request goes out. */
 export const MIN_PASSWORD_LENGTH = 8;
@@ -74,8 +142,11 @@ export const SIGN_IN_LIMITED = 'signInLimited';
 export interface Repository {
   listStorages(): Promise<Storage[]>;
   getStorage(id: string): Promise<Storage>;
-  /** `filter` is applied by the repository, not by the caller: the HTTP one sends it as query params. */
-  listFolder(folderId: string, filter?: ListingFilter): Promise<Node[]>;
+  /**
+   * `filter` is applied by the repository, not by the caller: the HTTP one sends it as query params. The answer's
+   * `total` is the folder's size before the filter, so the caller can decide to hold a small folder whole instead.
+   */
+  listFolder(folderId: string, filter?: ListingFilter): Promise<FolderListing>;
   /**
    * Folder at a slash-separated path relative to the storage root; "" resolves to the root.
    *
@@ -86,10 +157,20 @@ export interface Repository {
   getNode(id: string): Promise<Node>;
   /** Root-to-node chain, root first, excluding the node itself. */
   getPath(id: string): Promise<Node[]>;
-  /** Everyone who can reach the node, plus whether this caller may change the list. */
+  /** Everyone — and every group — that can reach the node, plus whether this caller may change the list. */
   listPeople(nodeId: string): Promise<Access>;
-  /** Adds someone by email address; the display name is derived server-side. */
-  addPerson(nodeId: string, email: string, role: Person['role']): Promise<void>;
+  /**
+   * Grants access to one principal: an account named by its address, or a group named by its id. `isDir` is the
+   * node's own kind, which the server needs to know what the grant covers — it used to be hard-coded to `true`,
+   * so every grant on a FILE was recorded as a grant on a folder.
+   *
+   * An address with no account behind it is not an error: filex mints a public link instead and says so in the
+   * outcome's `mode`, and nobody is added to the list.
+   */
+  addPerson(nodeId: string, target: { email: string } | { groupId: string }, role: Person['role'], isDir: boolean): Promise<InviteOutcome>;
+  /** Groups whose name matches, for the invite row's picker. */
+  searchGroups(text: string): Promise<GroupOption[]>;
+  /** `personId` is what `listPeople` handed back, so a `g:`-prefixed id addresses the group's grant. */
   setPersonRole(nodeId: string, personId: string, role: Person['role']): Promise<void>;
   removePerson(nodeId: string, personId: string): Promise<void>;
   /** Revisions of a file, newest first; folders have none. */
@@ -149,6 +230,18 @@ export interface Repository {
   /** How this account signs in, and what it may change here: the Security card asks before it offers anything. */
   authMethods(): Promise<AuthMethods>;
   changePassword(currentPassword: string, newPassword: string): Promise<void>;
+  /**
+   * Starts a second-factor enrolment: a fresh secret, its QR and the recovery codes. Nothing is switched on until
+   * `totpVerify` proves the authenticator holds the secret; asking again replaces the pending one.
+   */
+  totpEnroll(): Promise<TotpEnrollment>;
+  /** Confirms the pending enrolment and switches the second factor on. Rejects with `INVALID_CODE`. */
+  totpVerify(code: string): Promise<void>;
+  /**
+   * Switches the second factor off. Both proofs are asked for: rejects with `WRONG_PASSWORD` or `INVALID_CODE`,
+   * in that order — the server checks the password first. `code` may be a recovery code.
+   */
+  totpDisable(password: string, code: string): Promise<void>;
   /** The three notification switches, read from the account's mute list. */
   notifyPrefs(): Promise<NotifyPrefs>;
   /** Writes them back, leaving every event the app does not own exactly as it found it. */
@@ -220,6 +313,8 @@ export interface Repository {
 
   // Mutations. Ids are validated; unknown ids throw. Name collisions reject with `DUPLICATE_NAME`.
   createFolder(parentId: string, name: string): Promise<Node>;
+  /** An empty file under `parentId`; the same collision rule as `createFolder`, against files and folders alike. */
+  createFile(parentId: string, name: string): Promise<Node>;
   /**
    * Uploads one file and resolves once the server holds every byte AND has written them to the storage.
    * `onProgress` fires per accepted chunk, so a caller can draw a bar that means something.
@@ -229,6 +324,12 @@ export interface Repository {
   uploadSession(id: string): Promise<UploadSession | null>;
   /** Carries a staged upload on from the offset the server reports. The bytes must be the same file it was begun for. */
   resumeUpload(id: string, parentId: string, file: UploadInput, options?: UploadOptions): Promise<Node>;
+  /**
+   * Finishes a session whose every byte is staged but whose commit was refused (`UploadConflict` with phase
+   * `commit`): commits it again with `options.ifExists`, waits for the write and answers with the node. The session
+   * stays committable after a refusal, so no byte travels twice.
+   */
+  commitUpload(sessionId: string, parentId: string, name: string, options?: UploadOptions): Promise<Node>;
   /** Drops a staged upload: its staging area and its quota reservation go with it. */
   abortUpload(id: string): Promise<void>;
   rename(id: string, name: string): Promise<Node>;

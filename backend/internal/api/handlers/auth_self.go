@@ -19,6 +19,7 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -479,7 +480,10 @@ func (h *AuthSelf) TotpDisable(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "password incorrect"})
 		return
 	}
-	if !cur.TOTPEnabled || !verifyTOTP(cur.TOTPSecret, req.Code) {
+	// A recovery code is accepted here too: someone who lost the device has
+	// the password and the printed codes, and nothing else — without this the
+	// account stays locked behind a factor that no longer exists.
+	if !cur.TOTPEnabled || (!verifyTOTP(cur.TOTPSecret, req.Code) && !consumeTotpRecoveryCode(r, h.Store, cur.ID, req.Code)) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid code"})
 		return
 	}
@@ -525,6 +529,62 @@ func verifyTOTP(secret, code string) bool {
 		return false
 	}
 	return totp.Validate(code, secret)
+}
+
+// looksLikeRecoveryCode reports whether a normalised input has the shape
+// generateRecoveryCodes produces: exactly 10 characters from A-Z / 0-9. A
+// six-digit TOTP never has it, so a mistyped authenticator code costs no
+// database round-trip and is never mistaken for a recovery attempt.
+func looksLikeRecoveryCode(norm string) bool {
+	if len(norm) != 10 {
+		return false
+	}
+	for i := 0; i < len(norm); i++ {
+		c := norm[i]
+		if (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// consumeTotpRecoveryCode is the second chance a failed TOTP check gets: one
+// of the recovery codes handed out at enrollment, accepted exactly once. The
+// use is logged and audited as `totp.recovery_used` — a spent code is a
+// security event the account owner should be able to find later. Any store
+// failure is a plain refusal: the caller already answers 401 for that.
+func consumeTotpRecoveryCode(r *http.Request, store db.Store, userID int64, code string) bool {
+	norm := model.NormalizeRecoveryCode(code)
+	if !looksLikeRecoveryCode(norm) {
+		return false
+	}
+	ok, err := store.ConsumeTotpRecoveryCode(r.Context(), userID, norm)
+	if err != nil {
+		slog.Warn("totp: recovery code lookup failed",
+			slog.Int64("user", userID),
+			slog.String("err", err.Error()))
+		return false
+	}
+	if !ok {
+		return false
+	}
+	slog.Info("totp: recovery code used",
+		slog.Int64("user", userID),
+		slog.String("ip", clientIP(r)))
+	uid := userID
+	if err := store.InsertAuditEntry(r.Context(), &model.AuditEntry{
+		UserID:     &uid,
+		Action:     "totp.recovery_used",
+		TargetType: "user",
+		TargetID:   strconv.FormatInt(userID, 10),
+		IP:         clientIP(r),
+		CreatedAt:  time.Now(),
+	}); err != nil {
+		slog.Warn("totp: recovery audit insert failed",
+			slog.Int64("user", userID),
+			slog.String("err", err.Error()))
+	}
+	return true
 }
 
 // renderQRSVG renders the otpauth:// URI as a self-contained SVG QR code so

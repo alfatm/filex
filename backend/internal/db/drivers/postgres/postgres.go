@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -344,6 +345,50 @@ func (s *Store) ListNodesByParent(ctx context.Context, storageID int64, parentID
 		out = append(out, n)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListNodesByParentFiltered(ctx context.Context, storageID int64, parentID *int64, f db.NodeFacets) ([]*model.Node, error) {
+	args := []any{storageID}
+	bind := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+	where := []string{"storage_id=$1", "deleted_at IS NULL"}
+	if parentID == nil {
+		where = append(where, "parent_id IS NULL")
+	} else {
+		where = append(where, "parent_id="+bind(*parentID))
+	}
+	where = append(where, f.Where("", "backend_mtime", bind)...)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+nodeColumns()+
+		` FROM nodes WHERE `+strings.Join(where, " AND ")+` ORDER BY type DESC, name`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*model.Node
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CountNodesByParent(ctx context.Context, storageID int64, parentID *int64) (int, error) {
+	q := `SELECT COUNT(*) FROM nodes WHERE storage_id=$1 AND deleted_at IS NULL AND parent_id `
+	args := []any{storageID}
+	if parentID == nil {
+		q += `IS NULL`
+	} else {
+		q += `=$2`
+		args = append(args, *parentID)
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx, q, args...).Scan(&n)
+	return n, err
 }
 
 func (s *Store) AggNodes(ctx context.Context, storageID int64) ([]db.NodeAgg, error) {
@@ -889,7 +934,8 @@ const userCols = `id, email, COALESCE(display_name,''), COALESCE(password_hash,'
 	`COALESCE(totp_secret,''), COALESCE(totp_pending_secret,''), COALESCE(totp_enabled,FALSE), ` +
 	`COALESCE(totp_recovery_codes_json::text,'[]'), locale, timezone, created_at, updated_at, last_login_at, ` +
 	`provider_id, COALESCE(oidc_subject,''), COALESCE(quota_bytes,0), COALESCE(usage_bytes,0), COALESCE(enabled,TRUE), ` +
-	`COALESCE(avatar_url,''), COALESCE(username,''), COALESCE(full_name,''), COALESCE(job_title,'')`
+	`COALESCE(avatar_url,''), COALESCE(username,''), COALESCE(full_name,''), COALESCE(job_title,''), ` +
+	`COALESCE(quota_files,0), COALESCE(quota_upload_bytes,0), COALESCE(usage_files,0)`
 
 func (s *Store) CreateUser(ctx context.Context, email, hash, role, locale, tz string) (*model.User, error) {
 	// New users default to the always-present "default" provider (the
@@ -998,6 +1044,37 @@ func (s *Store) UpdateUserRole(ctx context.Context, id int64, role string) error
 
 func (s *Store) TouchLastLogin(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET last_login_at=NOW() WHERE id=$1`, id)
+	return err
+}
+
+// GetRolePermissions reads roles.permissions_json (JSONB here, so it comes
+// back as bytes). A malformed value is an error, not an empty list.
+func (s *Store) GetRolePermissions(ctx context.Context, role string) ([]string, error) {
+	var raw []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT permissions_json FROM roles WHERE name=$1`, role).Scan(&raw); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return nil, nil
+	}
+	var out []string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("roles.permissions_json for %q: %w", role, err)
+	}
+	return out, nil
+}
+
+// SetRolePermissions replaces the allow-list of an EXISTING role. Validation of
+// the operation names belongs to internal/perm.
+func (s *Store) SetRolePermissions(ctx context.Context, role string, ops []string) error {
+	if ops == nil {
+		ops = []string{}
+	}
+	raw, err := json.Marshal(ops)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE roles SET permissions_json=$1::jsonb WHERE name=$2`, string(raw), role)
 	return err
 }
 
@@ -1738,6 +1815,38 @@ func (s *Store) ListIdleStagedUploads(ctx context.Context, before time.Time, lim
 	return out, rows.Err()
 }
 
+func (s *Store) ActiveStagedUploadForTarget(ctx context.Context, storageID int64, storageKey string, since time.Time, excludeID string) (*model.StagedUpload, error) {
+	u, err := scanStagedUpload(s.db.QueryRowContext(ctx,
+		`SELECT `+stagedUploadColumns+` FROM staged_uploads
+		 WHERE storage_id=$1 AND storage_key=$2 AND id<>$3
+		   AND (state='committing' OR (state='staging' AND updated_at >= $4))
+		 ORDER BY updated_at DESC LIMIT 1`,
+		storageID, storageKey, excludeID, since.UTC()))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return u, err
+}
+
+func (s *Store) ClaimStagedUploadCommit(ctx context.Context, id string, since time.Time) (bool, error) {
+	// See the sqlite twin: the check and the claim are one statement on purpose.
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE staged_uploads u SET state='committing', error='', updated_at=CURRENT_TIMESTAMP
+		 WHERE u.id=$1 AND u.state IN ('staging','failed')
+		   AND NOT EXISTS (
+		     SELECT 1 FROM staged_uploads o
+		      WHERE o.id<>u.id
+		        AND o.storage_id=u.storage_id
+		        AND o.storage_key=u.storage_key
+		        AND (o.state='committing' OR (o.state='staging' AND o.updated_at >= $2)))`,
+		id, since.UTC())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 func (s *Store) SumOpenStagedUploadBytes(ctx context.Context, userID int64) (int64, error) {
 	if userID <= 0 {
 		return 0, nil
@@ -1746,7 +1855,7 @@ func (s *Store) SumOpenStagedUploadBytes(ctx context.Context, userID int64) (int
 	// int64. Cast it back explicitly.
 	var total sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(total_size),0)::bigint FROM staged_uploads WHERE user_id=$1 AND state IN ('staging','committing')`,
+		`SELECT COALESCE(SUM(total_size),0)::bigint FROM staged_uploads WHERE user_id=$1 AND state='staging'`,
 		userID).Scan(&total)
 	if err != nil {
 		return 0, err
@@ -2124,7 +2233,7 @@ func scanUser(r rowScanner) (*model.User, error) {
 	u := &model.User{}
 	var recoveryJSON string
 	var providerID sql.NullInt64
-	if err := r.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.Role, &u.TOTPSecret, &u.TOTPPendingSecret, &u.TOTPEnabled, &recoveryJSON, &u.Locale, &u.Timezone, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt, &providerID, &u.OIDCSubject, &u.QuotaBytes, &u.UsageBytes, &u.Enabled, &u.AvatarURL, &u.Username, &u.FullName, &u.JobTitle); err != nil {
+	if err := r.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.Role, &u.TOTPSecret, &u.TOTPPendingSecret, &u.TOTPEnabled, &recoveryJSON, &u.Locale, &u.Timezone, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt, &providerID, &u.OIDCSubject, &u.QuotaBytes, &u.UsageBytes, &u.Enabled, &u.AvatarURL, &u.Username, &u.FullName, &u.JobTitle, &u.QuotaFiles, &u.QuotaUploadBytes, &u.UsageFiles); err != nil {
 		return nil, err
 	}
 	if recoveryJSON != "" {
@@ -2262,6 +2371,52 @@ func (s *Store) ClearTotp(ctx context.Context, id int64) error {
 		`UPDATE users SET totp_secret=NULL, totp_pending_secret=NULL, totp_enabled=FALSE, totp_recovery_codes_json='[]'::jsonb, updated_at=NOW() WHERE id=$1`,
 		id)
 	return err
+}
+
+// ConsumeTotpRecoveryCode removes one recovery code matching `code` and
+// reports whether it did. Both sides go through model.NormalizeRecoveryCode,
+// so "abcde-fghij" and "ABCDE FGHIJ" are the same code.
+//
+// Read-modify-write under `FOR UPDATE`: the row stays locked until commit, so
+// two logins racing on the same code serialise here and the second reads the
+// list with the code already gone.
+func (s *Store) ConsumeTotpRecoveryCode(ctx context.Context, userID int64, code string) (bool, error) {
+	want := model.NormalizeRecoveryCode(code)
+	if want == "" {
+		return false, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("postgres: consume recovery code: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var raw string
+	err = tx.QueryRowContext(ctx,
+		`SELECT COALESCE(totp_recovery_codes_json::text,'[]') FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("postgres: consume recovery code: %w", err)
+	}
+	var codes []string
+	if err := json.Unmarshal([]byte(raw), &codes); err != nil {
+		return false, fmt.Errorf("postgres: consume recovery code: %w", err)
+	}
+	idx := slices.IndexFunc(codes, func(c string) bool { return model.NormalizeRecoveryCode(c) == want })
+	if idx < 0 {
+		return false, nil
+	}
+	remaining, _ := json.Marshal(slices.Delete(codes, idx, idx+1))
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE users SET totp_recovery_codes_json=$1::jsonb, updated_at=NOW() WHERE id=$2`,
+		string(remaining), userID); err != nil {
+		return false, fmt.Errorf("postgres: consume recovery code: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("postgres: consume recovery code: %w", err)
+	}
+	return true, nil
 }
 
 // ─────────────────── Counters needed by dashboard / metrics ───────────────────
@@ -2721,6 +2876,174 @@ func (s *Store) RecomputeUserUsage(ctx context.Context, userID int64) (int64, er
 		return 0, err
 	}
 	return total.Int64, nil
+}
+
+// GetUserLimits reads the three tri-state override columns as stored
+// (0 = inherit the default, -1 = unlimited, N = this user's limit).
+func (s *Store) GetUserLimits(ctx context.Context, userID int64) (int64, int64, int64, error) {
+	var bytes, files, upload int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(quota_bytes,0), COALESCE(quota_files,0), COALESCE(quota_upload_bytes,0) FROM users WHERE id=$1`,
+		userID).Scan(&bytes, &files, &upload)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return bytes, files, upload, nil
+}
+
+// SetUserLimits writes only the overrides the caller named. See the SQLite
+// driver's copy — in particular, -1 is legal here and is NOT clamped.
+func (s *Store) SetUserLimits(ctx context.Context, userID int64, quotaBytes, quotaFiles, quotaUploadBytes *int64) error {
+	sets := make([]string, 0, 3)
+	args := make([]any, 0, 4)
+	add := func(col string, v *int64) {
+		if v == nil {
+			return
+		}
+		args = append(args, *v)
+		sets = append(sets, fmt.Sprintf("%s=$%d", col, len(args)))
+	}
+	add("quota_bytes", quotaBytes)
+	add("quota_files", quotaFiles)
+	add("quota_upload_bytes", quotaUploadBytes)
+	if len(sets) == 0 {
+		return nil
+	}
+	args = append(args, userID)
+	_, err := s.db.ExecContext(ctx,
+		fmt.Sprintf(`UPDATE users SET %s WHERE id=$%d`, strings.Join(sets, ", "), len(args)), args...)
+	return err
+}
+
+// GetUserFileUsage returns usage_files.
+func (s *Store) GetUserFileUsage(ctx context.Context, userID int64) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(usage_files,0) FROM users WHERE id=$1`, userID).Scan(&n)
+	return n, err
+}
+
+// IncrementUserFileUsage adjusts usage_files, clamped at 0.
+func (s *Store) IncrementUserFileUsage(ctx context.Context, userID int64, delta int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET usage_files = GREATEST(0, COALESCE(usage_files,0) + $1) WHERE id=$2`, delta, userID)
+	return err
+}
+
+// RecomputeUserFileUsage rebuilds usage_files from the node rows.
+//
+// ⚠ TRASHED ROWS ARE INCLUDED — see the SQLite driver's copy.
+func (s *Store) RecomputeUserFileUsage(ctx context.Context, userID int64) (int64, error) {
+	var total sql.NullInt64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM nodes WHERE owner_id=$1 AND type='file'`, userID).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE users SET usage_files=$1 WHERE id=$2`, total.Int64, userID); err != nil {
+		return 0, err
+	}
+	return total.Int64, nil
+}
+
+// SearchUsers pages the admin quota table; q matches email or display name.
+// providerID confines the page to one tenant (nil = every tenant), and a NULL
+// provider_id row is outside every tenant, as in the sqlite driver.
+func (s *Store) SearchUsers(ctx context.Context, q string, providerID *int64, limit, offset int) ([]*model.User, int64, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	conds, args := []string{}, []any{}
+	if providerID != nil {
+		args = append(args, *providerID)
+		conds = append(conds, `provider_id=$`+strconv.Itoa(len(args)))
+	}
+	if q = strings.TrimSpace(q); q != "" {
+		args = append(args, "%"+strings.ToLower(q)+"%")
+		n := strconv.Itoa(len(args))
+		conds = append(conds, `(LOWER(email) LIKE $`+n+` OR LOWER(COALESCE(display_name,'')) LIKE $`+n+`)`)
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+	var total int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT %s FROM users%s ORDER BY id ASC LIMIT $%d OFFSET $%d`,
+			userCols, where, len(args)+1, len(args)+2),
+		append(args, limit, offset)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []*model.User{}
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, u)
+	}
+	return out, total, rows.Err()
+}
+
+// ─────────────────── Upload rate ledger ───────────────────
+
+// InsertUploadLedger records one COMPLETED upload. stagedUploadID is the
+// idempotency key for a retryable staged commit — see the sqlite twin for why
+// it exists. Here it can be one statement: ON CONFLICT is native.
+func (s *Store) InsertUploadLedger(ctx context.Context, userID int64, bytes int64, stagedUploadID string) error {
+	if userID <= 0 || bytes <= 0 {
+		return nil
+	}
+	if stagedUploadID == "" {
+		_, err := s.db.ExecContext(ctx,
+			`INSERT INTO upload_ledger (user_id, bytes) VALUES ($1,$2)`, userID, bytes)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO upload_ledger (user_id, bytes, staged_upload_id) VALUES ($1,$2,$3)
+		 ON CONFLICT (staged_upload_id) DO NOTHING`,
+		userID, bytes, stagedUploadID)
+	return err
+}
+
+// SumUploadLedger returns the bytes uploaded since `since` plus the timestamp
+// of the oldest row still inside the window (zero when there are none).
+func (s *Store) SumUploadLedger(ctx context.Context, userID int64, since time.Time) (int64, time.Time, error) {
+	if userID <= 0 {
+		return 0, time.Time{}, nil
+	}
+	var total sql.NullInt64
+	var oldest sql.NullTime
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(bytes),0), MIN(created_at) FROM upload_ledger WHERE user_id=$1 AND created_at >= $2`,
+		userID, since.UTC()).Scan(&total, &oldest)
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	var at time.Time
+	if oldest.Valid {
+		at = oldest.Time
+	}
+	return total.Int64, at, nil
+}
+
+// SweepUploadLedger drops rows that have fallen out of every window.
+func (s *Store) SweepUploadLedger(ctx context.Context, before time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM upload_ledger WHERE created_at < $1`, before.UTC())
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 // ─────────────────── Node owner ───────────────────

@@ -9,6 +9,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/acl"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/filebody"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/search"
 	"github.com/brf-tech/filex/backend/internal/share"
 	"github.com/brf-tech/filex/backend/internal/storage"
@@ -92,6 +93,11 @@ func (h *ShareX) AttachStaged(s *StagedUpload) { h.ops.staged = s }
 // Upload accepts a ShareX multipart capture (`file`), stores + indexes it, mints
 // a public inline-viewable share, and returns {"url": …}.
 func (h *ShareX) Upload(w http.ResponseWriter, r *http.Request) {
+	// files.upload, for the token's owner — same rule as every other upload
+	// surface (see AI.Upload).
+	if !requirePerm(w, r, perm.OpUpload) {
+		return
+	}
 	// Spilled multipart temp files outlive the response unless dropped here —
 	// see the note in AI.Upload.
 	defer func() {

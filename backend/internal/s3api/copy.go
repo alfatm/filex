@@ -12,6 +12,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/protocolauth"
+	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/storage"
 	"github.com/brf-tech/filex/backend/internal/writehook"
 )
@@ -170,8 +171,10 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, p *protocol
 
 	if u := auth.UserFrom(ctx); u != nil && h.cfg.Quota != nil {
 		// A copy is a second physical object: it costs quota even though the
-		// caller uploaded nothing.
-		if err := h.cfg.Quota.CheckCanWrite(ctx, u.ID, stat.Size); err != nil {
+		// caller uploaded nothing — and a second file SLOT too, unless it is
+		// landing on a name that already holds one.
+		addFiles := quotastore.AddFilesForWrite(ctx, h.cfg.Quota, h.cfg.Store, dstDrv, u.ID, dstSt.ID, dstKey)
+		if err := h.cfg.Quota.CheckCanStore(ctx, u.ID, stat.Size, addFiles); err != nil {
 			WriteError(w, r, http.StatusRequestEntityTooLarge, "EntityTooLarge", err.Error())
 			return
 		}

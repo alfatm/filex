@@ -5,9 +5,9 @@ export type FilterId = 'type' | 'people' | 'modified' | 'size';
 export const FILTER_WIDTHS: Record<FilterId, number> = { type: 94, people: 106, modified: 120, size: 92 };
 
 export function emptyFilter(): ListingFilter {
-  return { fileType: 'any', modified: 'any', size: 'any', personId: null };
+  return { fileType: 'any', modified: 'any', size: 'any', personId: null, name: '' };
 }
 
 export function isFiltered(filter: ListingFilter): boolean {
-  return filter.fileType !== 'any' || filter.modified !== 'any' || filter.size !== 'any' || filter.personId !== null;
+  return filter.fileType !== 'any' || filter.modified !== 'any' || filter.size !== 'any' || filter.personId !== null || filter.name.trim() !== '';
 }

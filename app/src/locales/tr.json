@@ -5,7 +5,8 @@
   "common": {
     "comingSoon": "Çok yakında",
     "loading": "Yükleniyor",
-    "unavailable": "Bu sunucuda kullanılamıyor"
+    "unavailable": "Bu sunucuda kullanılamıyor",
+    "notAllowed": "Rolünüz buna izin vermiyor"
   },
   "login": {
     "title": "Oturum aç",
@@ -66,7 +67,9 @@
   },
   "quota": {
     "used": "{total} alanın {used} kadarı kullanıldı",
-    "usedUnlimited": "{used} kullanıldı"
+    "usedUnlimited": "{used} kullanıldı",
+    "files": "{total} dosyanın {used} kadarı",
+    "uploadWindow": "Son {hours} saatte {total} sınırının {used} kadarı"
   },
   "unit": {
     "b": "B",
@@ -118,6 +121,11 @@
     "newFolder": {
       "title": "Yeni klasör",
       "defaultName": "Adsız klasör",
+      "create": "Oluştur"
+    },
+    "newFile": {
+      "title": "Yeni dosya",
+      "defaultName": "Yeni dosya.txt",
       "create": "Oluştur"
     },
     "rename": {
@@ -189,7 +197,17 @@
       "roleOf": "{name} rolü",
       "invite": "Davet et",
       "people": "Erişimi olanlar",
-      "revoke": "{name} kişisini kaldır"
+      "revoke": "{name} kişisini kaldır",
+      "principal": "Kime erişim verilecek",
+      "principalUser": "Kişiler",
+      "principalGroup": "Grup",
+      "group": "Grup",
+      "groupPlaceholder": "Grup ara",
+      "groupResults": "Eşleşen gruplar",
+      "members": "{count} üye | {count} üye",
+      "sharedInstead": "Bu e-postaya ait hesap yok — bunun yerine herkese açık bir bağlantı oluşturuldu.",
+      "roleForbidden": "Rolünüz erişimi yönetemez",
+      "rbacOff": "Bu sürücüde erişim kuralları kapalı; bir yöneticiye başvurun"
     }
   },
   "toast": {
@@ -230,13 +248,23 @@
     "cancelled": "İptal edildi",
     "close": "Kapat",
     "waiting": "Sırada",
-    "conflictAsk": "“{name}” bu klasörde zaten var.",
     "replace": "Değiştir",
     "keepBoth": "İkisini de sakla",
     "skip": "Atla",
     "skipped": "Atlandı — bu ad bu klasörde zaten var.",
+    "conflictTitle": "“{name}” değiştirilsin mi?",
+    "conflictBody": "“{folder}” klasöründe “{name}” adlı bir dosya zaten var.",
+    "busyTitle": "“{name}” şu anda yükleniyor",
+    "busyBody": "Başka bir yükleme şu anda “{name}” dosyasını “{folder}” klasörüne yazıyor. Yeniden dene, bu dosyayı birkaç saniye sonra tekrar gönderir.",
+    "retry": "Yeniden dene",
+    "applyAll": "Bu partideki diğer tüm çakışmalar için aynısını yap",
+    "waitingAnswer": "Yanıtınız bekleniyor",
     "folderDropped": "“{name}” bir klasör; sürükleyip bırakma klasör taşımaz. Yeni → Klasör yükle kullanın. | {count} klasör atlandı; sürükleyip bırakma klasör taşımaz. Yeni → Klasör yükle kullanın.",
-    "defaultFolderGone": "Varsayılan yükleme klasörünüz bulunamadı; bunun yerine “{folder}” klasörüne yükleniyor."
+    "defaultFolderGone": "Varsayılan yükleme klasörünüz bulunamadı; bunun yerine “{folder}” klasörüne yükleniyor.",
+    "rateLimited": "Yükleme sınırına ulaşıldı · {wait} sonra yeniden deneyin",
+    "retryInMinutes": "{minutes} dk",
+    "retryInHours": "{hours} sa",
+    "fileLimit": "Dosya sınırına ulaşıldı ({limit})"
   },
   "topbar": {
     "searchPlaceholder": "{storage} içinde ara…",
@@ -645,7 +673,12 @@
       "defaultFolder": "Varsayılan yükleme klasörü",
       "autoPreview": "Önizlemeyi aç",
       "autoPreviewHint": "Yüklemeden sonra önizlemeyi otomatik aç",
-      "conflict": "Ad çakışmasında"
+      "conflict": "Ad çakışmasında",
+      "outOf": "{total} / {used}",
+      "usedBytes": "Kullanılan alan",
+      "usedFiles": "Saklanan dosya",
+      "uploadWindow": "Son dönemde yüklenen",
+      "uploadWindowHint": "{hours} saatlik kayan pencerede sayılır"
     },
     "notify": {
       "hint": "filex'in size neleri bildireceğini seçin.",
@@ -669,6 +702,20 @@
       "twoFactorOn": "Açık",
       "twoFactorOff": "Kapalı",
       "twoFactorProvider": "Sağlayıcınızda ayarlanır",
+      "twoFactorTurnOn": "İki adımlı doğrulamayı aç",
+      "twoFactorTurnOff": "Kapat",
+      "twoFactorScan": "Bu kodu doğrulayıcı uygulamanızla tarayın, sonra gösterdiği 6 haneli kodu girin.",
+      "twoFactorKey": "Ya da bu anahtarı elle girin:",
+      "copy": "Kopyala",
+      "copied": "Kopyalandı",
+      "twoFactorCode": "6 haneli kod",
+      "twoFactorAnyCode": "Doğrulayıcı veya kurtarma kodu",
+      "verify": "Doğrula",
+      "recoveryCodes": "Kurtarma kodları",
+      "recoveryCodesHint": "Doğrulayıcınızı kaybederseniz her kod bir kez giriş yapmanızı sağlar. Yalnızca şimdi gösterilirler — güvenli bir yerde saklayın.",
+      "copyAll": "Tümünü kopyala",
+      "done": "Bitti",
+      "wrongCode": "Bu kod doğru değil.",
       "password": "Parola",
       "passwordHint": "Parolanızı değiştirin",
       "submit": "Parolayı değiştir",

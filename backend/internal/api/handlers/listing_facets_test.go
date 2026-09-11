@@ -61,6 +61,15 @@ func TestListingFacets_DateAndOwnerKeepFolders(t *testing.T) {
 		"a folder has a date and an owner, so neither chip is a reason to drop it — only type and size are")
 }
 
+func TestListingFacets_NameIsTrimmedAndKeepsFolders(t *testing.T) {
+	f := listingFacets(httptest.NewRequest("GET", "/manager?q=index&name=%20rep%20", nil))
+	assert.Equal(t, "rep", f.NameContains)
+	assert.False(t, f.FilesOnly, "a folder has a name, so the chip keeps folders")
+	assert.True(t, f.Any())
+	assert.Empty(t, listingFacets(httptest.NewRequest("GET", "/manager?q=index&name=%20", nil)).NameContains,
+		"blank is unset")
+}
+
 func TestListingFacets_NothingAskedNarrowsNothing(t *testing.T) {
 	assert.False(t, listingFacets(httptest.NewRequest("GET", "/manager/recent?limit=200", nil)).Any())
 }

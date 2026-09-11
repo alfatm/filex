@@ -52,7 +52,9 @@ import (
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/ops"
 	"github.com/brf-tech/filex/backend/internal/pathkey"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/quota"
+	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/realtime"
 	"github.com/brf-tech/filex/backend/internal/staging"
 	"github.com/brf-tech/filex/backend/internal/storage"
@@ -68,6 +70,76 @@ const minStagingChunk = 4096
 // maxStagingChunk caps a single PUT body, so one request cannot be asked to
 // buffer an unbounded amount of work before the offset can advance.
 const maxStagingChunk = 256 << 20
+
+// if_exists — what to do when a FILE already sits at the target. Absent means
+// replace, which is what every client got before the field existed.
+const (
+	ifExistsReplace = "replace"
+	ifExistsFail    = "fail"
+)
+
+// uploadActiveWindow bounds the active-upload lock on a target: a `staging`
+// session counts as "bytes flowing" only if a chunk landed within this long.
+// The lock has to expire on its own because nothing else releases it — a
+// browser tab that vanished mid-upload never sends abort, and its row lives
+// until the sweeper (TTL, hours). 30 s is several chunk round-trips even on a
+// slow link, so a session that has been silent that long is stalled, not
+// flowing, and must not keep anyone else from replacing the file. A
+// `committing` row locks regardless of age: its bytes are moving to the driver.
+const uploadActiveWindow = 30 * time.Second
+
+// parseIfExists normalises the wire value; ok=false on anything unknown.
+func parseIfExists(v string) (string, bool) {
+	switch v {
+	case "", ifExistsReplace:
+		return ifExistsReplace, true
+	case ifExistsFail:
+		return ifExistsFail, true
+	}
+	return "", false
+}
+
+// targetHasFile answers "is there a file at rel already" for if_exists=fail.
+// The node row is asked first (it is what listings show, and it covers a
+// `staged` file whose bytes are not on the driver yet); the driver is asked
+// when the catalogue has nothing, because a file written outside filex is
+// still a file the user did not mean to replace. ownNodeID is the node a
+// previous commit of the SAME session published — a retry after a failed
+// transfer finds its own row there and must not mistake it for a stranger.
+//
+// ⚠ The node-or-driver answer itself lives in quotastore.TargetHasFile, which
+// is where the protocol gateways reach it: /dav used to ask the node cache
+// alone and refused a write onto a file that was on the backend but not yet
+// scanned, while this one allowed it. One implementation, so the two cannot
+// disagree again. Only the ownNodeID rule is local to the staged protocol.
+func targetHasFile(ctx context.Context, store db.Store, drv storage.Driver, storageID int64, rel string, ownNodeID *int64) (bool, error) {
+	if ownNodeID != nil {
+		hash := pathkey.Hash(storageID, normalizeDBPath(rel))
+		if existing, _ := store.GetNodeByPath(ctx, storageID, hash); existing != nil && existing.Type == model.NodeTypeFile {
+			return existing.ID != *ownNodeID, nil
+		}
+	}
+	return quotastore.TargetHasFile(ctx, store, drv, storageID, rel), nil
+}
+
+// activeUploadOnTarget is the lock check shared by begin, commit and the
+// multipart fast path. excludeID is the caller's own session, if any.
+func activeUploadOnTarget(ctx context.Context, store db.Store, storageID int64, rel, excludeID string) (*model.StagedUpload, error) {
+	return store.ActiveStagedUploadForTarget(ctx, storageID, rel, time.Now().Add(-uploadActiveWindow), excludeID)
+}
+
+// writeUploadInProgress is the 409 every path answers when the lock is held.
+func writeUploadInProgress(w http.ResponseWriter, storageID int64, rel string, holder *model.StagedUpload) {
+	slog.Info("upload refused: target busy",
+		slog.Int64("storage", storageID),
+		slog.String("path", rel),
+		slog.String("holder", holder.ID),
+		slog.String("holder_state", holder.State))
+	writeJSON(w, http.StatusConflict, map[string]string{
+		"error": "this file is being uploaded right now",
+		"code":  "UPLOAD_IN_PROGRESS",
+	})
+}
 
 // StagedUpload is the HTTP surface of the staged upload protocol plus the
 // transfer worker that ops calls back into.
@@ -113,10 +185,23 @@ type beginRequest struct {
 	Mime      string `json:"mime,omitempty"`
 	Hash      string `json:"hash,omitempty"` // "sha256:<hex>" or "md5:<hex>"
 	ChunkSize int64  `json:"chunk_size,omitempty"`
+	// IfExists: "" | "replace" | "fail" — see parseIfExists.
+	IfExists string `json:"if_exists,omitempty"`
 }
 
 // Begin reserves a staging directory for a new upload.
 func (h *StagedUpload) Begin(w http.ResponseWriter, r *http.Request) {
+	// files.upload — at `begin`, before a single byte is accepted. The rest of
+	// the protocol (put/commit) inherits it: an upload that was never begun has
+	// no id to continue.
+	//
+	// Ahead of the enabled() probe on purpose: "your role may not upload" is
+	// true of this caller everywhere, while "staged uploads are not configured"
+	// is a fact about the deployment, and answering the second first would make
+	// the refusal depend on which install the request landed on.
+	if !requirePerm(w, r, perm.OpUpload) {
+		return
+	}
 	if !h.enabled(w) {
 		return
 	}
@@ -127,6 +212,11 @@ func (h *StagedUpload) Begin(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Name == "" {
 		req.Name = req.Filename
+	}
+	ifExists, ifExistsOK := parseIfExists(req.IfExists)
+	if !ifExistsOK {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad if_exists: want replace or fail"})
+		return
 	}
 	// resolveAdapterDir is the shared first half of every mutation: adapter
 	// split, `..` rejection, tenant-scoped storage lookup and the ≥editor ACL
@@ -180,30 +270,63 @@ func (h *StagedUpload) Begin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, mapDriverErr(err), map[string]string{"error": err.Error()})
 		return
 	}
+	if ifExists == ifExistsFail {
+		exists, err := targetHasFile(r.Context(), h.Store, drv, st.ID, fullRel, nil)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "target check: " + err.Error()})
+			return
+		}
+		if exists {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "a file with this name already exists",
+				"code":  "EXISTS",
+			})
+			return
+		}
+	}
+	// Two sessions on one target would race at commit, and whichever transfer
+	// finished last would silently win. Refused here, before any byte is
+	// accepted, while the other one is really moving bytes.
+	holder, err := activeUploadOnTarget(r.Context(), h.Store, st.ID, fullRel, "")
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "lock check: " + err.Error()})
+		return
+	}
+	if holder != nil {
+		writeUploadInProgress(w, st.ID, fullRel, holder)
+		return
+	}
 
 	userID := currentUserID(r.Context())
 	// Quota is RESERVED here, not at commit: a staged upload that never commits
 	// would otherwise be invisible to the ceiling and a user could stage past
-	// it. The reservation is derived from the open rows themselves, so it is
-	// released by the row leaving the open set (commit, abort or sweep) and can
+	// it. The reservation is derived from the rows themselves, so it is
+	// released by the row leaving `staging` (commit, abort or sweep) and can
 	// never drift from what it describes.
-	if h.Quota != nil && userID > 0 && req.Size > 0 {
+	//
+	// ⚠ Only `staging` rows are pending — see SumOpenStagedUploadBytes. Once a
+	// row commits, both ceilings already count its bytes for real: the node is
+	// published (usage_bytes) and the ledger row is written (the window). The
+	// reservation covers exactly the gap where neither does.
+	if h.Quota != nil && userID > 0 {
 		pending, perr := h.Store.SumOpenStagedUploadBytes(r.Context(), userID)
 		if perr != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "quota: " + perr.Error()})
 			return
 		}
-		if qerr := h.Quota.CheckCanWrite(r.Context(), userID, req.Size+pending); qerr != nil {
-			if errors.Is(qerr, quota.ErrQuotaExceeded) {
-				metrics.GuardRefusals.WithLabelValues(metrics.GuardQuota).Inc()
-				slog.Info("staged upload refused: quota",
-					slog.Int64("user", userID),
-					slog.Int64("size", req.Size),
-					slog.Int64("pending", pending))
-				writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
-					"error": "quota exceeded",
-					"code":  "QUOTA_EXCEEDED",
-				})
+		// An OVERWRITE adds no file, only bytes: the slot is already this
+		// user's. Refusing it on the file-count ceiling would leave somebody at
+		// their limit unable to fix a file they already own, which is the one
+		// thing they must always be able to do.
+		addFiles := int64(1)
+		if exists, terr := targetHasFile(r.Context(), h.Store, drv, st.ID, fullRel, nil); terr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "target check: " + terr.Error()})
+			return
+		} else if exists {
+			addFiles = 0
+		}
+		if qerr := h.Quota.CheckCanWrite(r.Context(), userID, req.Size+pending, addFiles); qerr != nil {
+			if writeQuotaRefusal(r.Context(), w, h.Quota, userID, qerr) {
 				return
 			}
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": qerr.Error()})
@@ -404,6 +527,13 @@ func (h *StagedUpload) Status(w http.ResponseWriter, r *http.Request) {
 
 // ── commit ──────────────────────────────────────────────────────────────────
 
+// commitRequest is the optional commit body. The row does not remember the
+// begin-time if_exists, and the target may have appeared between begin and
+// commit, so the client re-states its choice here; an empty body is replace.
+type commitRequest struct {
+	IfExists string `json:"if_exists,omitempty"`
+}
+
 // Commit verifies the staged bytes, publishes the node immediately as `staged`
 // and hands the actual transfer to a background op.
 func (h *StagedUpload) Commit(w http.ResponseWriter, r *http.Request) {
@@ -417,6 +547,16 @@ func (h *StagedUpload) Commit(w http.ResponseWriter, r *http.Request) {
 		// a failed transfer precisely so it can be retried without re-sending.
 	default:
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "upload is already " + row.State})
+		return
+	}
+	var creq commitRequest
+	if err := json.NewDecoder(r.Body).Decode(&creq); err != nil && !errors.Is(err, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
+		return
+	}
+	ifExists, ifExistsOK := parseIfExists(creq.IfExists)
+	if !ifExistsOK {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad if_exists: want replace or fail"})
 		return
 	}
 	m, err := h.Area.Manifest(row.ID)
@@ -471,6 +611,69 @@ func (h *StagedUpload) Commit(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, mapDriverErr(err), map[string]string{"error": err.Error()})
 		return
 	}
+	// Both refusals below leave the row in its current state and the node
+	// untouched: they run before the snapshot and before publishStagedNode, so
+	// the same session can be committed again — with `replace`, or once the
+	// other upload is done.
+	if ifExists == ifExistsFail {
+		exists, err := targetHasFile(r.Context(), h.Store, drv, row.StorageID, row.StorageKey, row.NodeID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "target check: " + err.Error()})
+			return
+		}
+		if exists {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "a file with this name already exists",
+				"code":  "EXISTS",
+			})
+			return
+		}
+	}
+	// Take the target BEFORE anything is snapshotted or published, and take it
+	// with the state change itself rather than with a question asked beforehand.
+	// Asking first and writing later leaves a gap: two commits on one file both
+	// see a free target, both publish, and the transfer that finishes last
+	// silently wins — which is the whole thing this lock exists to prevent.
+	claimed, err := h.Store.ClaimStagedUploadCommit(r.Context(), row.ID, time.Now().Add(-uploadActiveWindow))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "lock check: " + err.Error()})
+		return
+	}
+	if !claimed {
+		// The claim refuses for two reasons and the caller deserves to know
+		// which: somebody else holds the target, or this row stopped being
+		// committable while the checks above ran.
+		holder, herr := activeUploadOnTarget(r.Context(), h.Store, row.StorageID, row.StorageKey, row.ID)
+		if herr == nil && holder != nil {
+			writeUploadInProgress(w, row.StorageID, row.StorageKey, holder)
+			return
+		}
+		current, cerr := h.Store.GetStagedUpload(r.Context(), row.ID)
+		if cerr == nil && current != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "upload is already " + current.State})
+			return
+		}
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "upload is no longer committable"})
+		return
+	}
+	// Every way out of here that is not a submitted op has to hand the target
+	// back, or the row sits in `committing` — a state the sweeper will not
+	// touch, because those bytes are supposed to be moving — and the path is
+	// locked for good.
+	//
+	// A deferred release rather than one call per refusal: the middleware
+	// recovers panics (routes.go Recoverer), so a panic anywhere below would
+	// otherwise strand the row exactly the way this comment warns about.
+	handedOn := false
+	defer func() {
+		if handedOn {
+			return
+		}
+		if err := h.Store.UpdateStagedUploadState(context.WithoutCancel(r.Context()), row.ID, row.State, row.Error); err != nil {
+			slog.Warn("staged commit: could not release the target",
+				slog.String("id", row.ID), slog.String("err", err.Error()))
+		}
+	}()
 
 	// The last moment at which the bytes we are about to replace still exist,
 	// and the ONLY place on this path that gets to say so.
@@ -519,18 +722,44 @@ func (h *StagedUpload) Commit(w http.ResponseWriter, r *http.Request) {
 	if err := h.Store.AttachStagedUploadTarget(bg, row.ID, node.ID, 0); err != nil {
 		slog.Warn("staged upload: attach node", slog.String("id", row.ID), slog.String("err", err.Error()))
 	}
-	if err := h.Store.UpdateStagedUploadState(bg, row.ID, model.StagedUploadCommitting, ""); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "state: " + err.Error()})
-		return
-	}
 	op, err := h.Ops.Submit(bg, ops.OpUploadCommit, row.StorageID, []string{row.ID}, "")
 	if err != nil {
+		// `failed` is a committable state, so this row can be retried and the
+		// target is free again: that IS the release, and a deferred one would
+		// undo it by writing the state back.
+		handedOn = true
 		_ = h.Store.UpdateStagedUploadState(bg, row.ID, model.StagedUploadFailed, err.Error())
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "submit: " + err.Error()})
 		return
 	}
+	// The transfer owns the row from here; it leaves `committing` when the op
+	// finishes or fails.
+	handedOn = true
 	if err := h.Store.AttachStagedUploadTarget(bg, row.ID, node.ID, op.ID); err != nil {
 		slog.Warn("staged upload: attach op", slog.String("id", row.ID), slog.String("err", err.Error()))
+	}
+	// The upload is spent HERE and nowhere earlier: an upload that was refused,
+	// abandoned mid-transfer or aborted cost the instance nothing to keep, and
+	// charging it against the window would punish a failed attempt twice.
+	//
+	// A failed ledger write never fails a commit that has already been
+	// accepted — the bytes are safe in staging and the op is queued. The cost
+	// is one unrecorded upload against the window, which is the right way for
+	// this to break.
+	//
+	// ⚠ Keyed by row.ID, because THIS CALL CAN RUN MORE THAN ONCE for one
+	// stored object: ClaimStagedUploadCommit accepts `failed` as well as
+	// `staging` — a failed transfer keeps its staging directory precisely so
+	// the commit can be retried — and everything from publishStagedNode down
+	// runs again. Unkeyed, three failed transfers of a 1 GB file spent 4 GB of
+	// the allowance. See quota.Service.RecordStagedUpload.
+	if h.Quota != nil && row.UserID > 0 {
+		if lerr := h.Quota.RecordStagedUpload(bg, row.UserID, row.TotalSize, row.ID); lerr != nil {
+			slog.Warn("quota: record upload",
+				slog.String("id", row.ID),
+				slog.Int64("user", row.UserID),
+				slog.String("err", lerr.Error()))
+		}
 	}
 	// The row is listed now, before its bytes have moved — that is the point.
 	emitFolderChange(row.StorageID, storageRelDir(node.Path), realtime.ChangeEvent{Action: "upload"})
@@ -1008,6 +1237,22 @@ func (h *StagedUpload) Sweep(ctx context.Context) (int, int) {
 	}
 	for _, id := range orphans {
 		slog.Info("staged upload swept orphan directory", slog.String("id", id))
+	}
+
+	// The upload ledger grows one row per completed upload for ever unless
+	// something trims it. A row older than the rate window holds nobody's
+	// allowance any more, so it is debris — and this sweeper already runs on
+	// the cadence that matters. The cutoff is the window itself, so at least
+	// one whole window is always kept.
+	if h.Quota != nil {
+		_, window, werr := h.Quota.UploadWindowUsed(ctx, 0)
+		if werr == nil {
+			if n, serr := h.Quota.SweepUploadLedger(ctx, now.Add(-window)); serr != nil {
+				slog.Warn("upload ledger sweep", slog.String("err", serr.Error()))
+			} else if n > 0 {
+				slog.Info("upload ledger swept", slog.Int64("rows", n), slog.String("window", window.String()))
+			}
+		}
 	}
 
 	// Reconcile the gauges against what is actually on disk. The counters are

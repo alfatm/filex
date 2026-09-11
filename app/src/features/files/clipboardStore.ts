@@ -20,8 +20,9 @@ export const useClipboardStore = defineStore('clipboard', () => {
    * was gated on `move` even for a copy, while Ctrl+X and Ctrl+C were gated on nothing at all and filled a
    * clipboard whose paste the server was always going to refuse.
    */
-  const canCut = computed(() => capabilities.can.move);
-  const canCopy = computed(() => capabilities.can.copy);
+  // The installation's answer AND the role's: a server that can move still refuses one the role may not ask for.
+  const canCut = computed(() => capabilities.can.move && capabilities.allows('files.move'));
+  const canCopy = computed(() => capabilities.can.copy && capabilities.allows('files.copy'));
 
   /** Pasting needs an open folder: the flat listings (Recent, Starred, Trash) are not places. */
   const canPaste = computed(

@@ -792,7 +792,7 @@ func registerAdminTools(srv *mcp.Server, a *AIAdmin, principal *model.User) {
 		func(_ adminVoidIn) reqSpec {
 			return reqSpec{handler: a.grants.AdminList, method: http.MethodGet, path: "/api/ai/admin/grants"}
 		})
-	regAdminTool(r, "admin_grant_set", "Grant a user access to a path. body: {path:\"<adapter>://<rel>\", user_id, level: viewer|editor|owner}. The storage must have RBAC enabled; a viewer account may only be granted viewer.",
+	regAdminTool(r, "admin_grant_set", "Grant a user OR a group access to a path. body: {path:\"<adapter>://<rel>\", user_id | group_id, level: viewer|editor|owner, is_dir?}. The storage must have RBAC enabled; a viewer account may only be granted viewer. Revoking a group grant is not available through admin_grant_revoke — use the HTTP API's ?principal=group.",
 		func(in adminBodyIn) reqSpec {
 			return reqSpec{handler: a.grants.Create, method: http.MethodPost, path: "/api/ai/admin/grants", body: in.Body}
 		})

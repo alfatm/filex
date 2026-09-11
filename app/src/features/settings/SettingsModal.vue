@@ -4,8 +4,8 @@ import { useI18n } from 'vue-i18n';
 import { Dialog, DialogPanel, DialogTitle } from '@headlessui/vue';
 import { Bell, ChevronRight, Folder, KeyRound, Monitor, Settings2, ShieldCheck, Sparkles, UserRound, X } from 'lucide-vue-next';
 import { repository } from '@/data';
-import { MIN_PASSWORD_LENGTH, WRONG_PASSWORD } from '@/data/repository';
-import type { AuthMethods, Node, NotifyPrefs, Session } from '@/data/types';
+import { INVALID_CODE, MIN_PASSWORD_LENGTH, WRONG_PASSWORD } from '@/data/repository';
+import type { AuthMethods, Node, NotifyPrefs, Session, TotpEnrollment } from '@/data/types';
 import { useToastStore } from '@/stores/toast';
 import { LOCALES, setLocale, type Locale } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
@@ -32,10 +32,30 @@ type SectionId = (typeof SECTIONS)[number]['id'];
 /** The picture is stored inline on the account, so it is downscaled to a thumbnail before it is ever sent. */
 const AVATAR_PX = 160;
 const AVATAR_QUALITY = 0.85;
+/** How long a Copy button reads "Copied" before it offers to copy again. */
+const COPIED_MS = 1500;
+
+/** What the sentence says where a ceiling is absent; the row still states what is HELD, which is the useful half. */
+const UNLIMITED = '∞';
 
 const { t, te, locale } = useI18n();
-const { formatDate } = useFormat();
+const { formatDate, formatSize } = useFormat();
 const files = useFilesStore();
+
+/** The account's three ceilings as the drive reports them; absent until a drive has been listed. */
+const quota = computed(() => files.storage?.quota ?? null);
+const pair = (used: string, total: string) => t('settings.storage.outOf', { used, total });
+const quotaBytes = computed(() =>
+  quota.value ? pair(formatSize(quota.value.usedBytes), quota.value.totalBytes ? formatSize(quota.value.totalBytes) : UNLIMITED) : '',
+);
+const quotaFiles = computed(() =>
+  quota.value
+    ? pair(quota.value.usedFiles.toLocaleString(locale.value), quota.value.totalFiles ? quota.value.totalFiles.toLocaleString(locale.value) : UNLIMITED)
+    : '',
+);
+const quotaUpload = computed(() =>
+  quota.value ? pair(formatSize(quota.value.uploadUsedBytes), quota.value.uploadTotalBytes ? formatSize(quota.value.uploadTotalBytes) : UNLIMITED) : '',
+);
 const view = useViewStore();
 const store = useSettingsStore();
 const toast = useToastStore();
@@ -68,6 +88,19 @@ const passwordError = ref('');
 const currentPassword = ref('');
 const newPassword = ref('');
 const repeatPassword = ref('');
+
+/**
+ * The second-factor panel, opening in place like the password form. `enroll` shows the QR and asks for the first
+ * code, `recovery` the codes that come with a confirmed enrolment, `disable` asks for the password and a code.
+ */
+const totpPanel = ref<'enroll' | 'recovery' | 'disable' | null>(null);
+const totpBusy = ref(false);
+const totpError = ref('');
+const enrollment = ref<TotpEnrollment | null>(null);
+const totpCode = ref('');
+const totpPassword = ref('');
+/** Which Copy button just did its job; its label says so for a moment. */
+const copied = ref<'secret' | 'codes' | null>(null);
 
 /**
  * Where this account is signed in. Null while it is unknown — an older server has no `/api/auth/sessions` — and
@@ -210,9 +243,87 @@ async function endSession(id: string) {
 }
 
 function openPassword() {
+  closeTotp();
   passwordOpen.value = true;
   passwordError.value = '';
   currentPassword.value = newPassword.value = repeatPassword.value = '';
+}
+
+/** One panel at a time: the second factor takes the password form's place, and the other way round. */
+async function openTotp() {
+  passwordOpen.value = false;
+  totpError.value = '';
+  totpCode.value = totpPassword.value = '';
+  copied.value = null;
+  if (auth.value?.totpEnabled) {
+    totpPanel.value = 'disable';
+    return;
+  }
+  // The secret is asked for on the click; nothing is switched on until the first code proves an authenticator holds it.
+  totpPanel.value = 'enroll';
+  enrollment.value = null;
+  totpBusy.value = true;
+  try {
+    enrollment.value = await repository.totpEnroll();
+  } catch {
+    totpError.value = t('settings.saveFailed');
+  } finally {
+    totpBusy.value = false;
+  }
+}
+
+function closeTotp() {
+  totpPanel.value = null;
+  enrollment.value = null;
+}
+
+async function verifyTotp() {
+  totpBusy.value = true;
+  totpError.value = '';
+  try {
+    await repository.totpVerify(totpCode.value.trim());
+  } catch (error) {
+    totpError.value = error instanceof Error && error.message === INVALID_CODE ? t('settings.security.wrongCode') : t('settings.saveFailed');
+    return;
+  } finally {
+    totpBusy.value = false;
+  }
+  totpPanel.value = 'recovery';
+  await refreshAuth(true);
+}
+
+async function disableTotp() {
+  totpBusy.value = true;
+  totpError.value = '';
+  try {
+    await repository.totpDisable(totpPassword.value, totpCode.value.trim());
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : '';
+    totpError.value =
+      reason === WRONG_PASSWORD ? t('settings.security.wrongPassword') : reason === INVALID_CODE ? t('settings.security.wrongCode') : t('settings.saveFailed');
+    return;
+  } finally {
+    totpBusy.value = false;
+  }
+  closeTotp();
+  await refreshAuth(false);
+}
+
+/** The row reads the server's answer again; if that answer does not come, it reads what the server just confirmed. */
+async function refreshAuth(totpEnabled: boolean) {
+  try {
+    auth.value = await repository.authMethods();
+  } catch {
+    if (auth.value) auth.value = { ...auth.value, totpEnabled };
+  }
+}
+
+async function copyText(text: string, what: 'secret' | 'codes') {
+  await navigator.clipboard.writeText(text);
+  copied.value = what;
+  setTimeout(() => {
+    if (copied.value === what) copied.value = null;
+  }, COPIED_MS);
 }
 
 /**
@@ -444,6 +555,8 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                 </SettingRow>
               </div>
 
+              <!-- The three ceilings, read-only. The sidebar's bar draws only the first; an upload refused for the
+                   file count or for the rolling window has nowhere else in the app that states where it stands. -->
               <!-- Upload defaults have no tab of their own: they are preferences, told apart by a rule. -->
               <div :class="SECTION">
                 <h3 class="text-16 font-semibold leading-none">{{ t('settings.storage.title') }}</h3>
@@ -467,6 +580,17 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                   <SettingRow :label="t('settings.storage.conflict')">
                     <Select v-model="draft.conflictBehavior" :options="conflictOptions" :width="212" :label="t('settings.storage.conflict')" />
                   </SettingRow>
+                  <template v-if="quota">
+                    <SettingRow :label="t('settings.storage.usedBytes')">
+                      <p class="text-15 leading-none text-text-2">{{ quotaBytes }}</p>
+                    </SettingRow>
+                    <SettingRow :label="t('settings.storage.usedFiles')">
+                      <p class="text-15 leading-none text-text-2">{{ quotaFiles }}</p>
+                    </SettingRow>
+                    <SettingRow :label="t('settings.storage.uploadWindow')" :hint="t('settings.storage.uploadWindowHint', { hours: quota.uploadWindowHours })">
+                      <p class="text-15 leading-none text-text-2">{{ quotaUpload }}</p>
+                    </SettingRow>
+                  </template>
                 </div>
               </div>
             </section>
@@ -521,9 +645,89 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                   </div>
                 </li>
                 <li>
-                  <!-- Read-only: the second step belongs to the auth provider, and `GET /api/auth/methods` is what
-                       this row asks. -->
-                  <div :class="[SECURITY_ROW, 'cursor-default']" :title="t('common.comingSoon')">
+                  <!-- filex's own second step on a local realm, opening in place like the password form. Anywhere
+                       else it belongs to the auth provider, and the row only says so. -->
+                  <div v-if="totpPanel" class="rounded-md border border-border p-3">
+                    <div v-if="totpPanel === 'enroll'">
+                      <p class="text-14 font-medium leading-none">{{ t('settings.security.twoFactorTurnOn') }}</p>
+                      <div v-if="enrollment" class="mt-3 flex gap-4">
+                        <!-- White behind the QR on purpose: a dark code on the dark theme's surface does not scan.
+                             The SVG is the server's own drawing of the otpauth URL, from the origin the app trusts. -->
+                        <!-- eslint-disable-next-line vue/no-v-html -->
+                        <div class="h-40 w-40 shrink-0 rounded-md bg-white p-2 [&>svg]:h-full [&>svg]:w-full" v-html="enrollment.qrSvg" />
+                        <div class="min-w-0 flex-1">
+                          <p class="text-13 leading-[18px] text-text-2">{{ t('settings.security.twoFactorScan') }}</p>
+                          <p class="mt-3 text-12 leading-none text-text-3">{{ t('settings.security.twoFactorKey') }}</p>
+                          <div class="mt-1.5 flex items-center gap-2">
+                            <code class="min-w-0 flex-1 truncate-safe rounded-md bg-bg-muted px-2 py-2 font-mono text-13 leading-none">{{ enrollment.secret }}</code>
+                            <Button variant="outline" class="!h-8 shrink-0 px-2.5 !text-13" @click="copyText(enrollment.secret, 'secret')">
+                              {{ t(copied === 'secret' ? 'settings.security.copied' : 'settings.security.copy') }}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                      <form class="mt-3 flex items-start gap-2" @submit.prevent="verifyTotp">
+                        <Input
+                          v-model="totpCode"
+                          class="flex-1"
+                          inputmode="numeric"
+                          autocomplete="one-time-code"
+                          :label="t('settings.security.twoFactorCode')"
+                          :placeholder="t('settings.security.twoFactorCode')"
+                        />
+                        <Button type="submit" :disabled="totpBusy || !enrollment || !totpCode.trim()">{{ t('settings.security.verify') }}</Button>
+                        <Button variant="outline" type="button" @click="closeTotp">{{ t('settings.cancel') }}</Button>
+                      </form>
+                      <p v-if="totpError" class="mt-2 text-12 leading-none text-danger" role="alert">{{ totpError }}</p>
+                    </div>
+                    <div v-else-if="totpPanel === 'recovery'">
+                      <p class="text-14 font-medium leading-none">{{ t('settings.security.recoveryCodes') }}</p>
+                      <p class="mt-1.5 text-12 leading-[18px] text-text-3">{{ t('settings.security.recoveryCodesHint') }}</p>
+                      <ul :aria-label="t('settings.security.recoveryCodes')" class="mt-3 grid grid-cols-2 gap-x-6 gap-y-1.5 font-mono text-13 leading-none">
+                        <li v-for="code in enrollment?.recoveryCodes ?? []" :key="code" class="select-all">{{ code }}</li>
+                      </ul>
+                      <div class="mt-3 flex gap-2">
+                        <Button @click="closeTotp">{{ t('settings.security.done') }}</Button>
+                        <Button variant="outline" @click="copyText((enrollment?.recoveryCodes ?? []).join('\n'), 'codes')">
+                          {{ t(copied === 'codes' ? 'settings.security.copied' : 'settings.security.copyAll') }}
+                        </Button>
+                      </div>
+                    </div>
+                    <form v-else @submit.prevent="disableTotp">
+                      <div class="flex flex-col gap-2">
+                        <Input
+                          v-model="totpPassword"
+                          type="password"
+                          autocomplete="current-password"
+                          :label="t('settings.security.currentPassword')"
+                          :placeholder="t('settings.security.currentPassword')"
+                        />
+                        <Input
+                          v-model="totpCode"
+                          autocomplete="one-time-code"
+                          :label="t('settings.security.twoFactorAnyCode')"
+                          :placeholder="t('settings.security.twoFactorAnyCode')"
+                        />
+                      </div>
+                      <p v-if="totpError" class="mt-2 text-12 leading-none text-danger" role="alert">{{ totpError }}</p>
+                      <div class="mt-3 flex gap-2">
+                        <Button type="submit" class="!bg-danger hover:!bg-danger hover:brightness-95" :disabled="totpBusy || !totpPassword || !totpCode.trim()">
+                          {{ t('settings.security.twoFactorTurnOff') }}
+                        </Button>
+                        <Button variant="outline" type="button" @click="closeTotp">{{ t('settings.cancel') }}</Button>
+                      </div>
+                    </form>
+                  </div>
+                  <button v-else-if="auth?.provider === 'local'" type="button" :class="[SECURITY_ROW, 'hover:bg-hover-row']" @click="openTotp">
+                    <ShieldCheck :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
+                    <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ t('settings.security.twoFactor') }}</span>
+                    <span class="flex items-center gap-1.5 truncate-safe text-13 leading-none text-text-3">
+                      <span v-if="secondFactorOn" class="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
+                      {{ secondFactorLabel }}
+                    </span>
+                    <ChevronRight :size="16" class="shrink-0 text-text-3" />
+                  </button>
+                  <div v-else :class="[SECURITY_ROW, 'cursor-default']">
                     <ShieldCheck :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
                     <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ t('settings.security.twoFactor') }}</span>
                     <span class="flex items-center gap-1.5 truncate-safe text-13 leading-none text-text-3">

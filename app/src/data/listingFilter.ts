@@ -1,9 +1,8 @@
 import type { FileType, FileTypeGroup, ListingFilter, Node } from './types';
 
 /**
- * The chips above a listing, as a predicate. It lives here rather than in the mock because whoever answers a
- * listing has to apply it: the mock does it in memory, and the HTTP repository does it over the rows filex sends
- * back until the listing endpoints grow the matching query params (docs/BACKEND-GAP.md).
+ * The chips above a listing, as a predicate. The server applies the same rules to every listing it answers; this
+ * copy is for the files store, which holds a small folder whole and sieves it here rather than asking again per chip.
  */
 
 const KB = 1024;
@@ -35,5 +34,7 @@ export function matchesFilter(node: Node, filter: ListingFilter, now = Date.now(
     if (node.size < min || node.size > max) return false;
   }
   if (filter.personId && node.ownerId !== filter.personId) return false;
+  const name = filter.name.trim().toLowerCase();
+  if (name && !node.name.toLowerCase().includes(name)) return false;
   return true;
 }

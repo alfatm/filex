@@ -24,6 +24,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/acl"
 	"github.com/brf-tech/filex/backend/internal/confine"
 	"github.com/brf-tech/filex/backend/internal/db"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/protocolsync"
 	"github.com/brf-tech/filex/backend/internal/realtime"
 	"github.com/brf-tech/filex/backend/internal/search"
@@ -74,6 +75,11 @@ type restoreNodeReq struct {
 
 // Restore lifts the deleted_at flag on a soft-deleted node.
 func (h *Trash) Restore(w http.ResponseWriter, r *http.Request) {
+	// files.restore — the same operation as restoring an older version: from
+	// the account holder's side both are "put back what I had".
+	if !requirePerm(w, r, perm.OpRestore) {
+		return
+	}
 	var req restoreNodeReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
@@ -209,6 +215,12 @@ func (h *Trash) mayPurge(r *http.Request, nodeID int64) (int, string) {
 // sat there until the retention sweep, and "delete forever" was a button the
 // app had to keep switched off.
 func (h *Trash) PurgeSelf(w http.ResponseWriter, r *http.Request) {
+	// files.purge, not files.delete: this is the irrecoverable half. An
+	// install can perfectly well let a role move things to the trash while
+	// reserving the final, unrecoverable step for someone else.
+	if !requirePerm(w, r, perm.OpPurge) {
+		return
+	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
@@ -256,6 +268,9 @@ func (h *Trash) PurgeSelf(w http.ResponseWriter, r *http.Request) {
 // as it found it, so the next offset still lines up. One page is also the cap
 // on this request's byte work, which is what `trashEmptyMax` was always for.
 func (h *Trash) EmptySelf(w http.ResponseWriter, r *http.Request) {
+	if !requirePerm(w, r, perm.OpPurge) {
+		return
+	}
 	purged, failed, skipped := 0, 0, 0
 	more := false
 	for offset := 0; ; {

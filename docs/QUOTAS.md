@@ -1,12 +1,68 @@
 # Quotas — what counts, and when
 
-Quota is **per user**. `users.quota_bytes` is the ceiling (`0` = unlimited) and
-`users.usage_bytes` is what that account currently stores. The admin surface is
-`GET|POST /api/admin/users/{id}/quota` and the caller's own snapshot is
-`GET /api/files/quota/me` — see [Backend → Admin: quota](BACKEND.md#admin-quota).
+Quota is **per user**, and there are **three** ceilings:
 
-This page is about the other half: **how `usage_bytes` gets its value**, which
-is the part that has to be exactly right or the ceiling is decoration.
+| Ceiling | Column | Counter | What it protects |
+|---|---|---|---|
+| **Storage bytes** | `users.quota_bytes` | `users.usage_bytes` | disk |
+| **File count** | `users.quota_files` | `users.usage_files` | listings, scans, backups |
+| **Upload rate** | `users.quota_upload_bytes` | `upload_ledger` within a window | transfer, egress bills |
+
+The admin surfaces are `GET|PATCH /api/admin/quotas` (the instance defaults),
+`GET /api/admin/quotas/users` (the table) and
+`GET|PATCH /api/admin/users/{id}/quota` (one user's overrides); the caller's own
+snapshot is `GET /api/files/quota/me` — see
+[Backend → Admin: quota](BACKEND.md#admin-quota).
+
+This page is about the other half: **how the counters get their values**, which
+is the part that has to be exactly right or the ceilings are decoration.
+
+## Defaults and overrides — the tri-state
+
+Every per-user limit column is an **override**, not a value:
+
+| Stored | Meaning |
+|---|---|
+| `0` | inherit the instance default |
+| `-1` | **unlimited** for this user, whatever the default says |
+| `N` | this user's own limit |
+
+The instance defaults are `settings` rows, editable at runtime:
+
+| Setting | Env seed (first boot only) | Default | Range |
+|---|---|---|---|
+| `quota.default_bytes` | `FILEX_QUOTA_DEFAULT_BYTES` | `0` (unlimited) | ≥ 0 |
+| `quota.default_files` | `FILEX_QUOTA_DEFAULT_FILES` | `0` (unlimited) | ≥ 0 |
+| `quota.default_upload_bytes` | `FILEX_QUOTA_DEFAULT_UPLOAD_BYTES` | `0` (unlimited) | ≥ 0 |
+| `quota.upload_window_hours` | `FILEX_QUOTA_UPLOAD_WINDOW_HOURS` | `24` | 1 – 720 |
+
+> ⚠ The environment variables are **seeds**, not overrides. They are consumed
+> once, on a boot where no row exists yet; after that the row wins and editing
+> the variable in compose changes nothing. See `internal/dbsetting`.
+
+Resolution happens in exactly one function (`quota.Service.Limits`) and produces
+a struct in which **0 means unlimited** and nothing downstream re-reads a
+tri-state. `/api/files/quota/me` and the admin table report a `sources` block
+(`"default"` or `"user"`) so an admin can see whether clearing an override would
+change the number.
+
+### What migration 00042 had to rewrite
+
+`users.quota_bytes = 0` meant **unlimited** before this tri-state existed, and
+it now means *inherit*. Those are the same thing only while the default is still
+unlimited, so leaving the rows alone would have been a trap: an admin who sets
+`quota.default_bytes = 10 GB` for new accounts would retroactively cap every
+account that had deliberately been given no limit, with nothing in the data to
+tell "explicitly unlimited" from "never configured".
+
+So the migration writes `-1` wherever the column read `0`, and the old meaning
+survives explicitly. `quota_files` and `quota_upload_bytes` are new columns, so
+`0` is the right starting value for them.
+
+> ⚠ **For existing API clients:** `POST`/`PATCH /api/admin/users/{id}/quota`
+> with `{"quota_bytes": 0}` used to mean "make this account unlimited" and now
+> means "inherit the instance default". Send `-1` for unlimited. Nothing else
+> about that endpoint changed.
 
 ## The rule
 
@@ -17,8 +73,17 @@ usage_bytes(u) == SUM(nodes.size) WHERE owner_id = u AND type = 'file'
                   — trashed rows INCLUDED
 ```
 
+and, since v0.21, its twin:
+
+```
+usage_files(u) == COUNT(*) WHERE owner_id = u AND type = 'file'
+                  — the same rows, counted instead of summed
+```
+
 `nodes.owner_id` is stamped when the bytes land, and everything else follows
-from that identity:
+from these identities. The file count moves wherever the bytes move: a create
+adds one, a purge releases one, an overwrite by another user moves one, trash
+and restore and rename move none.
 
 | Event | What happens to usage | Why |
 |---|---|---|
@@ -57,8 +122,11 @@ Attribution is resolved in this order:
 
 ### Reconciling
 
-`POST /api/admin/users/{id}/quota/recompute` rebuilds `usage_bytes` from the
-node rows using exactly the identity above — **trashed rows included**. Run it
+`POST /api/admin/users/{id}/quota/recompute` rebuilds **both** `usage_bytes`
+and `usage_files` from the node rows using exactly the identities above —
+**trashed rows included**. Both in one pass, on purpose: they describe the same
+rows, and leaving one of them to a second endpoint is how they come to
+disagree. Run it
 if you have restored a database from an inconsistent backup, or after a bulk
 import that bypassed filex.
 
@@ -69,20 +137,100 @@ import that bypassed filex.
 
 ## Where it is enforced
 
-| Guard | Where | Response |
-|---|---|---|
-| **Ceiling** | staged upload `begin` | `413` `{"code":"QUOTA_EXCEEDED"}` |
-| **Staging disk headroom** | staged upload `begin` | `507` `{"code":"NO_DISK_SPACE"}` |
+| Guard | Response |
+|---|---|
+| **Byte ceiling** | `413` `{"error":"quota exceeded","code":"QUOTA_EXCEEDED"}` |
+| **File ceiling** | `413` `{"error":"file limit reached","code":"FILE_LIMIT_EXCEEDED","limit":N,"used":M}` |
+| **Upload window** | `429` `{"error":"upload limit reached","code":"UPLOAD_RATE_LIMITED","retry_after_seconds":S}` + header `Retry-After: S` |
+| **Staging disk headroom** | `507` `{"code":"NO_DISK_SPACE"}` |
 
-The ceiling is checked against `usage_bytes` **plus the bytes already reserved
-by this user's open staged uploads**. Reserving at `begin` rather than settling
-at commit is deliberate: an upload that never commits would otherwise be
+The rate refusal is a **429 and not a 413** on purpose: `413` says "this will
+never fit" and the client's correct reaction is to give up, while the rate limit
+says the opposite — the same request succeeds later, and `Retry-After` says
+when. The value is exact rather than a guess: it is the time until the **oldest
+ledger row inside the window** falls out of it (floored at one second).
+
+Each surface, and what it claims:
+
+| Surface | Bytes | Files | Window |
+|---|---|---|---|
+| staged `begin` | declared size + this user's open staged bytes | `1`, or `0` when a file already sits at the target | ✅ |
+| staged `commit` | — | — | spends the allowance (one ledger row) |
+| multipart `?action=upload` | the whole batch, before the first write | the count of **new** names in the batch | ✅ (one ledger row per file that lands) |
+| `?action=newfile` | `0` | `1` | — (nothing was transferred) |
+| save-text, **create** | the whole body | `1` | ✅ |
+| save-text, **overwrite** | the **delta** only | `0` | — (editing is not a transfer; charging every `Ctrl+S` would exhaust a window in a morning) |
+| public drop / `IngestFile` | the file | `1`, or `0` on an overwrite | ✅ when there is an authenticated uploader |
+| WebDAV `PUT` | Content-Length | `1`, or `0` on an overwrite | **no** |
+| S3 / SFTP / FTP / NFS gateways | ✅ | — | **no** |
+
+> ⚠ **What is NOT rate-limited.** WebDAV and the S3/SFTP/FTP/NFS gateways check
+> the two **storage** ceilings only (`quota.Service.CheckCanStore`). They are
+> long-lived mounted sessions, and the only refusal WebDAV can express at that
+> point is `507 Insufficient Storage` — x/net/webdav turns a `Close` error into
+> `405`, which tells a client to stop using the method entirely. Spelling a
+> temporary rate refusal as "you are out of space" would be a worse lie than not
+> enforcing it there. If you need the window enforced on those surfaces, set a
+> byte ceiling instead.
+
+The byte ceiling is checked against `usage_bytes` **plus the bytes already
+reserved by this user's open staged uploads**. Reserving at `begin` rather than
+settling at commit is deliberate: an upload that never commits would otherwise be
 invisible to the ceiling and a user could stage past it. The reservation is
 derived from the open rows themselves, so it is released by the row leaving the
 open set — commit, abort, or sweep — and can never drift from what it describes.
 
-Both guards increment `filex_guard_refusals_total{guard="quota"|"disk"}` and
-write a log line naming the numbers involved. See [Metrics](METRICS.md).
+Every guard increments
+`filex_guard_refusals_total{guard="quota"|"files"|"upload_rate"|"disk"}` and
+writes a log line naming the numbers involved. See [Metrics](METRICS.md).
+
+## The upload window
+
+`upload_ledger` holds **one row per completed upload** — `(user_id, bytes,
+created_at)`. The limit is `SUM(bytes)` inside the last
+`quota.upload_window_hours`, so the window **slides**: there is no reset moment
+at which everybody's allowance comes back at once, and a user who uploaded at
+23:59 does not get a fresh allowance one minute later.
+
+Two consequences worth stating plainly:
+
+- **Deleting does not give the allowance back.** The storage ceiling is about
+  what you keep; the window is about what you moved. The transfer already
+  happened.
+- **A refused, aborted or failed upload spends nothing.** The row is written on
+  the success path only — after a staged `commit` is accepted, or after a
+  multipart part has actually landed.
+
+Rows that have fallen out of the window hold nobody's allowance any more and are
+deleted by the staged-upload sweeper on its normal cadence
+(`FILEX_UPLOAD_SWEEP_INTERVAL`), which always keeps at least one whole window.
+
+## The admin API
+
+| Route | Body / query | Answer |
+|---|---|---|
+| `GET /api/admin/quotas` | — | `{"defaults":{"quota_bytes","quota_files","upload_bytes","upload_window_hours"}}` |
+| `PATCH /api/admin/quotas` | any subset of those four | validated (≥ 0; window 1–720), then the same shape as `GET` |
+| `GET /api/admin/quotas/users` | `?limit=&offset=&q=` (default 50, max 200; `q` matches e-mail or display name) | `{"users":[…],"total","limit","offset"}` |
+| `GET /api/admin/users/{id}/quota` | — | the snapshot **plus** `"overrides"` (the raw tri-state) |
+| `PATCH /api/admin/users/{id}/quota` | `{quota_bytes?, quota_files?, quota_upload_bytes?}`, each `-1 \| 0 \| N` | the same as `GET` |
+| `POST /api/admin/users/{id}/quota/recompute` | — | `{"ok":true,"used_bytes","used_files"}` |
+| `GET /api/files/quota/me` | — | the snapshot, **without** `overrides` |
+
+A `PATCH` sets only the fields it names, so editing one ceiling never blanks
+another, and a `PATCH` that fails validation on **any** field writes **none** of
+them. `POST` is kept as an alias of `PATCH` on the per-user route.
+
+One row of `/api/admin/quotas/users`:
+
+```json
+{
+  "id": 7, "email": "a@b.local", "display_name": "Ann", "role": "user",
+  "overrides": { "quota_bytes": 0, "quota_files": -1, "quota_upload_bytes": 0 },
+  "effective": { "quota_bytes": 1048576, "quota_files": 0, "upload_bytes": 0 },
+  "used_bytes": 4096, "used_files": 3, "upload_used_bytes": 512
+}
+```
 
 ## Where it is implemented
 
