@@ -27,7 +27,7 @@
 
 services:
   filex:
-    image: ${FILEX_IMAGE:-ghcr.io/brf-tech/filex:latest}   # full image (thumbnails included)
+    image: ${FILEX_IMAGE:-${FILEX_IMAGE_BASE:-ghcr.io/brf-tech}/filex:latest}   # full image (thumbnails included)
     environment:
       FILEX_PUBLIC_URL: https://${FILEX_DOMAIN}
       FILEX_DB_DRIVER: postgres
@@ -252,7 +252,7 @@ services:
     # filex embeds the p2r3/convert universal converter (GPL-2.0, in-browser
     # WASM) in a hidden iframe. This is our fork with the embed bridge; see
     # docs/CONVERT-INTEGRATION.md. Caddy serves it under /convert.
-    image: ${CONVERT_IMAGE:-ghcr.io/brf-tech/converter-filex:latest}
+    image: ${CONVERT_IMAGE:-${FILEX_IMAGE_BASE:-ghcr.io/brf-tech}/converter-filex:latest}
     profiles: ["convert"]
     restart: unless-stopped
 

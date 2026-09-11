@@ -40,7 +40,20 @@ on:
 
 permissions:
   contents: write   # create the GitHub Release + upload assets
-  packages: write   # push images to ghcr.io
+  packages: write   # push images to the registry
+
+# Every image name in this workflow is built from these two. A fork publishes
+# to its own namespace by setting the repository VARIABLES of the same names
+# (Settings → Secrets and variables → Actions → Variables) — no file in the
+# repo has to be edited, and nothing here conflicts when upstream is merged.
+env:
+  REGISTRY: ${{ vars.REGISTRY || 'ghcr.io' }}
+  IMAGE_BASE: ${{ vars.IMAGE_BASE || 'ghcr.io/brf-tech' }}
+
+  # The toolchain tag the `full` image is built on (docker/Dockerfile.tools,
+  # published by tools-image.yml). Dated, never floating: an ffmpeg upgrade
+  # must not land inside a release nobody built for it.
+  TOOLS_TAG: alpine3.20-20260911
 
 jobs:
   # ── app/ checks (the SPA the binaries embed) ────────────────────────────
@@ -181,10 +194,6 @@ jobs:
   # GitHub Release beside it — delete the tag from ghcr.io by hand if that
   # happens; it has to be a deliberate cleanup, not a silent inconsistency.
   docker:
-    env:
-      # The toolchain image the `full` variant is built on. Bump this when
-      # docker/Dockerfile.tools is republished; keep it dated, never floating.
-      TOOLS_IMAGE: ghcr.io/brf-tech/filex-tools:alpine3.20-20260911
     strategy:
       fail-fast: false
       matrix:
@@ -207,7 +216,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
@@ -219,14 +228,14 @@ jobs:
           file: docker/Dockerfile
           platforms: ${{ matrix.platform }}
           build-args: |
-            RUNTIME_BASE=${{ env.TOOLS_IMAGE }}
+            RUNTIME_BASE=${{ env.IMAGE_BASE }}/filex-tools:${{ env.TOOLS_TAG }}
             VERSION=${{ github.ref_name }}
             COMMIT=${{ github.sha }}
             DATE=${{ steps.meta.outputs.date }}
           cache-from: type=gha,scope=image-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=image-${{ matrix.arch }}
           # Push by digest only; docker-manifest attaches the human tags.
-          outputs: type=image,name=ghcr.io/brf-tech/filex,push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.IMAGE_BASE }}/filex,push-by-digest=true,name-canonical=true,push=true
 
       - name: Slim image
         id: slim
@@ -242,7 +251,7 @@ jobs:
             DATE=${{ steps.meta.outputs.date }}
           cache-from: type=gha,scope=image-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=image-${{ matrix.arch }}
-          outputs: type=image,name=ghcr.io/brf-tech/filex,push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.IMAGE_BASE }}/filex,push-by-digest=true,name-canonical=true,push=true
 
       # The digests travel to the manifest job as files named after the digest,
       # so two matrix legs writing into one artifact never collide.
@@ -278,13 +287,13 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create the multi-arch tags
         run: |
           set -euo pipefail
-          img=ghcr.io/brf-tech/filex
+          img="${IMAGE_BASE}/filex"
           ver="${GITHUB_REF_NAME}"
 
           join() {                       # join <variant> <tag...>

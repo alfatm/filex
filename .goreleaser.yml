@@ -25,6 +25,12 @@ project_name: filex
 # If you need a local-friendly assertion, run scripts/sync-embed.mjs
 # before invoking goreleaser.
 
+# Registry + namespace used in the release notes below. release.yml exports
+# IMAGE_BASE for the whole workflow; this default keeps a local
+# `goreleaser release --snapshot` working.
+env:
+  - IMAGE_BASE={{ if index .Env "IMAGE_BASE" }}{{ .Env.IMAGE_BASE }}{{ else }}ghcr.io/brf-tech{{ end }}
+
 builds:
   - id: filex
     main: ./cmd/filex
@@ -141,8 +147,8 @@ release:
     Download a binary below, or pull a Docker image:
 
     ```bash
-    docker pull ghcr.io/brf-tech/filex:slim-{{ .Tag }}
-    docker pull ghcr.io/brf-tech/filex:full-{{ .Tag }}
+    docker pull {{ .Env.IMAGE_BASE }}/filex:slim-{{ .Tag }}
+    docker pull {{ .Env.IMAGE_BASE }}/filex:full-{{ .Tag }}
     ```
   footer: |
     ---

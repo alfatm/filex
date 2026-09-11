@@ -10,7 +10,7 @@
 #
 # Thumbnails are not a profile — one service cannot be two images. The programs
 # the thumbnailer shells out to live in the `full` image, so set BOTH in `.env`:
-#   FILEX_IMAGE=ghcr.io/brf-tech/filex:full
+#   FILEX_IMAGE=ghcr.io/brf-tech/filex:full   (or just FILEX_IMAGE_BASE)
 #   FILEX_THUMBS_ENABLED=true
 # Office documents are the one kind that does NOT come with `full`: their
 # converter is the `libreoffice` profile below, reached over HTTP.
@@ -27,7 +27,7 @@ services:
   # filex — set FILEX_IMAGE to the `full` tag if you want thumbnails.
   # ---------------------------------------------------------------------
   filex:
-    image: ${FILEX_IMAGE:-ghcr.io/brf-tech/filex:slim}
+    image: ${FILEX_IMAGE:-${FILEX_IMAGE_BASE:-ghcr.io/brf-tech}/filex:slim}
     # `docker compose up` pulls the image above. `up --build` builds it from
     # this tree instead — the admin SPA, the end-user app and the Go binary,
     # all embedded. FILEX_RUNTIME_BASE picks slim (the default, plain alpine)

@@ -204,8 +204,8 @@ removes a cached thumbnail on a schedule.
 Image thumbnails and placeholder cards work on **any** image, including the
 smaller **`:slim`** image, because they need no external binary.
 
-The default **`ghcr.io/brf-tech/filex:latest`** image bundles the tools that
-unlock the richer kinds:
+The default **`:latest`** image ([which one that is](DOCKER.md#images)) bundles
+the tools that unlock the richer kinds:
 
 ```
 ffmpeg          → video + audio thumbnails
@@ -228,8 +228,9 @@ fonts (noto/liberation/dejavu)  → so PDF text isn't rendered as boxes
 
 These tools are not installed by the filex recipe: they are a **separate
 image**, `docker/Dockerfile.tools`, published as
-`ghcr.io/brf-tech/filex-tools:alpine<version>-<YYYYMMDD>` on its own cycle, and
-`full` is that image with the filex binary on top (`--build-arg RUNTIME_BASE`).
+`filex-tools:alpine<version>-<YYYYMMDD>` on its own cycle (see [The toolchain
+image](DOCKER.md#the-toolchain-image)), and `full` is that image with the filex
+binary on top (`--build-arg RUNTIME_BASE`).
 They change a few times a year and filex changes weekly, so the two have no
 reason to be rebuilt together — and `slim` cannot accidentally acquire them,
 because no line of `docker/Dockerfile` installs a thumbnail tool.

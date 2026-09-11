@@ -13,7 +13,7 @@
 
 services:
   filex:
-    image: ${FILEX_IMAGE:-ghcr.io/brf-tech/filex:latest}
+    image: ${FILEX_IMAGE:-${FILEX_IMAGE_BASE:-ghcr.io/brf-tech}/filex:latest}
     ports:
       - "5212:5212"
     environment:

@@ -2,6 +2,23 @@
 # skipping the in-image frontend build. Local hot-fix builds only; the canonical
 # recipe is docker/Dockerfile.
 #
+# ⚠ NOT PUBLISHABLE, for two reasons that the file name only hints at:
+#
+#   1. It is NOT reproducible. The frontend is whatever happens to be sitting
+#      in web/dist, packages/webcomponent/dist and app/dist on the machine that
+#      runs the build — a stale bundle is embedded silently. The root
+#      .dockerignore excludes those directories precisely so the canonical
+#      recipe can never pick them up; this file is exempted by its own
+#      docker/Dockerfile.local.dockerignore, which BuildKit resolves BY NAME.
+#      Rename this file and that exemption stops applying, with no error —
+#      the build just breaks somewhere confusing.
+#
+#   2. It is the FATTEST recipe in the repo, and deliberately off-doctrine: it
+#      is the only one that still bundles LibreOffice + a JRE (~730 MB), which
+#      everything else routes to a conversion service (FILEX_LIBREOFFICE_URL).
+#      Convenient when you are debugging office thumbnails on one machine; not
+#      what anybody should ship.
+#
 # Build (from repo root):
 #   pnpm -r --filter='./packages/*' build
 #   pnpm --filter='./web' build
