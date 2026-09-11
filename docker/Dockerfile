@@ -1,26 +1,41 @@
-# filex image — two targets from one recipe:
+# filex image — slim or full, selected by the RUNTIME_BASE build argument:
 #
-#   docker build -f docker/Dockerfile --target slim -t filex:slim .
-#   docker build -f docker/Dockerfile --target full -t filex:full .   # default
+#   docker build -f docker/Dockerfile -t filex:slim .                  # default
+#   docker build -f docker/Dockerfile -t filex:full \
+#     --build-arg RUNTIME_BASE=ghcr.io/brf-tech/filex-tools:alpine3.20-20260911 .
 #
 # slim carries the Go binary and nothing else. Image thumbnails are produced in
 # pure Go (internal/thumb/image.go) and work there; every thumbnail that shells
-# out to another program needs `full`. filex probes for each tool at start
-# (internal/capability) and reports what it found on /api/files/capabilities, so
-# a missing one is a disabled feature with a reason, not a crash.
+# out to another program needs the toolchain, which lives in its OWN image —
+# docker/Dockerfile.tools, released on its own cycle because ffmpeg and
+# Ghostscript change a few times a year and filex changes weekly. filex probes
+# for each tool at start (internal/capability) and reports what it found on
+# /api/files/capabilities, so a missing one is a disabled feature with a
+# reason, not a crash.
 #
-# Office documents are the exception in BOTH targets: their converter is a
+# ⚠ This replaced `--target slim|full`. The targets are gone on purpose: the
+# recipe below installs NO thumbnail tool, so there is no longer a line anyone
+# can add to it that silently fattens slim — the bug that shipped a 511 MB
+# "~40 MB" image for eleven releases up to v0.31.0.
+#
+# Office documents are the exception in BOTH variants: their converter is a
 # separate service (FILEX_LIBREOFFICE_URL), because bundling LibreOffice costs
-# more than everything else in this file combined.
+# more than the whole toolchain image put together.
 #
 # Run:
 #   docker run -p 5212:5212 -v $(pwd)/data:/data filex:full
 #
 # Multi-arch: build stages are pinned to $BUILDPLATFORM so the Node/Go work
 # always runs natively on the build host; the Go stage cross-compiles via
-# TARGETOS/TARGETARCH (CGO=0 makes this free). Only the runtime stages (apk
-# installs) run per-target-arch, under QEMU when cross-building.
+# TARGETOS/TARGETARCH (CGO=0 makes this free). Only the runtime stage runs
+# per-target-arch, under QEMU when cross-building — and it is now one apk line
+# and a COPY, because the heavy installs moved to the tools image.
 #   docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile .
+
+# Declared here and not next to the runtime stage it feeds: an ARG used in a
+# FROM line has to be global, i.e. before the first FROM. See "Runtime" below
+# for what the values mean.
+ARG RUNTIME_BASE=alpine:3.20
 
 # ---------------------------------------------------------------------------
 # Stage 1: npm packages (core, webcomponent, react) + admin UI + end-user app
@@ -120,13 +135,26 @@ RUN MODULE="$(go list -m)" && \
     ./cmd/filex
 
 # ---------------------------------------------------------------------------
-# Runtime base — shared by both targets. Metadata lives here so neither leaf
-# stage repeats it, and the binary is copied in last so a code change never
-# invalidates the apk layers below.
+# Runtime
 # ---------------------------------------------------------------------------
+# RUNTIME_BASE is the whole slim/full switch:
+#
+#   alpine:3.20                              → slim (~179 MB)
+#   ghcr.io/brf-tech/filex-tools:alpine3.20-*  → full (~535 MB)
+#
+# The tools tag is PINNED by whoever builds (CI passes it explicitly; see
+# .github/workflows/release.yml), never floating: a toolchain upgrade has to be
+# a deliberate change, not something that lands in a release by itself.
+#
+# ca-certificates and tzdata are installed here rather than assumed, so the
+# default alpine base works with no network dependency on a published tools
+# image. On the tools base the line is a no-op.
 #   ca-certificates — outbound TLS (S3, WebDAV, OIDC, update checks).
 #   tzdata          — local-time rendering and scheduled jobs.
-FROM alpine:3.20 AS runtime
+#
+# The binary is copied in last so a code change never invalidates the layers
+# below it.
+FROM ${RUNTIME_BASE} AS runtime
 RUN apk --no-cache add ca-certificates tzdata
 
 EXPOSE 5212
@@ -143,43 +171,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 ENTRYPOINT ["/usr/local/bin/filex"]
 CMD ["serve"]
 
-# ---------------------------------------------------------------------------
-# Runtime base + the programs the thumbnailer shells out to.
-# ---------------------------------------------------------------------------
-#   ffmpeg                 — video thumbnails (1st keyframe).
-#   imagemagick            — probed as `magick`/`convert` (capability/service.go).
-#   ghostscript + poppler  — PDF -> JPEG (page 1). gs preferred, pdftoppm as
-#                            fallback (thumb/pdf.go).
-#   rsvg-convert           — SVG rasterisation.
-#   fonts                  — without them Ghostscript renders the non-ASCII text
-#                            of a PDF that embeds no font as boxes.
-#
-# ⚠ LibreOffice is NOT here, and adding it back is a mistake that costs ~730 MB
-# (libreoffice 558 MB + the openjdk17 JRE its xlsx/docx pipeline needs, 172 MB —
-# measured on alpine:3.20). Office thumbnails go through a conversion SERVICE
-# instead: set FILEX_LIBREOFFICE_URL at a Gotenberg-compatible endpoint, or
-# turn on the `libreoffice` profile in docker-compose.yml. The local `soffice` path in
-# thumb/office.go is kept only for hosts that already have it installed.
-#
-# This layer is most of the image size; keep it out of the slim target.
-FROM runtime AS runtime-full
-RUN apk --no-cache add \
-        ffmpeg \
-        imagemagick \
-        ghostscript \
-        poppler-utils \
-        rsvg-convert \
-        ttf-liberation \
-        ttf-dejavu \
-        font-noto \
-        font-noto-cjk
-
-# ---------------------------------------------------------------------------
-# Targets
-# ---------------------------------------------------------------------------
-FROM runtime AS slim
-COPY --from=backend-build /out/filex /usr/local/bin/filex
-
-# Last stage = the default target of a plain `docker build`.
-FROM runtime-full AS full
 COPY --from=backend-build /out/filex /usr/local/bin/filex

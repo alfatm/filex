@@ -15,19 +15,20 @@ that lets you assemble the stack you actually need.
 
 ## Images
 
-Sizes are what you download (the compressed layers), measured on v0.31.0.
-On disk after `docker pull` they unpack to roughly four times that — **164 MB**
-for `slim` and **1.26 GB** for `full` (`docker images`, same tags, same day).
-Both numbers are real; the compressed one is what a registry page shows you and
-the other is what your disk loses, so neither belongs in a sentence alone.
+Sizes are what you download (the compressed layers), measured on an amd64
+build of the current recipe. On disk after `docker pull` they unpack to
+roughly two and a half times that — **180 MB** for `slim` and **525 MB** for
+`full` (`docker images`, same build). Both numbers are real; the compressed one
+is what a registry page shows you and the other is what your disk loses, so
+neither belongs in a sentence alone.
 
 | Tag | Size | Includes |
 |---|---|---|
-| `ghcr.io/brf-tech/filex:latest` | ~510 MB | The full toolchain. Alias for `full`. |
-| `ghcr.io/brf-tech/filex:full` | ~510 MB | + ffmpeg, ghostscript, poppler-utils, libreoffice, a headless JRE, rsvg-convert, fonts. |
-| `ghcr.io/brf-tech/filex:slim` | **~43 MB** | The Go binary and the embedded admin UI. Nothing else. |
-| `:vX.Y.Z` / `:full-vX.Y.Z` | ~510 MB | Pinned full. |
-| `:slim-vX.Y.Z` | ~43 MB | Pinned slim. |
+| `ghcr.io/brf-tech/filex:latest` | ~205 MB | The full toolchain. Alias for `full`. |
+| `ghcr.io/brf-tech/filex:full` | ~205 MB | + ffmpeg, ghostscript, poppler-utils, rsvg-convert, fonts — the [toolchain image](#the-toolchain-image) with the binary on top. |
+| `ghcr.io/brf-tech/filex:slim` | **~47 MB** | The Go binary and the embedded admin UI. Nothing else. |
+| `:vX.Y.Z` / `:full-vX.Y.Z` | ~205 MB | Pinned full. |
+| `:slim-vX.Y.Z` | ~47 MB | Pinned slim. |
 
 The Go binary is identical in both — `slim` simply has none of the programs the
 thumbnailer shells out to.
@@ -46,26 +47,60 @@ with a stated reason — not a crash and not a silent failure.
 > recipe, so this table promised ~40 MB while the registry served 511 MB. The
 > number above is measured, not aspirational: `docker save … | gzip | wc -c`.
 
+### The toolchain image
+
+The programs the thumbnailer shells out to are **not** in `docker/Dockerfile`.
+They live in their own image, built from `docker/Dockerfile.tools` and
+published by its own workflow (`.github/workflows/tools-image.yml`) as
+`ghcr.io/brf-tech/filex-tools:alpine<version>-<YYYYMMDD>`:
+
+```
+ffmpeg, ghostscript, poppler-utils, rsvg-convert,
+ttf-liberation, ttf-dejavu, font-noto, font-noto-cjk   (~350 MB unpacked)
+```
+
+They change a few times a year; filex changes weekly. Split apart, a filex
+release that touches no tool ships one binary layer on top of a base the
+registry already has, instead of re-resolving and re-downloading the whole
+toolchain on both architectures.
+
+`full` **is** that image plus the binary, so `RUNTIME_BASE` is the entire
+slim/full switch — which also means `docker/Dockerfile` installs no thumbnail
+tool at all and cannot accidentally fatten `slim`.
+
+The tag filex is built on is **pinned and dated** in `TOOLS_IMAGE`
+(`.github/workflows/release.yml`). Republishing the toolchain does not change
+any release until someone bumps it.
+
 ### Build locally
 
 ```bash
-docker build -t filex:full -f docker/Dockerfile --target full .
-docker build -t filex:slim -f docker/Dockerfile --target slim .
+# slim — the default base is plain alpine
+docker build -t filex:slim -f docker/Dockerfile .
+
+# full — pass the toolchain image as the runtime base
+docker build -t filex:full -f docker/Dockerfile \
+  --build-arg RUNTIME_BASE=ghcr.io/brf-tech/filex-tools:alpine3.20-20260911 .
+
+# or build the toolchain yourself first (no registry needed)
+docker build -t filex-tools:local -f docker/Dockerfile.tools docker/
+docker build -t filex:full -f docker/Dockerfile \
+  --build-arg RUNTIME_BASE=filex-tools:local .
 ```
 
-Or through Compose, which is the same recipe with the tag and target read from
-`.env`:
+Or through Compose, which is the same recipe with the tag and base read from
+`.env` (`FILEX_IMAGE`, `FILEX_RUNTIME_BASE`):
 
 ```bash
 docker compose up --build              # server + admin SPA + end-user app
 BUILD_APP=0 docker compose up --build  # skip the app; the apex serves /admin/
 ```
 
-Both targets come from one multi-stage Dockerfile:
+Both variants come from one multi-stage Dockerfile:
 1. `frontend-build` — node 20 + pnpm, builds packages, the admin UI and the end-user app (`/app/`)
 2. `embed-prep` — stages the dist files
 3. `backend-build` — golang 1.25, builds with `//go:embed` consuming the staged dist
-4. runtime — `alpine:3.20`; `runtime` is shared, `runtime-full` adds the thumbnail toolchain, and the `slim`/`full` targets are those two plus the binary
+4. `runtime` — `FROM ${RUNTIME_BASE}`: `alpine:3.20` for slim, the toolchain image for full, plus ca-certificates/tzdata, the container metadata and the binary
 
 Pass build-args to embed version metadata into the binary:
 ```bash

@@ -236,7 +236,6 @@ export interface Capabilities {
   version: string;
   build: string;
   ffmpeg: boolean;
-  imagemagick: boolean;
   ghostscript: boolean;
   libreoffice: boolean;
   onlyoffice_url?: string | null;

@@ -141,25 +141,33 @@ jobs:
   # ── Docker images → ghcr.io ────────────────────────────────────────────
   #
   # Two images, built once per architecture on a runner of that architecture,
-  # from one recipe (docker/Dockerfile) via --target:
+  # from one recipe (docker/Dockerfile) via the RUNTIME_BASE build argument:
   #
-  #   target: full   full toolchain (ffmpeg, ghostscript, poppler, libreoffice
-  #                  + a JRE, fonts)              → latest, vX, full, full-vX
-  #   target: slim   the binary and nothing else  → slim, slim-vX
+  #   RUNTIME_BASE=<the tools image>  the thumbnail toolchain (ffmpeg,
+  #                  ghostscript, poppler, rsvg, fonts) → latest, vX, full, full-vX
+  #   RUNTIME_BASE unset (alpine)     the binary and nothing else → slim, slim-vX
   #
-  # Both targets share the frontend and Go stages, so they also share one build
+  # Both builds share the frontend and Go stages, so they also share one build
   # cache scope: the second build reuses the first one's work instead of
   # repeating it.
   #
+  # ⚠ TOOLS_IMAGE is pinned to a DATED tag, and bumping it is a commit in this
+  # repo. A floating tag would let an ffmpeg upgrade land inside a filex
+  # release nobody built for it. The image itself is published by
+  # tools-image.yml, on its own schedule — that separation is the whole point:
+  # ~340 MB of packages that change a few times a year stopped being
+  # re-resolved and re-downloaded by every release on both architectures.
+  #
   # ⚠ `slim` must stay slim. It was built from the FULL recipe until v0.31.0 —
   # docs promised ~40 MB and the registry served 511 MB, all three of
-  # latest/slim/full byte-for-byte identical. Adding a package to the `runtime`
-  # stage rather than to `runtime-full` reintroduces exactly that.
+  # latest/slim/full byte-for-byte identical. That is now structural rather
+  # than a rule to remember: docker/Dockerfile installs no thumbnail tool at
+  # all, so there is no line in it that can fatten slim.
   #
   # ⚠ arm64 was emulated. QEMU only ever hurt the runtime stage — the Node and
   #    Go stages are pinned to $BUILDPLATFORM and the binary cross-compiles for
-  #    free (CGO_ENABLED=0) — but that stage is `apk add libreoffice + JRE`,
-  #    which is exactly the expensive thing to emulate. GitHub's free
+  #    free (CGO_ENABLED=0) — but that stage used to be `apk add` of the whole
+  #    toolchain, which is exactly the expensive thing to emulate. GitHub's free
   #    `ubuntu-24.04-arm` runner (verified for this repo: aarch64, 4 cpus,
   #    15 GiB) removes the emulation entirely. Each runner builds and pushes
   #    ONE architecture by digest; `docker-manifest` then joins the digests
@@ -173,6 +181,10 @@ jobs:
   # GitHub Release beside it — delete the tag from ghcr.io by hand if that
   # happens; it has to be a deliberate cleanup, not a silent inconsistency.
   docker:
+    env:
+      # The toolchain image the `full` variant is built on. Bump this when
+      # docker/Dockerfile.tools is republished; keep it dated, never floating.
+      TOOLS_IMAGE: ghcr.io/brf-tech/filex-tools:alpine3.20-20260911
     strategy:
       fail-fast: false
       matrix:
@@ -205,9 +217,9 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
-          target: full
           platforms: ${{ matrix.platform }}
           build-args: |
+            RUNTIME_BASE=${{ env.TOOLS_IMAGE }}
             VERSION=${{ github.ref_name }}
             COMMIT=${{ github.sha }}
             DATE=${{ steps.meta.outputs.date }}
@@ -222,7 +234,7 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
-          target: slim
+          # No RUNTIME_BASE: the Dockerfile default is plain alpine.
           platforms: ${{ matrix.platform }}
           build-args: |
             VERSION=${{ github.ref_name }}

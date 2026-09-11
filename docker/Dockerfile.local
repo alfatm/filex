@@ -54,7 +54,6 @@ RUN apk --no-cache add \
         ca-certificates \
         tzdata \
         ffmpeg \
-        imagemagick \
         ghostscript \
         poppler-utils \
         libreoffice \

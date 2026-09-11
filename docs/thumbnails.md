@@ -212,14 +212,13 @@ ffmpeg          → video + audio thumbnails
 ghostscript     → PDF (page 1)  ┐ office docs render via
 poppler-utils   → PDF fallback  ┘ the office service → PDF → these
 rsvg-convert    → SVG
-imagemagick     → probed as `magick` / `convert`
 fonts (noto/liberation/dejavu)  → so PDF text isn't rendered as boxes
 ```
 
 > **LibreOffice is not in the list** — office documents need the
 > [conversion service](#the-office-conversion-service). It used to be bundled,
-> and dropping it took the `full` image from **1.28 GB to 535 MB** (`slim` is
-> 179 MB and carries none of these).
+> and dropping it took the `full` image from **1.28 GB to 525 MB** (`slim` is
+> 180 MB and carries none of these).
 
 > The stock `full` image ships `rsvg-convert` (librsvg) too, so SVG thumbnails
 > work on it. Whatever image you run, the definitive check for what's actually
@@ -227,9 +226,18 @@ fonts (noto/liberation/dejavu)  → so PDF text isn't rendered as boxes
 > — a kind whose tool is missing reports `false` there and lands its files in
 > `skipped`, never in a placeholder.
 
-If you build your own leaner image, drop tools from the install list — the
-capability probe will report `video=false` / `pdf=false` / etc. and the pipeline
-routes around the missing generators automatically.
+These tools are not installed by the filex recipe: they are a **separate
+image**, `docker/Dockerfile.tools`, published as
+`ghcr.io/brf-tech/filex-tools:alpine<version>-<YYYYMMDD>` on its own cycle, and
+`full` is that image with the filex binary on top (`--build-arg RUNTIME_BASE`).
+They change a few times a year and filex changes weekly, so the two have no
+reason to be rebuilt together — and `slim` cannot accidentally acquire them,
+because no line of `docker/Dockerfile` installs a thumbnail tool.
+
+If you build your own leaner image, copy `docker/Dockerfile.tools`, drop what
+you don't need and point `RUNTIME_BASE` at it — the capability probe will
+report `video=false` / `pdf=false` / etc. and the pipeline routes around the
+missing generators automatically.
 
 ---
 
@@ -264,7 +272,7 @@ Capabilities (used by the UI and handy for debugging) are exposed at
 curl https://files.example.com/api/files/capabilities | jq .thumbs
 ```
 ```json
-{ "image": true, "imagemagick": true, "video": true, "audio": true,
+{ "image": true, "video": true, "audio": true,
   "pdf": true, "office": true, "svg": false }
 ```
 

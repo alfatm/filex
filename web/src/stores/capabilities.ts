@@ -8,7 +8,6 @@ const EMPTY: Capabilities = {
   version: '0.0.0',
   build: 'dev',
   ffmpeg: false,
-  imagemagick: false,
   ghostscript: false,
   libreoffice: false,
   onlyoffice_url: null,

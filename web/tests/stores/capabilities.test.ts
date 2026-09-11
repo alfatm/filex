@@ -34,7 +34,6 @@ describe('stores/capabilities', () => {
       version: '1.0.0',
       build: 'abc',
       ffmpeg: true,
-      imagemagick: false,
       ghostscript: true,
       libreoffice: false,
       onlyoffice_url: 'https://docs.example.com',
@@ -70,7 +69,6 @@ describe('stores/capabilities', () => {
       version: '1',
       build: 'x',
       ffmpeg: true,
-      imagemagick: false,
       ghostscript: false,
       libreoffice: false,
       onlyoffice_url: 'https://x',
@@ -85,7 +83,6 @@ describe('stores/capabilities', () => {
     const store = useCapabilitiesStore();
     await store.fetch();
     expect(store.has('ffmpeg')).toBe(true);
-    expect(store.has('imagemagick')).toBe(false);
     expect(store.has('onlyoffice_url')).toBe(true);
     expect(store.has('drawio_url')).toBe(false);
     expect(store.has('storage_drivers')).toBe(true);
@@ -98,7 +95,6 @@ describe('stores/capabilities', () => {
       version: '1',
       build: 'x',
       ffmpeg: false,
-      imagemagick: false,
       ghostscript: false,
       libreoffice: false,
       onlyoffice_url: null,
@@ -114,7 +110,6 @@ describe('stores/capabilities', () => {
       version: '2',
       build: 'y',
       ffmpeg: true,
-      imagemagick: true,
       ghostscript: true,
       libreoffice: true,
       onlyoffice_url: null,

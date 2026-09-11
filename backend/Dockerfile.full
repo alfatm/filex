@@ -9,7 +9,6 @@ FROM ${BASE_IMAGE}
 USER root
 RUN apk --no-cache add \
     ffmpeg \
-    imagemagick \
     ghostscript \
     poppler-utils \
     rsvg-convert \

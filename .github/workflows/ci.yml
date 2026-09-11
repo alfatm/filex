@@ -228,7 +228,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      # Build the full image end-to-end (frontend + backend + embed) to catch
+      # Build both variants end-to-end (frontend + backend + embed) to catch
       # multi-stage regressions. No push — release publishing is separate.
-      - name: Build image
-        run: docker build -f docker/Dockerfile -t filex:ci .
+      #
+      # The toolchain image is built HERE rather than pulled from ghcr, so this
+      # job also covers docker/Dockerfile.tools and stays green on a PR that
+      # edits the tool list before anything is published. The full build reuses
+      # every stage of the slim one; only the last FROM differs.
+      - name: Build toolchain image
+        run: docker build -f docker/Dockerfile.tools -t filex-tools:ci docker/
+      - name: Build slim image
+        run: docker build -f docker/Dockerfile -t filex:ci-slim .
+      - name: Build full image
+        run: |
+          docker build -f docker/Dockerfile \
+            --build-arg RUNTIME_BASE=filex-tools:ci -t filex:ci-full .

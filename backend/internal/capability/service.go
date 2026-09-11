@@ -211,9 +211,6 @@ func (s *Service) refresh(ctx context.Context) (*model.Capabilities, error) {
 	if thumbsDisabled {
 		caps.Thumbs = model.ThumbCapabilities{}
 	}
-	if !thumbsDisabled && (has("magick") || has("convert")) {
-		caps.Thumbs.ImageMagick = true
-	}
 	if !thumbsDisabled && has("ffmpeg") {
 		caps.Thumbs.Video = true
 		caps.Thumbs.Audio = true

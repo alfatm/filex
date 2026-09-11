@@ -30,14 +30,16 @@ services:
     image: ${FILEX_IMAGE:-ghcr.io/brf-tech/filex:slim}
     # `docker compose up` pulls the image above. `up --build` builds it from
     # this tree instead — the admin SPA, the end-user app and the Go binary,
-    # all embedded. Keep FILEX_BUILD_TARGET in step with the tag in
-    # FILEX_IMAGE; BUILD_APP=0 drops the end-user app from the build.
+    # all embedded. FILEX_RUNTIME_BASE picks slim (the default, plain alpine)
+    # or full (the published toolchain image, see docker/Dockerfile.tools);
+    # keep it in step with the tag in FILEX_IMAGE. BUILD_APP=0 drops the
+    # end-user app from the build.
     build:
       context: .
       dockerfile: docker/Dockerfile
-      target: ${FILEX_BUILD_TARGET:-slim}
       args:
         BUILD_APP: ${BUILD_APP:-1}
+        RUNTIME_BASE: ${FILEX_RUNTIME_BASE:-alpine:3.20}
     # Without this, some Compose versions build on a plain `up` when the image
     # is not already local — a ten-minute surprise for someone who wanted a pull.
     pull_policy: missing

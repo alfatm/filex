@@ -523,7 +523,8 @@ filemanager/
 ├── web/                            # Vue 3 admin SPA (embedded)
 ├── demo/                           # standalone HTML demos
 ├── docker/
-│   ├── Dockerfile                  # both images: --target slim | full
+│   ├── Dockerfile                  # both images: --build-arg RUNTIME_BASE
+│   ├── Dockerfile.tools            # the thumbnail toolchain, released apart
 │   └── Dockerfile.local            # local hot-fix builds from a host dist
 │
 ├── scripts/
