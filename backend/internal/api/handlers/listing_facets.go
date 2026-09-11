@@ -40,6 +40,31 @@ func listingFacets(r *http.Request) db.NodeFacets {
 		t := time.UnixMilli(ms).UTC()
 		f.ModifiedAfter = &t
 	}
+	// The upper edge of the same window. The details panel asks for "written
+	// within a day either side of this row", which needs both bounds; a client
+	// that sends only one still gets the open-ended filter it asked for.
+	if ms := facetInt(q.Get("modified_before")); ms > 0 {
+		t := time.UnixMilli(ms).UTC()
+		f.ModifiedBefore = &t
+	}
+	if ms := facetInt(q.Get("created_after")); ms > 0 {
+		t := time.UnixMilli(ms).UTC()
+		f.CreatedAfter = &t
+	}
+	if ms := facetInt(q.Get("created_before")); ms > 0 {
+		t := time.UnixMilli(ms).UTC()
+		f.CreatedBefore = &t
+	}
+	// `tag=a&tag=b`, or one comma-separated value — the same two spellings
+	// `ext` takes, and the same AND between them: every tag listed has to be on
+	// the node. Lower-cased because that is the only shape SetNodeTags stores.
+	for _, raw := range q["tag"] {
+		for _, tag := range strings.Split(raw, ",") {
+			if tag = strings.ToLower(strings.TrimSpace(tag)); tag != "" {
+				f.Tags = append(f.Tags, tag)
+			}
+		}
+	}
 	if v := facetInt(q.Get("size_min")); v > 0 {
 		f.SizeMin = &v
 	}

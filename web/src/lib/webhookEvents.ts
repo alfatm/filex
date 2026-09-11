@@ -22,6 +22,7 @@ export const WEBHOOK_EVENTS = [
   'file.infected',
   'file.deleted',
   'file.trashed',
+  'file.restored',
   'file.moved',
   'share.created',
   'drop.received',

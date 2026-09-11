@@ -64,8 +64,12 @@ function pick(value: string) {
   menu.value = null;
   const next: ListingFilter = { ...files.filter };
   if (props.id === 'type') next.fileType = value as ListingFilter['fileType'];
-  else if (props.id === 'modified') next.modified = value as ListingFilter['modified'];
-  else if (props.id === 'size') next.size = value as ListingFilter['size'];
+  else if (props.id === 'modified') {
+    // Both windows read the same date column, so the chip's preset and the panel's "around this date" replace
+    // each other rather than stacking into a window nothing can be inside.
+    next.modified = value as ListingFilter['modified'];
+    next.around = null;
+  } else if (props.id === 'size') next.size = value as ListingFilter['size'];
   else next.personId = value === ANY ? null : value;
   void files.setFilter(next);
 }

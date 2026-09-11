@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
 import { AlertTriangle, Filter, Folder, FolderOpen, Info, LayoutGrid, List, MoreVertical, PencilLine, Upload } from 'lucide-vue-next';
 import FilterChip from '@/features/files/FilterChip.vue';
+import AppliedFilters from '@/features/files/AppliedFilters.vue';
 import { type FilterId } from '@/features/files/filters';
 import { useDragStore } from '@/features/files/dragStore';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
+import { useFilterQuery } from '@/features/files/useFilterQuery';
 import { useListingKeyboard } from '@/features/files/useListingKeyboard';
 import { useUploadStore } from '@/features/files/uploadStore';
 import { splitRoute } from '@/lib/path';
@@ -64,15 +66,27 @@ function onPageDrop(event: DragEvent) {
 
 const FILTERS: FilterId[] = ['type', 'people', 'modified', 'size'];
 
+// Before the watcher below, so the folder is asked for with the filter its address carries.
+useFilterQuery();
+
 // Drive AND folder follow the URL (`/files/<drive>/<path…>`). It waits on `files.ready` rather than on the drive
 // list being non-empty: `openPath` has to tell an unknown drive from one that has not loaded, and a server that
 // never answered from a drive list that is genuinely empty.
+//
+// ⚠ An address KEY is watched, and as a list of sources rather than as one getter returning a tuple. Both halves
+// matter. Every navigation builds a fresh `route.params`, so a query-only change — which the filter writes on
+// every chip (see `useFilterQuery`) — re-evaluated the getter; and a getter that returns a new array is a new
+// value every time it runs, so the callback fired for an address that had not moved. The folder was reopened
+// under the person: the same rows fetched again, and the selection cleared, so narrowing from the details panel
+// dropped the very file being described. A list of sources is compared source by source, and a string key of the
+// address compares by value.
+const address = computed(() => splitRoute(route.params.path));
+const addressKey = computed(() => `${address.value.drive ?? ''}://${address.value.path}`);
 watch(
-  () => [route.params.path, files.ready] as const,
-  async ([param, ready]) => {
+  [addressKey, () => files.ready],
+  async ([, ready]) => {
     if (!ready || route.name !== 'files') return;
-    const { drive, path } = splitRoute(param);
-    await files.openPath(drive, path);
+    await files.openPath(address.value.drive, address.value.path);
   },
   { immediate: true },
 );
@@ -140,9 +154,13 @@ watch(
 
     <!-- Multi-selection only (single selection keeps the filters); centred on the 38px filter row it replaces, so nothing below moves. -->
     <SelectionBar v-if="files.selected.length >= 2" class="mt-2" :class="view.mode === 'list' && 'mr-[9px]'" />
-    <div v-else class="mt-2 flex h-control-md items-center gap-2">
-      <div role="group" :aria-label="t('filter.title')" class="flex items-center gap-2">
+    <!-- The row WRAPS rather than squeezing: the chips set from the details panel are as many as the node has
+         tags, and on one fixed line they pushed the name box and the sort control off the page. It keeps the
+         38px height until there is a second line to draw. -->
+    <div v-else class="mt-2 flex min-h-control-md flex-wrap items-center gap-2">
+      <div role="group" :aria-label="t('filter.title')" class="flex min-w-0 flex-wrap items-center gap-2">
         <FilterChip v-for="id in FILTERS" :key="id" :id="id" />
+        <AppliedFilters />
       </div>
       <!-- Narrows the open folder by name — in memory for a small folder, on the server for a large one (see the
            store); it is cleared on every navigation. -->
@@ -152,7 +170,7 @@ watch(
         :icon="Folder"
         :height="28"
         :width="210"
-        class="!rounded"
+        class="!rounded shrink-0"
         :placeholder="t('filter.name')"
         :label="t('filter.name')"
         @update:model-value="files.setName(String($event))"

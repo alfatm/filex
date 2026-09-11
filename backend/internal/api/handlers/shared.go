@@ -79,6 +79,18 @@ func (h *Shared) SharedWithMe(w http.ResponseWriter, r *http.Request) {
 	limit := parseLimit(r.URL.Query().Get("limit"), 100, 500)
 	offset := parseLimit(r.URL.Query().Get("offset"), 0, 1_000_000)
 	facets := listingFacets(r)
+	// Tags are node_meta rows, and NodeFacets.Matches — the predicate this
+	// listing judges its rows with, since they come from grants rather than
+	// from one query — cannot read them. Resolving them to the set of nodes
+	// that carry every tag makes the chip mean here what it means in the SQL
+	// listings; the facet is then cleared, so Matches is not asked a question
+	// it has already been answered.
+	tagged, err := h.taggedNodes(r.Context(), facets.Tags)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	facets.Tags = nil
 
 	storages, err := h.Store.ListEnabledStorages(r.Context())
 	if err != nil {
@@ -147,14 +159,14 @@ func (h *Shared) SharedWithMe(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				entry, node := h.project(r.Context(), st, g, rel, granters)
-				if !keepShared(facets, node, rel, g.IsDir) {
+				if !keepShared(facets, tagged, node, rel, g.IsDir) {
 					continue
 				}
 				rows[i] = row{entry: entry, at: g.CreatedAt.UnixMilli(), level: level}
 				continue
 			}
 			entry, node := h.project(r.Context(), st, g, rel, granters)
-			if !keepShared(facets, node, rel, g.IsDir) {
+			if !keepShared(facets, tagged, node, rel, g.IsDir) {
 				continue
 			}
 			byPath[key] = len(rows)
@@ -243,7 +255,12 @@ func (h *Shared) groupGrants(ctx context.Context, storageID, userID int64) ([]*m
 // Somebody shares a folder, the page shows it, you type its name to find it
 // among a hundred others and it disappears, because the indexer had not reached
 // it yet. Everything a path can answer is answered from the path.
-func keepShared(facets db.NodeFacets, node *model.Node, rel string, isDir bool) bool {
+func keepShared(facets db.NodeFacets, tagged map[int64]bool, node *model.Node, rel string, isDir bool) bool {
+	// A tag names a node, so a row with no node behind it carries none — the
+	// same reading Matches gives a driver object.
+	if tagged != nil && (node == nil || !tagged[node.ID]) {
+		return false
+	}
 	if !facets.Any() {
 		return true
 	}
@@ -254,6 +271,35 @@ func keepShared(facets db.NodeFacets, node *model.Node, rel string, isDir bool) 
 		return false
 	}
 	return facets.MatchesPath(baseName(rel), isDir)
+}
+
+// taggedNodes is the set of nodes carrying EVERY tag asked for. nil means no
+// tag was asked for at all; an empty map means it was, and nothing carries them.
+//
+// ⚠ The store answers at most 1000 nodes per tag, so on a drive where a tag is
+// on more than that, a shared row carrying it can be missed. The SQL listings
+// have no such ceiling — they test the tag inside the query — and closing it
+// here means a store method that takes the id set rather than returning rows.
+func (h *Shared) taggedNodes(ctx context.Context, tags []string) (map[int64]bool, error) {
+	if len(tags) == 0 {
+		return nil, nil
+	}
+	var out map[int64]bool
+	for _, tag := range tags {
+		nodes, err := h.Store.ListNodesByTag(ctx, tag, 1000)
+		if err != nil {
+			return nil, err
+		}
+		next := make(map[int64]bool, len(nodes))
+		for _, n := range nodes {
+			// The first tag seeds the set; every later one intersects with it.
+			if out == nil || out[n.ID] {
+				next[n.ID] = true
+			}
+		}
+		out = next
+	}
+	return out, nil
 }
 
 func (h *Shared) project(ctx context.Context, st *model.Storage, g *model.FileGrant, rel string, granters map[int64]string) (map[string]any, *model.Node) {

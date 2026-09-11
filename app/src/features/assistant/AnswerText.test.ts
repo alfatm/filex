@@ -14,7 +14,7 @@ vi.mock('@/data', () => ({
   repository: {
     async resolvePath(_storage: string, path: string) {
       if (path !== 'Docs') throw new Error('path not found');
-      return { id: 'main://Docs', name: 'Docs', kind: 'folder', parentId: 'main://', size: 0, ownerId: 'me', shared: false, starred: false };
+      return { id: 'main://Docs', serverId: 1, name: 'Docs', kind: 'folder', parentId: 'main://', size: 0, ownerId: 'me', shared: false, starred: false };
     },
     async listFolder() {
       return { nodes: [spec], total: 1 };
@@ -28,7 +28,7 @@ async function setup(text: string) {
   setActivePinia(createPinia());
   i18n.global.locale.value = 'en';
   const files = useFilesStore();
-  files.storages = [{ id: 'main', name: 'main', rootId: 'main://', quota: noQuota(), shared: false, viaGroups: [] }];
+  files.storages = [{ id: 'main', serverId: 1, name: 'main', rootId: 'main://', quota: noQuota(), shared: false, viaGroups: [] }];
   await router.push('/files');
   const wrapper = mount(AnswerText, { props: { text }, global: { plugins: [router, i18n] } });
   return wrapper;

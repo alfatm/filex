@@ -10,6 +10,7 @@ import { extractError } from '@/api/client';
 import { formatDate, formatRelative } from '@/lib/format';
 
 import Button from '@/components/ui/Button.vue';
+import Select from '@/components/ui/Select.vue';
 import Badge from '@/components/ui/Badge.vue';
 import Input from '@/components/ui/Input.vue';
 import Table, { type Column } from '@/components/ui/Table.vue';
@@ -27,6 +28,10 @@ const shares = ref<PaginatedResponse<Share>>({
 });
 const loading = ref(false);
 const q = ref('');
+// Revoked and lapsed links stay in the table forever (the row is the audit
+// trail), so the default view is the links that still work; "all" is how an
+// operator finds a closed one to delete for good.
+const scope = ref<'active' | 'all'>('active');
 const page = ref(1);
 const pageSize = 50;
 
@@ -54,6 +59,7 @@ async function load() {
   try {
     shares.value = await SharesApi.list({
       q: q.value || undefined,
+      active_only: scope.value === 'active' || undefined,
       page: page.value,
       page_size: pageSize,
     });
@@ -64,7 +70,7 @@ async function load() {
   }
 }
 
-watch(q, () => {
+watch([q, scope], () => {
   page.value = 1;
   load();
 });
@@ -97,6 +103,13 @@ async function remove() {
   } finally {
     busyId.value = null;
   }
+}
+
+// A link nobody closed by hand but that no longer opens: TTL past, or the
+// download cap spent. Revocation is reported on its own badge.
+function isLapsed(s: Share): boolean {
+  if (s.expires_at && new Date(s.expires_at).getTime() <= Date.now()) return true;
+  return s.max_downloads != null && (s.download_count ?? 0) >= s.max_downloads;
 }
 
 // Build the public share URL the recipient would actually use. We
@@ -149,6 +162,11 @@ const displayRows = computed(() => {
     (a, b) => ((shareOf(a).download_count ?? 0) - (shareOf(b).download_count ?? 0)) * mul,
   );
 });
+
+const scopeOptions = computed(() => [
+  { value: 'active', label: t('shares.scope.active') },
+  { value: 'all', label: t('shares.scope.all') },
+]);
 
 const columns = computed<Column<Share>[]>(() => [
   { key: 'token', label: t('shares.fields.token'), cell: 'slot' },
@@ -206,6 +224,12 @@ onMounted(load);
     >
       <template #toolbar>
         <Input v-model="q" :placeholder="t('common.search')" size="sm" class="w-60" />
+        <Select
+          :model-value="scope"
+          :options="scopeOptions"
+          size="sm"
+          @update:model-value="(v) => (scope = v as 'active' | 'all')"
+        />
       </template>
 
       <template #cell-token="{ row }">
@@ -229,7 +253,18 @@ onMounted(load);
             variant="ghost"
           />
           <Badge v-if="shareOf(row).has_pin || shareOf(row).pin_set" tone="amber" size="xs">PIN</Badge>
-          <Badge v-if="shareOf(row).revoked_at || shareOf(row).revoked" tone="rose" size="xs">revoked</Badge>
+          <Badge
+            v-if="shareOf(row).revoked_at || shareOf(row).revoked"
+            tone="rose"
+            size="xs"
+            data-testid="share-state"
+          >{{ t('shares.revoked') }}</Badge>
+          <Badge
+            v-else-if="isLapsed(shareOf(row))"
+            tone="zinc"
+            size="xs"
+            data-testid="share-state"
+          >{{ t('shares.expired') }}</Badge>
         </div>
       </template>
 

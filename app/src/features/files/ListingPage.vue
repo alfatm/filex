@@ -13,7 +13,9 @@ import { useFilesStore, type ListingKind } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
 import { Button, IconButton } from '@/ui';
 import FilterChip from './FilterChip.vue';
+import AppliedFilters from './AppliedFilters.vue';
 import { type FilterId } from './filters';
+import { useFilterQuery } from './useFilterQuery';
 import { useListingKeyboard } from './useListingKeyboard';
 
 /** Shared frame of Shared / Recent / Starred / Trash (spec §7): title 22/600, filter chips, the file table. */
@@ -38,6 +40,7 @@ const files = useFilesStore();
 const view = useViewStore();
 const { onKeydown, onMainClick, onMainContextMenu, activeDescendant, open } = useListingKeyboard();
 
+useFilterQuery();
 onMounted(() => files.openListing(props.listing));
 </script>
 
@@ -50,9 +53,11 @@ onMounted(() => files.openListing(props.listing));
     <slot name="banner" />
 
     <SelectionBar v-if="files.selected.length >= 2" class="mr-[9px] mt-2" />
-    <div v-else class="mt-2 flex h-control-md items-center gap-2">
-      <div role="group" :aria-label="t('filter.title')" class="flex items-center gap-2">
+    <!-- Wraps for the same reason My files does: a tag chip per tag will not fit one line beside the menus. -->
+    <div v-else class="mt-2 flex min-h-control-md flex-wrap items-center gap-2">
+      <div role="group" :aria-label="t('filter.title')" class="flex min-w-0 flex-wrap items-center gap-2">
         <FilterChip v-for="id in filters" :key="id" :id="id" />
+        <AppliedFilters />
       </div>
       <SortControl v-if="sortable" variant="pill" class="ml-auto mr-2" />
       <!-- Same toggle as My files, in the same place: a row selected here describes a node like any other. -->

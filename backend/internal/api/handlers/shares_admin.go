@@ -2,7 +2,7 @@
 //
 // Admin views/actions over all shares (every user, not just current user).
 //
-//	GET    /api/admin/shares
+//	GET    /api/admin/shares?q=&active_only=&page=&page_size=
 //	POST   /api/admin/shares/{id}/revoke
 //	DELETE /api/admin/shares/{id}
 package handlers
@@ -35,22 +35,37 @@ func (h *SharesAdmin) List(w http.ResponseWriter, r *http.Request) {
 			creatorID = &id
 		}
 	}
-	activeOnly := q.Get("active") == "true"
+	// The SPA speaks `active_only`/`q`/`page`/`page_size`; `active`/`limit`/
+	// `offset` are the older spelling. Both are accepted, because reading only
+	// the older one made the admin page's search box and pager inert — every
+	// page request came back as the same first 50 rows.
+	activeOnly := q.Get("active") == "true" || q.Get("active_only") == "true"
+	search := q.Get("q")
 
 	limit := 50
+	if v := q.Get("page_size"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
 	if v := q.Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
 			limit = n
 		}
 	}
 	offset := 0
+	if v := q.Get("page"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 1 {
+			offset = (n - 1) * limit
+		}
+	}
 	if v := q.Get("offset"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			offset = n
 		}
 	}
 
-	rows, total, err := h.Store.ListAllShares(r.Context(), creatorID, activeOnly, limit, offset)
+	rows, total, err := h.Store.ListAllShares(r.Context(), creatorID, search, activeOnly, limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

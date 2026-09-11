@@ -137,14 +137,24 @@ func tagScopeNodes(ctx context.Context, store db.Store, text string) ([]*model.N
 	return out, nil
 }
 
-// tagFilterAccepts applies a resolved filter to one node ID — the SQL
-// LIKE path, where there is no index to push the filter into.
-func tagFilterAccepts(f *search.Filter, id int64) bool {
-	if f == nil {
-		return true
+// filterAccepts applies a resolved filter to one node — the branches
+// with no index to push the filter into: the SQL LIKE fallback and the
+// listings that answer a bare `tag:` or the Tags scope.
+//
+// It is the same predicate applyFilter builds a boolean query out of, and
+// it has to stay that way. A filter the index honours and a listing does
+// not is the worst shape a filter can take: it narrows or does not
+// depending on which branch happened to answer, which from the outside
+// reads as the search randomly ignoring it.
+func filterAccepts(f *search.Filter, n *model.Node) bool {
+	if f == nil || n == nil {
+		return f == nil
+	}
+	if search.PathExcluded(n.Path, f.ExcludePaths) {
+		return false
 	}
 	for _, ex := range f.ExcludeIDs {
-		if ex == id {
+		if ex == n.ID {
 			return false
 		}
 	}
@@ -152,11 +162,28 @@ func tagFilterAccepts(f *search.Filter, id int64) bool {
 		return true
 	}
 	for _, in := range f.IncludeIDs {
-		if in == id {
+		if in == n.ID {
 			return true
 		}
 	}
 	return false
+}
+
+// withPathExcludes hands the parsed `-path:` folders to the filter the
+// tag tokens produced, creating one when there were no tags.
+//
+// Path exclusions never RESTRICT: they only ever remove, so a filter that
+// carries nothing else must stay non-restricting or it would answer
+// everything with nothing (see Filter.Restrict).
+func withPathExcludes(f *search.Filter, p search.Parsed) *search.Filter {
+	if len(p.ExcludePaths) == 0 {
+		return f
+	}
+	if f == nil {
+		f = &search.Filter{}
+	}
+	f.ExcludePaths = p.ExcludePaths
+	return f
 }
 
 // resolveFacetFilter turns the request's facets into the id set the index may
@@ -207,6 +234,74 @@ func resolveFacetFilter(ctx context.Context, store db.Store, storageID int64, f 
 // facetIDCeiling mirrors the store's own cap; asking for exactly it is how the
 // caller learns the set was truncated.
 const facetIDCeiling = 10000
+
+// listingOverFetch is how many times a page the "everything except…" listing
+// asks the database for, since the exclusions are applied in Go afterwards.
+//
+// The exclusion cannot go into the SQL: the folders are held in Normalize's
+// separator-blind form and matched as whole word runs, and a LIKE that tried to
+// mean the same thing would be a SECOND definition of what "under this folder"
+// means — one that disagrees with the index's in exactly the cases nobody
+// tests. One predicate, applied wherever the rows come from. Over-fetching is
+// what that costs; four pages is the same allowance the LIKE fallback makes
+// (search.FallbackOverFetch) and covers an exclusion that hides three quarters
+// of a drive.
+const listingOverFetch = 4
+
+// listNodesMatching pages the node table for the "everything except…"
+// listing, newest first.
+//
+// An unscoped request asks every enabled drive and merges the answers, the
+// same way resolveFacetFilter does and for the same reason: the end-user app
+// addresses drives by NAME and has no numeric id to send, so a listing that
+// insisted on one would be a feature only the admin SPA could use. Reading
+// across drives the caller cannot see is safe here for the same reason it is
+// there — the tenant and RBAC passes at the end of Search are what decide
+// what comes back, and they run over every branch.
+//
+// Each drive is asked for a bounded page, so the cost grows with the number
+// of mounts rather than with the size of any of them.
+func listNodesMatching(ctx context.Context, store db.Store, storageID int64, f db.NodeFacets, want int) ([]*model.Node, error) {
+	storages := []int64{storageID}
+	if storageID == 0 {
+		all, err := store.ListEnabledStorages(ctx)
+		if err != nil {
+			return nil, err
+		}
+		storages = storages[:0]
+		for _, st := range all {
+			storages = append(storages, st.ID)
+		}
+	}
+	var out []*model.Node
+	for _, id := range storages {
+		rows, err := store.ListNodesMatching(ctx, id, f, want, 0)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rows...)
+	}
+	if len(storages) > 1 {
+		// Each drive answered in its own order; the listing has one.
+		sort.SliceStable(out, func(a, b int) bool {
+			ta, tb := nodeMtime(out[a]), nodeMtime(out[b])
+			if !ta.Equal(tb) {
+				return ta.After(tb)
+			}
+			return out[a].ID > out[b].ID
+		})
+	}
+	return out, nil
+}
+
+// nodeMtime is the moment a listing sorts a row by; a row the backend never
+// dated sorts last rather than first, which is where an unknown belongs.
+func nodeMtime(n *model.Node) time.Time {
+	if n == nil || n.BackendMtime == nil {
+		return time.Time{}
+	}
+	return *n.BackendMtime
+}
 
 // intersectFilter narrows an existing restriction to `ids`, or creates one.
 func intersectFilter(f *search.Filter, ids []int64) *search.Filter {
@@ -300,7 +395,17 @@ type searchRequest struct {
 	Exts []string `json:"ext,omitempty"`
 	// ModifiedAfter is epoch milliseconds; 0 means no window.
 	ModifiedAfter int64 `json:"modified_after,omitempty"`
-	SizeMin       int64 `json:"size_min,omitempty"`
+	// ModifiedBefore closes the window from above, and CreatedAfter /
+	// CreatedBefore open the same window over nodes.created_at. Together they
+	// are what "files written around the same time as this one" needs: a lone
+	// "since" also admits everything newer than the file it was taken from.
+	// The listing chips have taken all four since they were added; the search
+	// took only the first, so the same question asked of the search box came
+	// back with a different set.
+	ModifiedBefore int64 `json:"modified_before,omitempty"`
+	CreatedAfter   int64 `json:"created_after,omitempty"`
+	CreatedBefore  int64 `json:"created_before,omitempty"`
+	SizeMin        int64 `json:"size_min,omitempty"`
 	// SizeMax 0 means no ceiling — a search for files of at most zero bytes is
 	// not a thing anyone asks for, and treating it as "no ceiling" is what lets
 	// the field be omitted.
@@ -341,6 +446,18 @@ func (req searchRequest) facets() db.NodeFacets {
 	if req.ModifiedAfter > 0 {
 		t := time.UnixMilli(req.ModifiedAfter).UTC()
 		f.ModifiedAfter = &t
+	}
+	if req.ModifiedBefore > 0 {
+		t := time.UnixMilli(req.ModifiedBefore).UTC()
+		f.ModifiedBefore = &t
+	}
+	if req.CreatedAfter > 0 {
+		t := time.UnixMilli(req.CreatedAfter).UTC()
+		f.CreatedAfter = &t
+	}
+	if req.CreatedBefore > 0 {
+		t := time.UnixMilli(req.CreatedBefore).UTC()
+		f.CreatedBefore = &t
 	}
 	if req.SizeMin > 0 {
 		v := req.SizeMin
@@ -432,6 +549,10 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 		tagFilter = intersectFilter(tagFilter, facetIDs)
 		tagged = keepMatching(tagged, facets)
 	}
+	// After the intersection, not before: intersectFilter may hand back a
+	// filter it built itself, and one that quietly dropped the exclusions
+	// would answer with the folder the user rejected.
+	tagFilter = withPathExcludes(tagFilter, parsed)
 
 	results := []searchResult{}
 	switch {
@@ -457,7 +578,7 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 			}
 			// Chip tags and facets narrow this listing the way they narrow the
 			// LIKE fallback: there is no index to push the restriction into.
-			if !tagFilterAccepts(tagFilter, n.ID) {
+			if !filterAccepts(tagFilter, n) {
 				continue
 			}
 			results = append(results, searchResult{Node: n, Matched: search.MatchedName})
@@ -477,9 +598,38 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 			if n.Name == e2e.MarkerName {
 				continue
 			}
+			// The tagged set is the include side already; this is the
+			// exclusions, which no id set carries.
+			if !filterAccepts(tagFilter, n) {
+				continue
+			}
 			results = append(results, searchResult{Node: n, Matched: search.MatchedName})
 			// One past the limit, deliberately: it is the difference between
 			// knowing there is more and guessing it from a full page.
+			if len(results) > req.Limit {
+				break
+			}
+		}
+	case parsed.Text == "" && len(parsed.ExcludePaths) > 0:
+		// "Everything except…" — a LISTING, not a search, and answered by
+		// the node table rather than the index. There is no text to rank,
+		// so the index has nothing to do here; asking it anyway would mean
+		// asking for the whole drive as a candidate set and throwing the
+		// ranking away.
+		rows, lerr := listNodesMatching(r.Context(), h.Store, req.StorageID, facets, (req.Limit+1)*listingOverFetch)
+		if lerr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": lerr.Error()})
+			return
+		}
+		for _, n := range rows {
+			/* wiring:e2 — the marker file stays hidden in name search too */
+			if n.Name == e2e.MarkerName {
+				continue
+			}
+			if !filterAccepts(tagFilter, n) {
+				continue
+			}
+			results = append(results, searchResult{Node: n, Matched: search.MatchedName})
 			if len(results) > req.Limit {
 				break
 			}
@@ -514,7 +664,7 @@ func (h *Search) Search(w http.ResponseWriter, r *http.Request) {
 				if n.Name == e2e.MarkerName {
 					continue
 				}
-				if !plan.Accepts(n.Name, n.Path) || !tagFilterAccepts(tagFilter, n.ID) {
+				if !plan.Accepts(n.Name, n.Path) || !filterAccepts(tagFilter, n) {
 					continue
 				}
 				results = append(results, searchResult{Node: n, Matched: search.MatchedName})

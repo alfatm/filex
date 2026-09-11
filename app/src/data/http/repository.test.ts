@@ -4,6 +4,8 @@ import { HttpRepository } from './repository';
 import type { WireFileNode } from './map';
 import type { UploadRateLimited } from '../repository';
 import { noQuota, ROLE_PERMISSIONS, type AssistantReport, type SearchHit } from '../types';
+import { emptyFilter } from '@/features/files/filters';
+import { emptyQuery } from '@/features/search/searchStore';
 
 /** One recorded call, in the order the repository made it. */
 interface Call {
@@ -75,15 +77,15 @@ describe('HttpRepository', () => {
     routes = [
       [
         '/api/files/storages',
-        { storages: [{ name: 'main', read_only: false, used_bytes: 200 }, { name: 'archive', read_only: true, used_bytes: 50 }] },
+        { storages: [{ id: 1, name: 'main', read_only: false, used_bytes: 200 }, { id: 2, name: 'archive', read_only: true, used_bytes: 50 }] },
       ],
       ['/api/files/quota/me', { used_bytes: 250, quota_bytes: 1000 }],
     ];
     const storages = await new HttpRepository().listStorages();
     // The account's own 250 is the sum, not each drive's figure — which is what every card used to show.
     expect(storages).toEqual([
-      { id: 'main', name: 'main', rootId: 'main://', quota: { ...noQuota(), usedBytes: 200, totalBytes: 1000 }, shared: false, viaGroups: [] },
-      { id: 'archive', name: 'archive', rootId: 'archive://', quota: { ...noQuota(), usedBytes: 50, totalBytes: 1000 }, shared: false, viaGroups: [] },
+      { id: 'main', serverId: 1, name: 'main', rootId: 'main://', quota: { ...noQuota(), usedBytes: 200, totalBytes: 1000 }, shared: false, viaGroups: [] },
+      { id: 'archive', serverId: 2, name: 'archive', rootId: 'archive://', quota: { ...noQuota(), usedBytes: 50, totalBytes: 1000 }, shared: false, viaGroups: [] },
     ]);
   });
 
@@ -216,13 +218,17 @@ describe('HttpRepository', () => {
       text: 'rapor',
       scope: 'all',
       searchIn: 'current',
+      drive: null,
       folderPath: 'Docs/2026',
       modified: 'week',
+      around: null,
       fileType: 'documents',
       tags: [],
       ownerId: '4',
       size: { preset: 'medium', min: null, max: null, unit: 'MB' },
       path: '',
+      pathMode: 'only',
+      excludePaths: [],
       wholePhrase: false,
     });
 
@@ -759,7 +765,8 @@ describe('HttpRepository', () => {
     routes = [['/api/files/search', { results: [] }]];
     const repo = new HttpRepository();
     const query = {
-      text: 'annual report', tags: [], scope: 'all', searchIn: 'everywhere', folderPath: '', path: '',
+      text: 'annual report', tags: [], scope: 'all', searchIn: 'everywhere', drive: null, folderPath: '', path: '', around: null,
+      pathMode: 'only', excludePaths: [],
       fileType: 'any', modified: 'any', size: { preset: 'any' }, ownerId: '',
       wholePhrase: true,
     } as unknown as Parameters<HttpRepository['search']>[0];
@@ -1211,7 +1218,7 @@ describe('HttpRepository', () => {
       ['/manager/trash', { entries: [] }],
     ];
     const repo = new HttpRepository();
-    const filter = { fileType: 'documents', modified: 'any', size: 'large', personId: '7', name: '' } as const;
+    const filter = { fileType: 'documents', modified: 'any', size: 'large', personId: '7', name: '', tags: [] as string[], around: null } as const;
 
     await repo.listStarred(filter);
     calls.length = 0; // Recent marks its rows starred, which asks star/list again — without the chips, and rightly so.
@@ -1229,10 +1236,60 @@ describe('HttpRepository', () => {
     }
   });
 
+  it('sends the date window as two edges, on the column the window names', async () => {
+    routes = [['/star/list', { nodes: [] }]];
+    const repo = new HttpRepository();
+    const at = '2026-09-09T12:00:00Z';
+    const day = 24 * 60 * 60 * 1000;
+
+    await repo.listStarred({ ...emptyFilter(), around: { field: 'modified', at, span: 'day' } });
+    let query = new URLSearchParams(calls[0].url.split('?')[1]);
+    expect(query.get('modified_after')).toBe(String(Date.parse(at) - day));
+    expect(query.get('modified_before')).toBe(String(Date.parse(at) + day));
+    expect(query.get('created_after')).toBeNull();
+
+    calls.length = 0;
+    await repo.listStarred({ ...emptyFilter(), around: { field: 'created', at, span: 'day' } });
+    query = new URLSearchParams(calls[0].url.split('?')[1]);
+    expect(query.get('created_after')).toBe(String(Date.parse(at) - day));
+    expect(query.get('created_before')).toBe(String(Date.parse(at) + day));
+    expect(query.get('modified_after')).toBeNull();
+  });
+
+  it('spans the window by what the chip was set to, either side of the moment', async () => {
+    routes = [['/star/list', { nodes: [] }]];
+    const at = '2026-09-09T12:00:00Z';
+    await new HttpRepository().listStarred({ ...emptyFilter(), around: { field: 'modified', at, span: 'week' } });
+    const query = new URLSearchParams(calls[0].url.split('?')[1]);
+    expect(query.get('modified_after')).toBe(String(Date.parse(at) - 7 * 24 * 60 * 60 * 1000));
+    expect(query.get('modified_before')).toBe(String(Date.parse(at) + 7 * 24 * 60 * 60 * 1000));
+  });
+
+  it('sends the search’s date window as two edges, on the column it names', async () => {
+    const at = '2026-09-09T12:00:00Z';
+    const day = 24 * 60 * 60 * 1000;
+    routes = [['/files/search', { results: [] }]];
+    await new HttpRepository().search({ ...emptyQuery(), text: 'rapor', around: { field: 'created', at, span: 'day' } });
+    const body = calls.at(-1)!.body as Record<string, unknown>;
+    expect(body).toMatchObject({ created_after: Date.parse(at) - day, created_before: Date.parse(at) + day });
+    expect(body.modified_after).toBeUndefined();
+  });
+
+  it('reads the drive’s whole tag vocabulary for the tag chip’s menu', async () => {
+    routes = [['manager/tags/all', { tags: ['archive', 'design'] }]];
+    expect(await new HttpRepository().listAllTags()).toEqual(['archive', 'design']);
+  });
+
+  it('sends the tags the panel set, comma-joined the way the extensions travel', async () => {
+    routes = [['/star/list', { nodes: [] }]];
+    await new HttpRepository().listStarred({ ...emptyFilter(), tags: ['design', 'q3'] });
+    expect(new URLSearchParams(calls[0].url.split('?')[1]).get('tag')).toBe('design,q3');
+  });
+
   it('turns the Modified chip into a moment, not a number of days', async () => {
     vi.setSystemTime(Date.parse('2026-09-09T00:00:00Z'));
     routes = [['/star/list', { nodes: [] }]];
-    await new HttpRepository().listStarred({ fileType: 'any', modified: 'week', size: 'any', personId: null, name: '' });
+    await new HttpRepository().listStarred({ fileType: 'any', modified: 'week', size: 'any', personId: null, name: '', tags: [], around: null });
 
     const query = new URLSearchParams(calls[0].url.split('?')[1]);
     expect(query.get('modified_after')).toBe(String(Date.parse('2026-09-02T00:00:00Z')));
@@ -1266,13 +1323,17 @@ describe('HttpRepository', () => {
     text: 'rapor',
     scope: 'all',
     searchIn: 'all',
+    drive: null,
     folderPath: '',
     modified: 'any',
+    around: null,
     fileType: 'any',
     tags: [],
     ownerId: null,
     size: { preset: 'any', min: null, max: null, unit: 'MB' },
     path: '',
+    pathMode: 'only',
+    excludePaths: [],
     wholePhrase: false,
     ...patch,
   });
@@ -1306,6 +1367,92 @@ describe('HttpRepository', () => {
     await new HttpRepository().search(query({ scope: 'tags', text: 'tasa', tags: ['q3'] }));
     const body = calls.at(-1)?.body as Record<string, unknown>;
     expect(body).toMatchObject({ scope: 'tags', query: 'tasa tag:q3' });
+  });
+
+  // ── the drive picker ───────────────────────────────────────────────────────
+
+  it('narrows to one drive by its row id, so the count is that drive’s', async () => {
+    routes = [
+      ['/api/files/storages', { storages: [{ id: 4, name: 'demo', read_only: false }, { id: 9, name: 'work', read_only: false }] }],
+      ['/api/files/quota/me', { used_bytes: 0, quota_bytes: 0, unlimited: true }],
+      ['/api/files/search', { results: [] }],
+    ];
+    const repo = new HttpRepository();
+    await repo.search(query({ drive: 'work' }));
+    expect(calls.at(-1)?.body).toMatchObject({ storage_id: 9 });
+
+    // No drive picked is every drive the account can see, which is what the endpoint answers with no id at all.
+    await repo.search(query({ drive: null }));
+    expect(calls.at(-1)?.body).not.toHaveProperty('storage_id');
+  });
+
+  it('stays unscoped for a drive it cannot resolve, rather than answering about another one', async () => {
+    routes = [
+      ['/api/files/storages', { storages: [{ name: 'old', read_only: false }] }],
+      ['/api/files/quota/me', { used_bytes: 0, quota_bytes: 0, unlimited: true }],
+      ['/api/files/search', { results: [{ id: 1, name: 'a.md', path: '/a.md', type: 'file', size: 1, storage: 'old' }] }],
+    ];
+    // A server too old to send row ids: there is nothing to narrow WITH, so the request carries no id — and the
+    // page is sieved by name instead, which is the honest half of what can still be delivered.
+    const { hits } = await new HttpRepository().search(query({ drive: 'old' }));
+    expect(calls.at(-1)?.body).not.toHaveProperty('storage_id');
+    expect(hits.map((h) => h.storageId)).toEqual(['old']);
+  });
+
+  // ── the Path box's two directions ──────────────────────────────────────────
+
+  it('confines to the Path box in "only" mode and excludes it in "skip" mode', async () => {
+    routes = [['/api/files/search', { results: [] }]];
+    const repo = new HttpRepository();
+    await repo.search(query({ path: '/demo/design/', pathMode: 'only' }));
+    expect(calls.at(-1)?.body).toMatchObject({ query: 'rapor', path_prefix: '/design' });
+
+    await repo.search(query({ path: '/demo/design/', pathMode: 'skip' }));
+    const skipped = calls.at(-1)?.body as Record<string, unknown>;
+    // The same box, read the other way: an exclusion term, and no confinement — a search restricted to the folder
+    // it was told to leave out is the one answer that cannot be right.
+    expect(skipped.query).toBe('rapor -path:design');
+    expect(skipped).not.toHaveProperty('path_prefix');
+  });
+
+  it('quotes a multi-segment folder so the server reads one operator and not two words', async () => {
+    routes = [['/api/files/search', { results: [] }]];
+    await new HttpRepository().search(query({ path: '/demo/old files/2024/', pathMode: 'skip' }));
+    expect((calls.at(-1)?.body as Record<string, unknown>).query).toBe('rapor -path:"old files 2024"');
+  });
+
+  it('sends a chip folder and a typed one as separate exclusions', async () => {
+    routes = [['/api/files/search', { results: [] }]];
+    await new HttpRepository().search(query({ excludePaths: ['Design/Old', 'tmp'], path: '/demo/archive', pathMode: 'skip' }));
+    // Chips and the Path box are two acts, not one: pointing at a result does not overwrite what was typed.
+    // Case travels as typed; the server folds it, like it folds a tag's.
+    expect((calls.at(-1)?.body as Record<string, unknown>).query).toBe('rapor -path:"Design Old" -path:tmp -path:archive');
+  });
+
+  it('ignores chip folders while the Path box is confining rather than excluding', async () => {
+    routes = [['/api/files/search', { results: [] }]];
+    await new HttpRepository().search(query({ excludePaths: ['tmp'], path: '/demo/design', pathMode: 'only' }));
+    const body = calls.at(-1)?.body as Record<string, unknown>;
+    // The mode belongs to the BOX. The chips keep excluding either way.
+    expect(body).toMatchObject({ query: 'rapor -path:tmp', path_prefix: '/design' });
+  });
+
+  it('sieves a skipped DRIVE by name, since a node path starts below one', async () => {
+    routes = [
+      [
+        '/api/files/search',
+        {
+          results: [
+            { id: 1, name: 'a.md', path: '/a.md', type: 'file', size: 1, storage: 'demo' },
+            { id: 2, name: 'b.md', path: '/b.md', type: 'file', size: 1, storage: 'work' },
+          ],
+        },
+      ],
+    ];
+    const { hits } = await new HttpRepository().search(query({ path: '/demo', pathMode: 'skip' }));
+    // No operator to send — the drive is not part of any node's path — so the request carries the text alone.
+    expect((calls.at(-1)?.body as Record<string, unknown>).query).toBe('rapor');
+    expect(hits.map((h) => h.storageId)).toEqual(['work']);
   });
 
   // ── the fields the flat listings carry and the client used to drop ─────────
@@ -1386,7 +1533,7 @@ describe('HttpRepository', () => {
   // with the facets in the query is the filtered set, exactly.
   it('sends the chips to shared-with-me and asks for its full page', async () => {
     routes = [['/shared-with-me', { files: [] }]];
-    await new HttpRepository().listShared({ fileType: 'documents', modified: 'any', size: 'any', personId: null, name: 'plan' });
+    await new HttpRepository().listShared({ fileType: 'documents', modified: 'any', size: 'any', personId: null, name: 'plan', tags: [], around: null });
     const query = new URLSearchParams(calls[0].url.split('?')[1]);
     expect(query.get('limit')).toBe('500');
     expect(query.get('ext')).toBe('md,pdf');
@@ -1400,7 +1547,7 @@ describe('HttpRepository', () => {
       ['/star/list', { nodes: [] }],
       ['q=index', { ...index(row({ id: 3, path: 'main://Docs/notes.md', basename: 'notes.md', type: 'file', size: 5 * 1024 * 1024 })), total: 1500 }],
     ];
-    const listing = await new HttpRepository().listFolder('main://Docs', { fileType: 'documents', modified: 'any', size: 'medium', personId: null, name: 'Notes' });
+    const listing = await new HttpRepository().listFolder('main://Docs', { fileType: 'documents', modified: 'any', size: 'medium', personId: null, name: 'Notes', tags: [], around: null });
     const query = new URLSearchParams(calls[0].url.split('?')[1]);
     expect(query.get('q')).toBe('index');
     expect(query.get('ext')).toBe('md,pdf');
@@ -1444,8 +1591,12 @@ describe('HttpRepository', () => {
       wholePhrase: false,
       tags: [],
       searchIn: 'all',
+      drive: null,
       folderPath: '',
       path: '',
+      pathMode: 'only',
+      excludePaths: [],
+      around: null,
       fileType: 'any',
       modified: 'any',
       size: { preset: 'any', min: null, max: null, unit: 'MB' },
@@ -1567,7 +1718,8 @@ describe('HttpRepository', () => {
 
   const form = (patch: Record<string, unknown> = {}) =>
     ({
-      text: 'report', tags: [], scope: 'all', searchIn: 'all', folderPath: '', path: '',
+      text: 'report', tags: [], scope: 'all', searchIn: 'all', drive: null, folderPath: '', path: '', around: null,
+      pathMode: 'only', excludePaths: [],
       fileType: 'any', modified: 'any', size: { preset: 'any', min: null, max: null, unit: 'MB' },
       ownerId: null, wholePhrase: false, ...patch,
     }) as unknown as Parameters<HttpRepository['search']>[0];

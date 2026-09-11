@@ -950,6 +950,44 @@ func (s *Store) ListNodeIDsMatching(ctx context.Context, storageID int64, f db.N
 	return out, rows.Err()
 }
 
+// ListNodesMatching lists the facet-matching node rows themselves, newest
+// first — see db.Store.
+//
+// The order is (backend_mtime DESC, id DESC). The id breaks the tie because
+// paging needs a TOTAL order: two files written in the same second would
+// otherwise be free to swap places between one page and the next, which shows
+// up as a row appearing twice and another never appearing at all.
+func (s *Store) ListNodesMatching(ctx context.Context, storageID int64, f db.NodeFacets, limit, offset int) ([]*model.Node, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	args := []any{storageID}
+	bind := func(v any) string {
+		args = append(args, stampArg(v))
+		return "?"
+	}
+	where := append([]string{"storage_id = ? AND deleted_at IS NULL"}, f.Where("", "backend_mtime", bind)...)
+	rows, err := s.db.QueryContext(ctx,
+		nodeSelectColumns()+` FROM nodes WHERE `+strings.Join(where, " AND ")+
+			` ORDER BY backend_mtime DESC, id DESC LIMIT `+bind(limit)+` OFFSET `+bind(offset), args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: facet listing: %w", err)
+	}
+	defer rows.Close()
+	out := make([]*model.Node, 0, limit)
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // facetIDMax caps the set one facet query may produce. It is the ceiling `tag:`
 // filtering already uses, for the same reason: the ids become a boolean query
 // inside the index, so an unbounded set turns one search into a
@@ -1882,18 +1920,19 @@ func (s *Store) CreateShare(ctx context.Context, sh *model.Share) (*model.Share,
 }
 
 func (s *Store) GetShareByToken(ctx context.Context, token string) (*model.Share, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, node_id, token, COALESCE(pin_hash,''), expires_at, max_downloads, download_count, created_by, COALESCE(created_via,''), created_at, COALESCE(kind,'download'), max_uploads, upload_count, drop_settings FROM shares WHERE token=?`, token)
+	row := s.db.QueryRowContext(ctx, `SELECT id, node_id, token, COALESCE(pin_hash,''), expires_at, revoked_at, max_downloads, download_count, created_by, COALESCE(created_via,''), created_at, COALESCE(kind,'download'), max_uploads, upload_count, drop_settings FROM shares WHERE token=?`, token)
 	return scanShare(row)
 }
 
 func (s *Store) GetShareByID(ctx context.Context, id int64) (*model.Share, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, node_id, token, COALESCE(pin_hash,''), expires_at, max_downloads, download_count, created_by, COALESCE(created_via,''), created_at, COALESCE(kind,'download'), max_uploads, upload_count, drop_settings FROM shares WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT id, node_id, token, COALESCE(pin_hash,''), expires_at, revoked_at, max_downloads, download_count, created_by, COALESCE(created_via,''), created_at, COALESCE(kind,'download'), max_uploads, upload_count, drop_settings FROM shares WHERE id=?`, id)
 	return scanShare(row)
 }
 
 // ListAllShares returns the admin overview of every share. `creatorID`
-// nil means all users; activeOnly excludes expired/revoked rows.
-func (s *Store) ListAllShares(ctx context.Context, creatorID *int64, activeOnly bool, limit, offset int) ([]*db.ShareWithMeta, int64, error) {
+// nil means all users; `q` matches token, node path or creator email
+// (empty = no filter); activeOnly excludes expired/revoked rows.
+func (s *Store) ListAllShares(ctx context.Context, creatorID *int64, q string, activeOnly bool, limit, offset int) ([]*db.ShareWithMeta, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -1903,25 +1942,34 @@ func (s *Store) ListAllShares(ctx context.Context, creatorID *int64, activeOnly 
 		where = append(where, `s.created_by=?`)
 		args = append(args, *creatorID)
 	}
+	if q = strings.TrimSpace(q); q != "" {
+		where = append(where, `(s.token LIKE ? OR n.path LIKE ? OR u.email LIKE ?)`)
+		like := "%" + q + "%"
+		args = append(args, like, like, like)
+	}
 	if activeOnly {
+		where = append(where, `s.revoked_at IS NULL`)
 		where = append(where, `(s.expires_at IS NULL OR s.expires_at > ?)`)
 		args = append(args, time.Now().UTC())
 		where = append(where, `(s.max_downloads IS NULL OR s.download_count < s.max_downloads)`)
 	}
 	whereSQL := strings.Join(where, " AND ")
 
+	// The count carries the same joins as the page: `q` filters on the joined
+	// node path and creator email, so a bare `FROM shares` would not parse.
+	const joins = `FROM shares s
+		 LEFT JOIN users u    ON u.id=s.created_by
+		 LEFT JOIN nodes n    ON n.id=s.node_id
+		 LEFT JOIN storages st ON st.id=n.storage_id`
 	var total int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM shares s WHERE `+whereSQL, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) `+joins+` WHERE `+whereSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	args = append(args, limit, offset)
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT s.id, s.node_id, s.token, COALESCE(s.pin_hash,''), s.expires_at, s.max_downloads, s.download_count, s.created_by, COALESCE(s.created_via,''), s.created_at,
+		`SELECT s.id, s.node_id, s.token, COALESCE(s.pin_hash,''), s.expires_at, s.revoked_at, s.max_downloads, s.download_count, s.created_by, COALESCE(s.created_via,''), s.created_at,
 		        COALESCE(u.email,''), COALESCE(n.path,''), COALESCE(st.name,'')
-		 FROM shares s
-		 LEFT JOIN users u    ON u.id=s.created_by
-		 LEFT JOIN nodes n    ON n.id=s.node_id
-		 LEFT JOIN storages st ON st.id=n.storage_id
+		 `+joins+`
 		 WHERE `+whereSQL+` ORDER BY s.created_at DESC LIMIT ? OFFSET ?`, args...)
 	if err != nil {
 		return nil, 0, err
@@ -1931,7 +1979,7 @@ func (s *Store) ListAllShares(ctx context.Context, creatorID *int64, activeOnly 
 	for rows.Next() {
 		sh := &model.Share{}
 		var creatorEmail, nodePath, storageName string
-		if err := rows.Scan(&sh.ID, &sh.NodeID, &sh.Token, &sh.PinHash, &sh.ExpiresAt, &sh.MaxDownloads, &sh.DownloadCount, &sh.CreatedBy, &sh.CreatedVia, &sh.CreatedAt, &creatorEmail, &nodePath, &storageName); err != nil {
+		if err := rows.Scan(&sh.ID, &sh.NodeID, &sh.Token, &sh.PinHash, &sh.ExpiresAt, &sh.RevokedAt, &sh.MaxDownloads, &sh.DownloadCount, &sh.CreatedBy, &sh.CreatedVia, &sh.CreatedAt, &creatorEmail, &nodePath, &storageName); err != nil {
 			return nil, 0, err
 		}
 		sh.HasPin = sh.PinHash != ""
@@ -1940,17 +1988,19 @@ func (s *Store) ListAllShares(ctx context.Context, creatorID *int64, activeOnly 
 	return out, total, rows.Err()
 }
 
-// RevokeShare soft-revokes by setting expires_at = NOW. Audit trail is
-// kept (the row is not deleted).
+// RevokeShare soft-revokes: expires_at = NOW kills the link, revoked_at
+// records that a person closed it rather than a TTL lapsing. Audit trail is
+// kept (the row is not deleted). Re-revoking keeps the first revocation time.
 func (s *Store) RevokeShare(ctx context.Context, id int64) error {
 	// Written the same way the expiry checks now read it: a CURRENT_TIMESTAMP here is UTC text, and
 	// west of UTC it sorts ABOVE a Go-encoded "now" — a revoked link that stayed open.
-	_, err := s.db.ExecContext(ctx, `UPDATE shares SET expires_at=? WHERE id=?`, time.Now().UTC(), id)
+	now := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx, `UPDATE shares SET expires_at=?, revoked_at=COALESCE(revoked_at,?) WHERE id=?`, now, now, id)
 	return err
 }
 
 func (s *Store) ListSharesByNode(ctx context.Context, nodeID int64) ([]*model.Share, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, node_id, token, COALESCE(pin_hash,''), expires_at, max_downloads, download_count, created_by, COALESCE(created_via,''), created_at, COALESCE(kind,'download'), max_uploads, upload_count, drop_settings FROM shares WHERE node_id=? ORDER BY created_at DESC`, nodeID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, node_id, token, COALESCE(pin_hash,''), expires_at, revoked_at, max_downloads, download_count, created_by, COALESCE(created_via,''), created_at, COALESCE(kind,'download'), max_uploads, upload_count, drop_settings FROM shares WHERE node_id=? ORDER BY created_at DESC`, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -2714,7 +2764,7 @@ func scanUser(r rowScanner) (*model.User, error) {
 
 func scanShare(r rowScanner) (*model.Share, error) {
 	sh := &model.Share{}
-	if err := r.Scan(&sh.ID, &sh.NodeID, &sh.Token, &sh.PinHash, &sh.ExpiresAt, &sh.MaxDownloads, &sh.DownloadCount, &sh.CreatedBy, &sh.CreatedVia, &sh.CreatedAt, &sh.Kind, &sh.MaxUploads, &sh.UploadCount, &sh.DropSettings); err != nil {
+	if err := r.Scan(&sh.ID, &sh.NodeID, &sh.Token, &sh.PinHash, &sh.ExpiresAt, &sh.RevokedAt, &sh.MaxDownloads, &sh.DownloadCount, &sh.CreatedBy, &sh.CreatedVia, &sh.CreatedAt, &sh.Kind, &sh.MaxUploads, &sh.UploadCount, &sh.DropSettings); err != nil {
 		return nil, err
 	}
 	sh.HasPin = sh.PinHash != ""

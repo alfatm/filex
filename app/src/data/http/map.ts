@@ -151,6 +151,7 @@ const ACTIVITY_KINDS: Record<string, ActivityEvent['kind'] | undefined> = {
   'file.updated': 'modified',
   'file.moved': 'moved',
   'file.trashed': 'trashed',
+  'file.restored': 'restored',
   'share.created': 'linkShared',
 };
 
@@ -253,6 +254,8 @@ export function fromSession(wire: WireSession): Session {
 }
 
 export interface WireStorage {
+  /** The drive's row id. `name` addresses it; this narrows a search to it — see `Storage.serverId`. */
+  id?: number;
   name: string;
   read_only: boolean;
   /** What THIS drive holds. The quota endpoint beside it meters the account, which is a different number. */
@@ -504,6 +507,7 @@ export function fromTrashEntry(wire: WireTrashEntry): Node {
 export function toStorage(wire: WireStorage, account: Quota): Storage {
   return {
     id: wire.name,
+    serverId: wire.id ?? 0,
     name: wire.name,
     rootId: joinPath(wire.name, ''),
     quota: { ...account, usedBytes: wire.used_bytes ?? 0 },

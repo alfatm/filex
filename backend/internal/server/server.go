@@ -912,7 +912,7 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 			var out []sharezip.DirShare
 			complete := false
 			for offset := 0; offset < maxShares; offset += page {
-				rows, total, err := store.ListAllShares(ctx, nil, true, page, offset)
+				rows, total, err := store.ListAllShares(ctx, nil, "", true, page, offset)
 				if err != nil {
 					return nil, err
 				}

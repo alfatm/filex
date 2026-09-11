@@ -315,7 +315,36 @@
     "name": "Filter in this folder…",
     "anyone": "Anyone",
     "clear": "Clear filters",
-    "title": "Filters"
+    "title": "Filters",
+    "remove": "Remove this filter",
+    "tagChip": "#{tag}",
+    "around": {
+      "modified": "Modified within {span} of {date}",
+      "created": "Created within {span} of {date}",
+      "short": "{date} {span}",
+      "edit": "Edit the date window",
+      "field": {
+        "modified": "Modified date",
+        "created": "Created date"
+      },
+      "span": {
+        "hour": "±1 hour",
+        "day": "±1 day",
+        "week": "±1 week"
+      },
+      "spanShort": {
+        "hour": "±1h",
+        "day": "±1d",
+        "week": "±1w"
+      },
+      "spanOf": {
+        "hour": "an hour",
+        "day": "a day",
+        "week": "a week"
+      }
+    },
+    "tagTitle": "Tagged “{tag}” — click to remove",
+    "tagEdit": "Change this tag"
   },
   "sort": {
     "name": "Name",
@@ -365,7 +394,12 @@
       "owner": "Owner",
       "editor": "Editor",
       "viewer": "Viewer"
-    }
+    },
+    "tags": "Tags",
+    "noTags": "No tags",
+    "tagsUnknown": "Could not read the tags",
+    "filterBy": "Filter this listing by {value}",
+    "openLocation": "Open {value}"
   },
   "type": {
     "folder": "Folder",
@@ -473,8 +507,18 @@
     "max": "Max",
     "unit": "Unit",
     "path": "Path",
-    "pathHelp": "Only items whose path starts with this prefix are returned.",
+    "pathHelp": "Names a folder. \"Only here\" narrows the search to it; \"Skip this\" leaves it out.",
     "pathHint": "Example: /demo/design/",
+    "pathModeOnly": "Only here",
+    "skipFolder": "Skip {folder}",
+    "unskipFolder": "Stop skipping {folder}",
+    "chipSkip": "Except {path}",
+    "pathModeSkip": "Skip this",
+    "pathMode": "What the path means",
+    "pathMissing": "No such folder",
+    "pathUnknownDrive": "No such drive",
+    "pathHintOnly": "Search only inside this folder",
+    "pathHintSkip": "Leave this folder out of the results",
     "contentOptions": "Content search options",
     "wholePhrase": "Match whole phrase",
     "matching": "{count} matching item | {count} matching items",
@@ -496,7 +540,13 @@
     "chipQuery": "“{text}”",
     "chipTags": "Tags: {tags}",
     "chipPath": "Path: {path}",
-    "refine": "Refine"
+    "drive": "Drive",
+    "allDrives": "All drives",
+    "refine": "Refine",
+    "dateWindow": "Or around a date",
+    "dateWindowDate": "Date",
+    "dateWindowSpan": "Window width",
+    "dateWindowField": "Which date the window reads"
   },
   "assistant": {
     "title": "AI assistant",

@@ -73,3 +73,34 @@ func TestListingFacets_NameIsTrimmedAndKeepsFolders(t *testing.T) {
 func TestListingFacets_NothingAskedNarrowsNothing(t *testing.T) {
 	assert.False(t, listingFacets(httptest.NewRequest("GET", "/manager/recent?limit=200", nil)).Any())
 }
+
+func TestListingFacets_DateWindowHasBothEdges(t *testing.T) {
+	f := listingFacets(httptest.NewRequest("GET",
+		"/manager/star/list?modified_after=1757376000000&modified_before=1757548800000", nil))
+	require.NotNil(t, f.ModifiedAfter)
+	require.NotNil(t, f.ModifiedBefore)
+	assert.Equal(t, int64(1757376000000), f.ModifiedAfter.UnixMilli())
+	assert.Equal(t, int64(1757548800000), f.ModifiedBefore.UnixMilli())
+	assert.False(t, f.FilesOnly, "a folder has a date, so the window keeps folders")
+
+	created := listingFacets(httptest.NewRequest("GET",
+		"/manager/star/list?created_after=1757376000000&created_before=1757548800000", nil))
+	require.NotNil(t, created.CreatedAfter)
+	require.NotNil(t, created.CreatedBefore)
+	assert.Equal(t, int64(1757376000000), created.CreatedAfter.UnixMilli())
+	assert.Equal(t, int64(1757548800000), created.CreatedBefore.UnixMilli())
+	assert.True(t, created.Any())
+
+	assert.Nil(t, listingFacets(httptest.NewRequest("GET", "/manager/star/list?modified_before=-1", nil)).ModifiedBefore,
+		"a garbled bound reads as no bound, the way an omitted one does")
+}
+
+func TestListingFacets_TagsBothSpellings(t *testing.T) {
+	repeated := listingFacets(httptest.NewRequest("GET", "/manager/star/list?tag=Design&tag=q3", nil))
+	commas := listingFacets(httptest.NewRequest("GET", "/manager/star/list?tag=design,%20q3", nil))
+	assert.Equal(t, []string{"design", "q3"}, repeated.Tags, "lower-cased, the only shape tags are stored in")
+	assert.Equal(t, repeated.Tags, commas.Tags)
+	assert.False(t, repeated.FilesOnly, "a folder can carry a tag")
+	assert.True(t, repeated.Any())
+	assert.Empty(t, listingFacets(httptest.NewRequest("GET", "/manager/star/list?tag=%20,", nil)).Tags, "blank is unset")
+}

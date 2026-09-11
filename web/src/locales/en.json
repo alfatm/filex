@@ -602,8 +602,14 @@
     "deleteConfirm": "Permanently delete this share?",
     "revokedOk": "Share revoked",
     "deletedOk": "Share deleted",
-    "noResults": "No active shares",
-    "linkCopied": "Share link copied to clipboard"
+    "noResults": "No shares found",
+    "linkCopied": "Share link copied to clipboard",
+    "revoked": "revoked",
+    "expired": "expired",
+    "scope": {
+      "active": "Active only",
+      "all": "All links"
+    }
   },
   "search": {
     "title": "Search index",
@@ -1004,6 +1010,7 @@
       "file_infected": "Virus found — the scan flagged a file and quarantined it into the trash",
       "file_deleted": "File deleted permanently",
       "file_trashed": "File moved to the trash",
+      "file_restored": "File restored from the trash",
       "file_moved": "File moved or renamed",
       "share_created": "Share link created",
       "drop_received": "File received through a public request link",

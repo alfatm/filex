@@ -22,6 +22,7 @@ import (
 )
 
 type userStorageRow struct {
+	ID       int64  `json:"id"`
 	Name     string `json:"name"`
 	ReadOnly bool   `json:"read_only"`
 }
@@ -77,7 +78,7 @@ func TestUserStorages_RBACHidesUngrantedDrives(t *testing.T) {
 	got := userStorages(t, client, srv.URL)
 	assert.Equal(t, []string{"mine", "archive"}, storageNamesOf(got),
 		"the RBAC-on drive is invisible while the caller holds no grant in it")
-	assert.Equal(t, []userStorageRow{{Name: "mine"}, {Name: "archive", ReadOnly: true}}, got,
+	assert.Equal(t, []bool{false, true}, []bool{got[0].ReadOnly, got[1].ReadOnly},
 		"read_only travels with the row: a client must not offer uploads into a drive that refuses them")
 
 	// One grant anywhere inside the drive makes the drive itself visible.
@@ -93,4 +94,28 @@ func TestUserStorages_RequiresAuth(t *testing.T) {
 
 	st, _ := doReq(t, freshClient(t), http.MethodGet, srv.URL+"/api/files/storages", nil)
 	assert.Equal(t, http.StatusUnauthorized, st)
+}
+
+// The row carries the drive's id as well as its name. Names address a drive
+// everywhere else; /api/files/search narrows to one by id and by nothing else,
+// so without this a client could only sieve the answer — and a page of hits
+// from another drive sieved away is an empty page with a wrong count on it.
+func TestUserStorages_CarryTheirID(t *testing.T) {
+	srv, _, store := testutil.NewTestServer(t)
+	alpha := seedStorage(t, store, "alpha", false)
+	beta := seedStorage(t, store, "beta", false)
+
+	seedSharedUser(t, store, "s@test.local", "UserPass1!")
+	client := freshClient(t)
+	testutil.LoginAs(t, srv, client, "s@test.local", "UserPass1!")
+
+	byName := map[string]int64{}
+	for _, r := range userStorages(t, client, srv.URL) {
+		byName[r.Name] = r.ID
+	}
+	assert.Equal(t, alpha.ID, byName["alpha"])
+	assert.Equal(t, beta.ID, byName["beta"])
+	// Two drives, two ids: the field identifies a row rather than repeating a
+	// constant, which is the whole reason a client can narrow with it.
+	assert.NotEqual(t, byName["alpha"], byName["beta"])
 }

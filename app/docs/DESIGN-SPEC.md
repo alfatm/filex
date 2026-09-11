@@ -189,11 +189,31 @@ gave up 88px and 108px respectively, and the card grid (§3) takes all of it.
   icons 16; active cell bg `--c-primary-soft` icon primary. Then `Info` button
   40 wide × --control-md radius 10 border 1px (toggles details panel; filled
   tint when open).
-- **Filter chips** row h --control-md, chips themselves h --control-sm (28),
+- **Filter chips** row min-h --control-md, chips themselves h --control-sm (28),
   radius 8, border 1px, bg white, text 12 + `ChevronDown` 14, padding-inline 10,
   gap 8: Type (w 76), People (86), Modified (96), Size (74). The "Filter in this
   folder…" box beside them is the same 28 high, w 210, radius 8. Right-aligned:
   "Name" 12 + `ArrowUp` 14 (sort), then `MoreVertical` 16.
+- The row WRAPS. The four menus are fixed, but the chips set from the details
+  panel (§12) are as many as the node has tags, and on one unbreakable line they
+  pushed the name box and the sort control off the page. It is 38 high until
+  there is a second line to draw, so nothing moves in the common case.
+- **The chips live in the URL**, the way `/search?q=…` carries the advanced
+  search: `?type=images&size=medium&owner=7&tag=design&tag=q3&date=modified&at=<ISO>&span=day`.
+  Read before the listing opens, so the first request is already the filtered
+  one, and written back with `replace` — a filter is an adjustment to the view,
+  not a place, and a history entry per chip would make Back a slow undo of
+  one's own clicks. Arriving at the folder pushed an entry, so Back still takes
+  the whole filter off; moving to another folder drops it, because the
+  narrowing is part of that folder's address rather than a mode carried around.
+  The name box stays out: it is cleared on every navigation by design, and the
+  address would be a second answer to when it survives.
+- **One vocabulary with the advanced search.** `type`, `modified`, `size`,
+  `owner`, `tags` and the window's `date`/`at`/`span` mean the same thing on
+  `/search` as they do on a listing, and the window itself is one module
+  (`data/dateWindow.ts`). Two spellings for one question is one of them going
+  stale — which is what happened while the chips could ask for a date window and
+  the search could not.
 - Section title "Folders" 13/600, 8px above the grid. The grid is fluid —
   `repeat(auto-fill, minmax(176px, 1fr))`, gap 8 — so the width the sidebar and
   the inspector gave up turns into more cards per row at every viewport rather
@@ -246,8 +266,39 @@ choices. **Not in the reference.**
   that the drive is not theirs. filex has no group entity and none was invented
   for this: the drive IS the group. The rule lives in
   `features/files/owner.ts` so the panel and the listing cannot disagree.
+- **Every property row is a way into the filter.** Type, Size, Modified,
+  Created and Owner are buttons (underline on hover) that narrow the listing to
+  the rows like this one — the type group and the size band the chips already
+  offer, the owner, and for the two dates a WINDOW of a day either side of what
+  the row shows rather than that calendar day. They MERGE into whatever is
+  already filtered, so two clicks are two conditions; a date window and the
+  Modified chip's preset replace each other, since both are windows over the
+  same column. Location is the exception: it is an address, and opens the
+  folder. A property nothing can be asked about (a folder's size, a type in no
+  group) stays plain text. Home has no listing, so a filter set from there is
+  applied to the folder the node lives in and the page follows it.
 - Divider 1px, 12px of air each side.
-- "People with access" 12/600; row: avatar 24 + name 11.5 + role 11 gray.
+- "Tags" 12/600 (only where the server has tags); each tag a pill h 28
+  `--c-primary-soft` with a `Tag` 12 icon, and clicking it adds that tag to the
+  filter. "No tags" 11.5 gray when there are none, and a read that failed says
+  so rather than claiming there are none. Tags are read per node: no listing row
+  carries them, which is also why a tag filter is always the server's to apply.
+- The two filters set from here — the tags and the date window — appear in the
+  filter row above the listing (§3) as primary-soft chips, capped at 200px.
+  They carry a VALUE, not a sentence: "Sep 11, 2026 ±1d" behind a
+  `CalendarClock` (written) or `CalendarPlus` (created) icon, "#tag" for a tag,
+  truncating, with the full wording as the tooltip. Spelled out — "Created
+  within a day of Sep 11, 2026" — one chip was wider than the three menus
+  beside it and pushed the name box off the row.
+- Each is two buttons in one chip frame, like the menus beside them: the body
+  opens a dropdown that EDITS the value, the `X` 14 removes the filter. A date
+  window's menu is which date it reads (Modified / Created) and how wide it is
+  (±1 hour / ±1 day / ±1 week, divider between the two questions); a tag's is
+  every tag on the drive (`GET /manager/tags/all`), the current one checked and
+  the ones other chips already hold inert, so picking one SWAPS this chip. A
+  chip whose only gesture removed it was a filter nobody could adjust without
+  going back to the panel.
+- Divider. "People with access" 12/600; row: avatar 24 + name 11.5 + role 11 gray.
 - Divider. "Shared link" 12/600; row: `Link` 14 in a 24 circle `--c-bg-muted`,
   "Not shared" 11.5 gray; right button "Create link" h --control-md radius 10
   border 1px 13/500. When shared: URL text truncated + `Copy` icon button +
@@ -298,14 +349,27 @@ white, shadow-modal, padding 26 26 22.
   row's chips / checkbox 6px above it).
   - Left: "Search in" 15/600 + `HelpCircle` 14 gray; radios 20 (Current folder:
     demo / All storages / Shared files), 15, gap 8. "Modified" → select h 40
-    radius 10 border, `Calendar` 18, "Any time", `ChevronDown` right.
+    radius 10 border, `Calendar` 18, "Any time", `ChevronDown` right; under it
+    "Or around a date" 11.5 gray with a date box (w 150) and a dense width
+    select (±1 hour / ±1 day / ±1 week), and — once a date is set — a second
+    dense select saying which date the window reads (Modified / Created).
+    It is the window the listing chips and the details panel carry (§3, §12),
+    down to the URL parameters, and the only way to ask about the CREATION
+    date at all. The preset and the window replace each other: both are windows
+    over one column, and set together nothing could be inside both. A day
+    picked here centres the window on its NOON, so "±1 day" covers that day
+    with a night either side rather than starting at midnight.
     "File type" → select with `File` icon "Any file type". "Tags" → input
     "Add or select tags…" h 40, below it chips (pill h 28 bg `--c-primary-soft`
     text primary 14 + `X` 14): "design", "project alpha".
   - Right: "Owner" → select `User` "Any owner". "Size range" → row: select "Any
     size" w 94, input "Min" w 70, "–", input "Max" w 70, select "MB" w 62, all
-    h 40, gap 8. "Path" + help → input "/demo/design/" h 40, hint "Example:
-    /demo/design/" 13 gray. "Content search options" 15/600 with `FileText`
+    h 40, gap 8. "Path" + help → a two-cell segmented control h 32 above the
+    field ("Only here" / "Skip this"), then input "/demo/design/" h 40, hint
+    "Example: /demo/design/" 13 gray. The hint follows the mode, because a path
+    box that means the opposite depending on a control above it has to say which
+    it means: "Search only inside this folder" / "Leave this folder out". See
+    §7d. "Content search options" 15/600 with `FileText`
     icon 18; one checkbox 20 radius 5: "Match whole phrase". The reference drew
     two more — "Case sensitive" and "Include document OCR" — and they are gone
     on purpose: the index lowercases every token it stores, so case cannot be
@@ -651,6 +715,96 @@ and the whole list written in one call. A tag still in the box when Save is
 pressed counts as typed. The details panel deliberately does not show tags —
 the panel is a reference state (ref 1) and the folder it shows is tagged, so a
 tags row there would move everything below it; revisit when the refs do.
+
+## 7d. Path exclusions
+
+A search that keeps answering with the same folder is the commonest way a good
+query looks broken, and re-typing the query never fixes it — the folder is not
+what the words said, it is what the drive happens to hold. So the way to get rid
+of it is to point at it, not to describe it.
+
+**From a result row.** Every result row carries a "Skip /demo/archive" button,
+naming the folder that row sits in: a `FolderMinus` 18 in a 32 hit area, left of
+the row's ⋮, revealed on hover or keyboard focus and absent on a row that sits
+at a drive's root, where there is no folder to leave out. It is a button rather
+than an entry in the ⋮ menu beside it because that menu is the FILES menu — it
+acts on a node through the files store and knows nothing about a search — while
+this acts on the query. Pressing it adds an exclusion chip above the list — the
+§7a chip shape, with a leading `−` and the path as its label — and runs the
+search again with that folder left out. The chip's `X` puts it back.
+The chip survives a reworded query, because the folder the user rejected did not
+change when the words did, and it clears with "Reset" along with every other
+filter.
+
+The count beside the divider stays what it always was: **what was found**. It
+does not grow a "…and 6 skipped" half, and that is deliberate rather than
+unfinished — the exclusion is applied inside the search engine, which never
+returns the excluded documents at all, so a skipped count could only come from
+running the whole query a second time without the exclusion. Paying for a second
+search to print a number nobody acts on is the wrong trade; the chip already
+says what was left out, by name, which is the part a person can do something
+with.
+
+**From the form.** The advanced search's Path box (§5) does the same thing ahead
+of time, through a two-cell segmented control: **Only here** is the prefix filter
+that box always was, **Skip this** is its negative. One path per mode, not a
+list: a second exclusion is one more click from a result row, and a list in that
+corner of the form would need a chip rack, an empty state and a scroll — three
+things for a case the rows already answer.
+
+The box completes against the paths this browser has searched with before — see
+§7e — and not against the folders that exist. An exclusion that names nothing is
+not a narrower answer, it is an identical one, and with no skipped count to show
+the difference, a typo'd folder looks exactly like a folder that was excluded;
+offering back what was typed last time is what keeps the typo from happening
+twice.
+
+Since nothing counts what was removed, the chips ARE the record of it: they stay
+visible above every result list they apply to, including an empty one, so a
+result list emptied by an exclusion is read as an exclusion rather than as a
+query that found nothing.
+
+⚠ **An exclusion alone is not a search.** With the query box empty, the form
+stops calling itself one: the divider reads "All files in demo, except
+/demo/drafts", the rows come back in listing order rather than by relevance,
+they carry no snippets, and the footer button says "Show" instead of "Search".
+This is not a restriction dressed up — it is what the request actually is, and
+the two shapes are answered by two different halves of the server (the index
+ranks a query; the node table pages a listing). A form that called both "Search"
+would be promising a ranking to a request that has nothing to rank.
+
+The rules that keep it cheap are the same three everywhere: an exclusion under
+two characters is not sent, it applies on submit rather than per keystroke, and
+the path travels as a folder — a segment the index can look up — never as a
+free substring, which costs a walk of the whole term dictionary. `docs/SEARCH.md`
+carries the engine side of that.
+
+## 7e. Search history
+
+Both boxes of Advanced search complete against what this browser has searched
+for before: the query box against previous query texts, the Path box against
+previous paths. Plain `<datalist>` on the input rather than a menu of our own —
+the browser already knows how to filter a list as you type, and it hands
+keyboard and touch the behaviour they expect without a component to keep in step.
+
+The obvious alternative was completing the Path box against the folders that
+EXIST, and it is worse on every axis: a request per keystroke, answering with a
+whole drive's tree, most of which the person asking has never opened. What people
+retype is what they typed before.
+
+Twenty of each, newest first, no duplicates, in `localStorage` under
+`filex.searchHistory`. Repeating a search moves it up the list instead of adding
+a second copy, and a difference of case or surrounding space is the same search —
+the spelling kept is the most recent one, so a suggestion always looks like
+something this person writes. A search is recorded when it RUNS, whatever it
+found: the query that came back empty is exactly the one worth offering back when
+it is tried again differently.
+
+It is a convenience, not a document. It never leaves the device and nothing but
+these two boxes reads it, so a browser that hands back nothing — a private
+window, cleared site data, storage switched off — leaves both boxes working
+exactly as they did before there was a history. Every read and write is wrapped
+for that reason: a refused `localStorage` must not be able to break a search.
 
 ## 8. User settings modal (ref 5)
 

@@ -190,6 +190,7 @@ A query is free text, optionally carrying tag filters.
 | `tag:invoice` | every file tagged `invoice` |
 | `main go tag:source` | `main.go`, but only if it carries the `source` tag |
 | `report -tag:archive` | `report…` files that are **not** tagged `archive` |
+| `config -path:archive` | `config…` files, except the ones under a folder called `archive` |
 
 **Multi-word queries narrow.** Every word has to match somewhere in the name
 (or, at a lower rank, the path). Adding a word never widens the result set.
@@ -226,6 +227,50 @@ Tag filtering is applied by `/api/files/search`, the explorer toolbar and the
 MCP `file_search` tool alike. Results are still passed through the caller's
 tenant scope and [RBAC](RBAC.md) grants afterwards, exactly like any other hit —
 a tag cannot be used to learn that a file exists.
+
+### Excluding a folder
+
+`-path:archive` drops every hit whose address runs through a folder called
+`archive`. It is the one filter with no positive twin: confining a search to a
+subtree is already the `path_prefix` facet the advanced form sends, and a second
+spelling of it would be a second thing to keep in step. Excluding one had no
+spelling at all, which is why it got an operator.
+
+| Rule | Behaviour |
+|---|---|
+| Case and separators | Ignored, like everywhere else. `-path:/Demo/Archive/` and `-path:demo archive` are the same filter. |
+| What it matches | A whole run of folder **names**, in order. `-path:doc` does not take `/documents` with it, and `-path:demo archive` hides `/demo/archive/` but not `/archive/demo/`. |
+| Several exclusions | ORed. Each one hides more — exclusions widen what is hidden, the way several tags narrow what is kept. |
+| Spaces | Quote them: `-path:"old files"`. |
+| Under two characters | Not a filter. It stays part of the free text: one character names no folder anybody meant, and acting on it would hide most of a drive between two keystrokes. |
+| A folder that does not exist | Changes nothing. Unlike a tag, an exclusion that names nothing has no set to be empty — it simply removes nothing. |
+| `-path:` alone, no free text | A **listing**: every file on the drive except that folder, newest first. See below. |
+| Which drive it applies to | **All of them.** The value names folders, and a node's stored path starts below its drive, so `-path:archive` hides an `archive` folder on every drive the answer draws from. Narrow to one drive with `storage_id` if that is not what you meant. |
+
+**Why a folder and not a substring.** The excluded path is matched as a phrase
+over `path_norm`, which the normaliser has already split into words, so one
+folder name is one term and Bleve answers it with a single seek. The obvious
+spelling — a `*folder*` wildcard — would cost a walk of the whole term
+dictionary (the 7.8 ms above) on every pass of every search carrying an
+exclusion, and it would quietly hide `/documents` when you excluded `doc`.
+
+> ⚠ **On an index that has not been rebuilt** (schema v1 — no `path_norm`), the
+> phrase can match nothing, and a `MustNot` that matches nothing hides nothing.
+> So on a stale index the wildcard *is* paid, deliberately: a filter that
+> silently stops filtering is worse than a slow one. `AutoRebuildIfStale` is what
+> leaves that state, usually within one restart.
+
+**`-path:` with no query text is a listing, not a search.** There is nothing to
+rank — no text, no scores, no tiers — so the answer comes from the node table:
+every live file of the storage except the excluded folders, **newest first**,
+a page at a time. Like the SQL LIKE fallback it requires a `storage_id`:
+"everything" across every mount in a deployment is the one request nothing can
+bound.
+
+Exclusions are applied by `/api/files/search` and the explorer toolbar alike, on
+the index path and on the index-less one, and by the same predicate in both
+(`search.PathExcluded`). A filter that narrows on one branch and not on another
+is the one failure mode a filter must not have.
 
 ---
 
@@ -442,7 +487,7 @@ curl -X POST https://files.example.com/api/files/search \
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `query` | string | — | The search text. May carry `tag:` / `-tag:` filters — see [Query syntax](#query-syntax). |
+| `query` | string | — | The search text. May carry `tag:` / `-tag:` / `-path:` filters — see [Query syntax](#query-syntax). |
 | `storage_id` | int | `0` (all) | Restrict to one storage. **Required to enable the LIKE fallback** (see below). |
 | `limit` | int | `50` | Max results. |
 | `scope` | string | `all` | `name` \| `content` \| `all` — which fields to consult (see [Content search](#content-search)). |

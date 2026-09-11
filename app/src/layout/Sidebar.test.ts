@@ -11,7 +11,7 @@ import Sidebar from './Sidebar.vue';
 const Page = { template: '<div />' };
 const ACTIVE = 'bg-primary-soft';
 
-const drive = (id: string) => ({ id, name: id, rootId: `${id}://`, quota: noQuota(), shared: false, viaGroups: [] });
+const drive = (id: string) => ({ id, serverId: 1, name: id, rootId: `${id}://`, quota: noQuota(), shared: false, viaGroups: [] });
 
 /** Every sidebar row painted as the current one; on a files route there must be exactly one. */
 const activeRows = (wrapper: VueWrapper) => wrapper.findAll('a').filter((a) => a.classes().includes(ACTIVE)).map((a) => a.text());
@@ -60,8 +60,8 @@ describe('Sidebar storages', () => {
   it('keeps the home drive off the list', async () => {
     const { files, wrapper } = await mountSidebar();
     files.storages = [
-      { id: 'main', name: 'main', rootId: 'main://', quota: noQuota(), shared: false, viaGroups: [] },
-      { id: 'demo', name: 'demo', rootId: 'demo://', quota: noQuota(), shared: false, viaGroups: [] },
+      { id: 'main', serverId: 1, name: 'main', rootId: 'main://', quota: noQuota(), shared: false, viaGroups: [] },
+      { id: 'demo', serverId: 1, name: 'demo', rootId: 'demo://', quota: noQuota(), shared: false, viaGroups: [] },
     ];
     await nextTick();
 
@@ -80,8 +80,8 @@ describe('Sidebar storages', () => {
   it('marks "My files" for the home drive only, whatever files route is open', async () => {
     const { files, wrapper } = await mountSidebar();
     files.storages = [
-      { id: 'main', name: 'main', rootId: 'main://', quota: noQuota(), shared: false, viaGroups: [] },
-      { id: 'demo', name: 'demo', rootId: 'demo://', quota: noQuota(), shared: false, viaGroups: [] },
+      { id: 'main', serverId: 1, name: 'main', rootId: 'main://', quota: noQuota(), shared: false, viaGroups: [] },
+      { id: 'demo', serverId: 1, name: 'demo', rootId: 'demo://', quota: noQuota(), shared: false, viaGroups: [] },
     ];
     const myFiles = () => wrapper.findAll('a').find((a) => a.text() === 'My files')!;
     await wrapper.vm.$router.push('/files/main');

@@ -2,11 +2,14 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { nextTick } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { repository } from '@/data';
+import { NOT_FOUND } from '@/data/repository';
+import { noQuota, type Node, type Storage } from '@/data/types';
 import { i18n } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
 import AdvancedSearchModal from './AdvancedSearchModal.vue';
-import { fromUrlQuery, useSearchStore } from './searchStore';
+import { fromUrlQuery, toUrlQuery, useSearchStore } from './searchStore';
 
 const Page = { template: '<div />' };
 
@@ -97,5 +100,93 @@ describe('AdvancedSearchModal', () => {
     await flushPromises();
     expect(store.open).toBe(false);
     expect(store.query).toEqual(fromUrlQuery({ q: 'brief', tags: 'design' }));
+  });
+});
+
+describe('the date window in the advanced search', () => {
+  let cleanup: (() => void) | undefined;
+  afterEach(() => cleanup?.());
+
+  it('carries the window through the URL the way the listing chips spell it', async () => {
+    const { router, store, wrapper } = await setup('/search?date=created&at=2026-09-09T12:00:00.000Z&span=week');
+    cleanup = () => wrapper.unmount();
+    store.assign(fromUrlQuery(router.currentRoute.value.query));
+    expect(store.query.around).toEqual({ field: 'created', at: '2026-09-09T12:00:00.000Z', span: 'week' });
+    expect(toUrlQuery(store.query)).toMatchObject({ date: 'created', at: '2026-09-09T12:00:00.000Z', span: 'week' });
+  });
+
+  it('lets the preset and the window replace each other: one column cannot answer two windows', async () => {
+    const { store, wrapper } = await setup('/search?modified=week');
+    cleanup = () => wrapper.unmount();
+    store.query.modified = 'week';
+    store.openModal();
+    await flushPromises();
+
+    await setField('Date', '2026-09-09');
+    expect(store.query.modified).toBe('any');
+    expect(store.query.around).toMatchObject({ field: 'modified', span: 'day' });
+    // Noon of the day picked, so "±1 day" covers that day with a night either side.
+    expect(new Date(store.query.around!.at).getHours()).toBe(12);
+
+    await setField('Date', '');
+    expect(store.query.around).toBeNull();
+  });
+
+  it('reads the Path box either way, and says which way in the hint', async () => {
+    const { store, wrapper } = await setup('/search');
+    cleanup = () => wrapper.unmount();
+    store.openModal();
+    await flushPromises();
+
+    await setField('Path', '/demo/archive/');
+    expect(store.query.pathMode).toBe('only');
+    expect(document.body.textContent).toContain('Search only inside this folder');
+
+    button('Skip this').click();
+    await nextTick();
+    expect(store.query.pathMode).toBe('skip');
+    // The hint follows the mode: the same box now means the opposite, and the only place that shows is here.
+    expect(document.body.textContent).toContain('Leave this folder out of the results');
+    // The mode rides in the URL beside the path, so a shared link means what it meant.
+    expect(toUrlQuery(store.query)).toMatchObject({ path: '/demo/archive/', pathmode: 'skip' });
+  });
+
+  it('says so when the Path box names a folder that is not there', async () => {
+    const drive: Storage = { id: 'demo', serverId: 4, name: 'demo', rootId: 'demo://', quota: noQuota(), shared: false, viaGroups: [] };
+    vi.spyOn(repository, 'listStorages').mockResolvedValue([drive]);
+    // bootstrap loads the drives and the user together; a rejected user leaves `storages` empty, and then every
+    // path would read as an unknown drive.
+    vi.spyOn(repository, 'currentUser').mockResolvedValue({ id: 'u1', name: 'Me', initial: 'M', email: 'me@filex.test', role: 'member' });
+    vi.spyOn(repository, 'listFilterPeople').mockResolvedValue([]);
+    const resolvePath = vi.spyOn(repository, 'resolvePath');
+    const { wrapper } = await setup('/search');
+    cleanup = () => {
+      wrapper.unmount();
+      vi.restoreAllMocks();
+    };
+    useSearchStore().openModal();
+    await flushPromises();
+
+    // A path that names nothing is invisible in a result list: confining to it answers with nothing, and
+    // excluding it removes nothing — and no count tells the two apart.
+    resolvePath.mockRejectedValueOnce(new Error(NOT_FOUND));
+    await setField('Path', '/demo/nope/');
+    field('Path').dispatchEvent(new Event('blur'));
+    await flushPromises();
+    expect(document.body.textContent).toContain('No such folder');
+
+    // The drive is answered without asking anything — the app already holds every drive this account can open.
+    await setField('Path', '/nosuchdrive/x/');
+    field('Path').dispatchEvent(new Event('blur'));
+    await flushPromises();
+    expect(document.body.textContent).toContain('No such drive');
+    expect(resolvePath).toHaveBeenCalledTimes(1);
+
+    // A folder that IS there puts the hint back.
+    resolvePath.mockResolvedValueOnce({ id: 'demo://Design', name: 'Design', kind: 'folder', parentId: 'demo://', size: 0, ownerId: 'u1', shared: false, starred: false } as Node);
+    await setField('Path', '/demo/Design/');
+    field('Path').dispatchEvent(new Event('blur'));
+    await flushPromises();
+    expect(document.body.textContent).not.toContain('No such folder');
   });
 });

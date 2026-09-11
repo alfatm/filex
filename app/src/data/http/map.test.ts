@@ -207,8 +207,11 @@ describe('trash rows → app model', () => {
 
 describe('storages', () => {
   it('is addressed by its name, and its root is the bare adapter form', () => {
-    const storage = toStorage({ name: 'main', read_only: false, used_bytes: 100 }, { ...noQuota(), totalBytes: 1000 });
-    expect(storage).toEqual({ id: 'main', name: 'main', rootId: 'main://', quota: { ...noQuota(), usedBytes: 100, totalBytes: 1000 }, shared: false, viaGroups: [] });
+    const storage = toStorage({ id: 7, name: 'main', read_only: false, used_bytes: 100 }, { ...noQuota(), totalBytes: 1000 });
+    expect(storage).toEqual({ id: 'main', serverId: 7, name: 'main', rootId: 'main://', quota: { ...noQuota(), usedBytes: 100, totalBytes: 1000 }, shared: false, viaGroups: [] });
+    // A server too old to send the row id leaves it 0, which the drive picker reads as "cannot narrow to this
+    // drive" rather than as drive zero.
+    expect(toStorage({ name: 'main', read_only: false }, noQuota()).serverId).toBe(0);
   });
 
   it('measures the drive’s own bytes against the account ceiling, not the account’s bytes against it', () => {

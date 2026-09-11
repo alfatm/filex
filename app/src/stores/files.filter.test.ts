@@ -109,6 +109,34 @@ describe('filter chips on the folder listing', () => {
     expect(files.folder?.id).toBe(other);
   });
 
+  // No listing row carries its tags, so there is nothing in memory to sieve by one: a small folder that would
+  // otherwise be held whole has to be asked for again, filtered, or the tag would narrow nothing at all.
+  it('asks the server for a tag filter even in a folder small enough to sieve', async () => {
+    const list = vi.spyOn(repository, 'listFolder').mockImplementation(async (_id, filter) => ({
+      nodes: filter?.tags.length ? [rows[0]] : rows,
+      total: 3,
+    }));
+    const files = useFilesStore();
+    await files.open(FOLDER);
+    expect(list).toHaveBeenCalledTimes(1);
+
+    const tagged = { ...emptyFilter(), tags: ['design'] };
+    await files.setFilter(tagged);
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(list).toHaveBeenLastCalledWith(FOLDER, tagged);
+    expect(files.ordered.map((n) => n.name)).toEqual(['notes.md']);
+
+    // And a chip added on top of it goes to the server too, rather than sieving the tagged answer in memory.
+    await files.setFilter({ ...tagged, fileType: 'images' });
+    expect(list).toHaveBeenCalledTimes(3);
+    expect(list).toHaveBeenLastCalledWith(FOLDER, { ...tagged, fileType: 'images' });
+
+    // Dropping the tag hands the folder back to the sieve: it is asked for whole once more.
+    await files.clearFilter();
+    expect(list).toHaveBeenLastCalledWith(FOLDER, emptyFilter());
+    expect(files.items).toHaveLength(3);
+  });
+
   it('opens a small folder whole when a chip is already on, so the sieve has the whole folder to work on', async () => {
     const list = vi.spyOn(repository, 'listFolder').mockImplementation(async (_id, filter) => ({
       nodes: filter?.fileType === 'images' ? [rows[1]] : rows,

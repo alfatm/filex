@@ -315,7 +315,36 @@
     "name": "Bu klasörde filtrele…",
     "anyone": "Herkes",
     "clear": "Filtreleri temizle",
-    "title": "Filtreler"
+    "title": "Filtreler",
+    "remove": "Bu süzgeci kaldır",
+    "tagChip": "#{tag}",
+    "around": {
+      "modified": "{date} tarihinden {span} içinde değiştirilmiş",
+      "created": "{date} tarihinden {span} içinde oluşturulmuş",
+      "short": "{date} {span}",
+      "edit": "Tarih penceresini düzenle",
+      "field": {
+        "modified": "Değiştirilme tarihi",
+        "created": "Oluşturulma tarihi"
+      },
+      "span": {
+        "hour": "±1 saat",
+        "day": "±1 gün",
+        "week": "±1 hafta"
+      },
+      "spanShort": {
+        "hour": "±1 sa",
+        "day": "±1 g",
+        "week": "±1 h"
+      },
+      "spanOf": {
+        "hour": "bir saat",
+        "day": "bir gün",
+        "week": "bir hafta"
+      }
+    },
+    "tagTitle": "“{tag}” etiketi — kaldırmak için tıklayın",
+    "tagEdit": "Bu etiketi değiştir"
   },
   "sort": {
     "name": "Ad",
@@ -365,7 +394,12 @@
       "owner": "Sahip",
       "editor": "Düzenleyici",
       "viewer": "Görüntüleyici"
-    }
+    },
+    "tags": "Etiketler",
+    "noTags": "Etiket yok",
+    "tagsUnknown": "Etiketler okunamadı",
+    "filterBy": "{value} ölçütüne göre süz",
+    "openLocation": "{value} klasörünü aç"
   },
   "type": {
     "folder": "Klasör",
@@ -473,8 +507,18 @@
     "max": "Maks",
     "unit": "Birim",
     "path": "Yol",
-    "pathHelp": "Yalnızca yolu bu önekle başlayan öğeler döner.",
+    "pathHelp": "Bir klasör belirtir. \"Yalnızca burada\" aramayı ona daraltır; \"Bunu atla\" onu dışarıda bırakır.",
     "pathHint": "Örnek: /demo/design/",
+    "pathModeOnly": "Yalnızca burada",
+    "skipFolder": "{folder} klasörünü atla",
+    "unskipFolder": "{folder} klasörünü artık atlama",
+    "chipSkip": "{path} hariç",
+    "pathModeSkip": "Bunu atla",
+    "pathMode": "Yolun anlamı",
+    "pathMissing": "Böyle bir klasör yok",
+    "pathUnknownDrive": "Böyle bir sürücü yok",
+    "pathHintOnly": "Yalnızca bu klasörün içinde ara",
+    "pathHintSkip": "Bu klasörü sonuçların dışında bırak",
     "contentOptions": "İçerik arama seçenekleri",
     "wholePhrase": "Tam ifadeyle eşleştir",
     "matching": "{count} eşleşen öğe",
@@ -496,7 +540,13 @@
     "chipQuery": "“{text}”",
     "chipTags": "Etiketler: {tags}",
     "chipPath": "Yol: {path}",
-    "refine": "Daralt"
+    "drive": "Sürücü",
+    "allDrives": "Tüm sürücüler",
+    "refine": "Daralt",
+    "dateWindow": "Ya da bir tarihin çevresinde",
+    "dateWindowDate": "Tarih",
+    "dateWindowSpan": "Pencere genişliği",
+    "dateWindowField": "Pencerenin okuduğu tarih"
   },
   "assistant": {
     "title": "Yapay zekâ asistanı",

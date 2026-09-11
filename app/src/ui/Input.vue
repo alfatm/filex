@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, type Component } from 'vue';
+import { ref, useId, type Component } from 'vue';
 
 withDefaults(
   defineProps<{
@@ -7,16 +7,24 @@ withDefaults(
     icon?: Component;
     height?: number;
     width?: number;
-    type?: 'text' | 'search' | 'number' | 'password';
+    type?: 'text' | 'search' | 'number' | 'password' | 'date';
     label?: string;
     autocomplete?: string;
     inputmode?: 'text' | 'numeric';
+    /**
+     * Values to complete against, offered by the browser's own datalist. The list rides WITH the input rather
+     * than being wired up by id at every call site, because an id that has to be matched in two places is an id
+     * that eventually is not.
+     */
+    suggestions?: string[];
   }>(),
-  { placeholder: '', icon: undefined, height: 34, width: undefined, type: 'text', label: undefined, autocomplete: undefined, inputmode: undefined },
+  { placeholder: '', icon: undefined, height: 34, width: undefined, type: 'text', label: undefined, autocomplete: undefined, inputmode: undefined, suggestions: undefined },
 );
+
+const listId = useId();
 // `type="number"` inputs hand v-model a number (Vue casts), every other type a string.
 const model = defineModel<string | number>({ required: true });
-const emit = defineEmits<{ enter: [] }>();
+const emit = defineEmits<{ enter: []; blur: [] }>();
 const input = ref<HTMLInputElement>();
 defineExpose({
   focus: () => input.value?.focus(),
@@ -40,8 +48,13 @@ defineExpose({
       :autocomplete="autocomplete"
       :inputmode="inputmode"
       :aria-label="label"
+      :list="suggestions?.length ? listId : undefined"
       class="min-w-0 flex-1 bg-transparent text-13 leading-none text-text placeholder:text-text-3 focus:outline-none"
+      @blur="emit('blur')"
       @keydown.enter.prevent="emit('enter')"
     />
+    <datalist v-if="suggestions?.length" :id="listId">
+      <option v-for="suggestion in suggestions" :key="suggestion" :value="suggestion" />
+    </datalist>
   </label>
 </template>

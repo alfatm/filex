@@ -67,7 +67,9 @@ export function searchFilters(query: SearchQuery): string[] {
   if (query.ownerId) out.push(`owner: ${query.ownerId}`);
   if (query.size.preset === 'custom') out.push(`size: ${query.size.min ?? ''}–${query.size.max ?? ''} ${query.size.unit}`);
   else if (query.size.preset !== 'any') out.push(`size: ${query.size.preset}`);
-  if (query.path) out.push(`path: ${query.path}`);
+  // The mode goes with the path, or the assistant reads an exclusion as a confinement — the two opposite answers
+  // one string can have.
+  if (query.path) out.push(`${query.pathMode === 'skip' ? 'excluding path' : 'path'}: ${query.path}`);
   if (query.wholePhrase) out.push('whole phrase');
   return out;
 }

@@ -15,12 +15,17 @@ const (
 // download share this is read (download); for a drop share it is blind
 // upload into the node (a directory) — see Kind.
 type Share struct {
-	ID            int64      `json:"id"`
-	NodeID        int64      `json:"node_id"`
-	Token         string     `json:"token"`
-	PinHash       string     `json:"-"`       // never serialized
-	HasPin        bool       `json:"has_pin"` // computed
-	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	ID        int64      `json:"id"`
+	NodeID    int64      `json:"node_id"`
+	Token     string     `json:"token"`
+	PinHash   string     `json:"-"`       // never serialized
+	HasPin    bool       `json:"has_pin"` // computed
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// RevokedAt is set when somebody closed the link by hand, as opposed to a
+	// TTL that simply ran out. Revoking also pulls ExpiresAt back to now, so
+	// liveness does not depend on this field — it exists so the admin list can
+	// say WHY a link is dead.
+	RevokedAt     *time.Time `json:"revoked_at,omitempty"`
 	MaxDownloads  *int       `json:"max_downloads,omitempty"`
 	DownloadCount int        `json:"download_count"`
 	CreatedBy     *int64     `json:"created_by,omitempty"`
@@ -41,10 +46,14 @@ type Share struct {
 // IsDrop reports whether this is a public upload (file-drop) share.
 func (s *Share) IsDrop() bool { return s != nil && s.Kind == ShareKindDrop }
 
-// IsExpired reports whether the share has lapsed. Covers time expiry, the
-// download cap (download shares) and the upload cap (drop shares).
+// IsExpired reports whether the share has lapsed. Covers manual revocation,
+// time expiry, the download cap (download shares) and the upload cap (drop
+// shares).
 func (s *Share) IsExpired(now time.Time) bool {
 	if s == nil {
+		return true
+	}
+	if s.RevokedAt != nil {
 		return true
 	}
 	if s.ExpiresAt != nil && now.After(*s.ExpiresAt) {

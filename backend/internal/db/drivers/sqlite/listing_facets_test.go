@@ -292,3 +292,98 @@ func TestListTrashed_NarrowModifiedWindowIgnoresTheCutoffZone(t *testing.T) {
 	assert.Empty(t, names(rows))
 	assert.Zero(t, total)
 }
+
+// "Files written around the same time as this one" is a window with two edges,
+// and a lone lower bound cannot express it: everything newer than the file also
+// passes one. The details panel asks for a day either side of a row's date.
+func TestListNodesByUserMeta_ModifiedWindowHasAnUpperEdgeToo(t *testing.T) {
+	ctx, store, user, mk := facetFixture(t)
+	anchor := time.Now().Add(-30 * 24 * time.Hour)
+
+	for _, tc := range []struct {
+		name string
+		at   time.Time
+	}{
+		{"komsu.md", anchor.Add(2 * time.Hour)},
+		{"eski.md", anchor.Add(-72 * time.Hour)},
+		{"yeni.md", time.Now()},
+	} {
+		n := mk(tc.name, model.NodeTypeFile, func(n *model.Node) { at := tc.at; n.BackendMtime = &at })
+		require.NoError(t, store.SetUserNodeMeta(ctx, user, n.ID, "starred", "1"))
+	}
+
+	after, before := anchor.Add(-24*time.Hour).UTC(), anchor.Add(24*time.Hour).UTC()
+	rows, err := store.ListNodesByUserMeta(ctx, user, "starred",
+		db.NodeFacets{ModifiedAfter: &after, ModifiedBefore: &before}, 50)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"komsu.md"}, names(rows),
+		"only the neighbour is inside the window; today's file is past its upper edge")
+}
+
+// The created window reads created_at — when filex catalogued the node — which
+// is a different column from the one the modified window tests.
+func TestListNodesByUserMeta_CreatedWindowReadsTheCatalogueDate(t *testing.T) {
+	ctx, store, user, mk := facetFixture(t)
+
+	long := time.Now().Add(-90 * 24 * time.Hour)
+	n := mk("eski.md", model.NodeTypeFile, func(n *model.Node) { n.BackendMtime = &long })
+	require.NoError(t, store.SetUserNodeMeta(ctx, user, n.ID, "starred", "1"))
+
+	after, before := time.Now().Add(-24*time.Hour).UTC(), time.Now().Add(24*time.Hour).UTC()
+	rows, err := store.ListNodesByUserMeta(ctx, user, "starred",
+		db.NodeFacets{CreatedAfter: &after, CreatedBefore: &before}, 50)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"eski.md"}, names(rows), "catalogued a moment ago, however old the bytes are")
+
+	past := time.Now().Add(-48 * time.Hour).UTC()
+	none, err := store.ListNodesByUserMeta(ctx, user, "starred",
+		db.NodeFacets{CreatedAfter: &after, CreatedBefore: &past}, 50)
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}
+
+// Two tags narrow to the nodes carrying BOTH: the chips narrow, and a filter
+// that widened as you added to it would be the only one in the toolbar that did.
+func TestListNodesByUserMeta_TagsNarrowInsideTheQuery(t *testing.T) {
+	ctx, store, user, mk := facetFixture(t)
+
+	both := mk("tasarim.md", model.NodeTypeFile)
+	one := mk("rapor.md", model.NodeTypeFile)
+	none := mk("not.md", model.NodeTypeFile)
+	require.NoError(t, store.SetNodeTags(ctx, both.ID, []string{"design", "q3"}))
+	require.NoError(t, store.SetNodeTags(ctx, one.ID, []string{"design"}))
+	for _, n := range []*model.Node{both, one, none} {
+		require.NoError(t, store.SetUserNodeMeta(ctx, user, n.ID, "starred", "1"))
+	}
+
+	design, err := store.ListNodesByUserMeta(ctx, user, "starred", db.NodeFacets{Tags: []string{"design"}}, 50)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"tasarim.md", "rapor.md"}, names(design))
+
+	andQ3, err := store.ListNodesByUserMeta(ctx, user, "starred", db.NodeFacets{Tags: []string{"design", "q3"}}, 50)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"tasarim.md"}, names(andQ3))
+}
+
+// The facets are also applied over a node row, on the paths that never run the
+// query. Tags are the one thing a row cannot answer for.
+func TestFacetsMatches_WindowsAndTags(t *testing.T) {
+	at := time.Now().Add(-2 * time.Hour)
+	n := &model.Node{Name: "a.md", Path: "/a.md", Type: model.NodeTypeFile, BackendMtime: &at, CreatedAt: at}
+
+	before := time.Now().Add(-time.Hour).UTC()
+	after := time.Now().Add(-3 * time.Hour).UTC()
+	assert.True(t, db.NodeFacets{ModifiedAfter: &after, ModifiedBefore: &before}.Matches(n))
+	assert.True(t, db.NodeFacets{CreatedAfter: &after, CreatedBefore: &before}.Matches(n))
+
+	tooEarly := time.Now().Add(-3 * time.Hour).UTC()
+	assert.False(t, db.NodeFacets{ModifiedBefore: &tooEarly}.Matches(n), "written after the upper edge")
+	assert.False(t, db.NodeFacets{CreatedAfter: &before}.Matches(n), "catalogued before the lower edge")
+
+	// A driver object has no catalogue row, so it has neither a creation date
+	// nor tags — and "unknown" is outside every window.
+	driver := &model.Node{Name: "a.md", Path: "/a.md", Type: model.NodeTypeFile, BackendMtime: &at}
+	assert.False(t, db.NodeFacets{CreatedAfter: &after}.Matches(driver))
+	assert.False(t, db.NodeFacets{Tags: []string{"design"}}.Matches(n),
+		"tags live in node_meta; a caller that can resolve them clears the facet first")
+}

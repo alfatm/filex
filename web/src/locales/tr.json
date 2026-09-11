@@ -602,8 +602,14 @@
     "deleteConfirm": "Bu paylaşım kalıcı olarak silinsin mi?",
     "revokedOk": "Paylaşım iptal edildi",
     "deletedOk": "Paylaşım silindi",
-    "noResults": "Aktif paylaşım yok",
-    "linkCopied": "Paylaşım linki panoya kopyalandı"
+    "noResults": "Paylaşım bulunamadı",
+    "linkCopied": "Paylaşım linki panoya kopyalandı",
+    "revoked": "iptal edildi",
+    "expired": "süresi doldu",
+    "scope": {
+      "active": "Yalnızca etkin",
+      "all": "Tüm bağlantılar"
+    }
   },
   "search": {
     "title": "Arama indeksi",
@@ -1004,6 +1010,7 @@
       "file_infected": "Virüs bulundu — tarama dosyayı işaretledi ve çöpe karantinaya aldı",
       "file_deleted": "Dosya kalıcı olarak silindi",
       "file_trashed": "Dosya çöpe taşındı",
+      "file_restored": "Dosya çöpten geri yüklendi",
       "file_moved": "Dosya taşındı veya yeniden adlandırıldı",
       "share_created": "Paylaşım bağlantısı oluşturuldu",
       "drop_received": "Herkese açık istek bağlantısından dosya alındı",

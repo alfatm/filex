@@ -2,10 +2,13 @@ import { defineStore } from 'pinia';
 import { reactive, ref } from 'vue';
 import type { LocationQuery } from 'vue-router';
 import { repository } from '@/data';
+import { fromWindowQuery, toWindowQuery } from '@/data/dateWindow';
 import { joinPath, segments } from '@/lib/path';
+import { readHistory, remember, writeHistory, type SearchHistory } from './searchHistory';
 import {
   FILE_TYPE_GROUPS,
   MODIFIED_PRESETS,
+  PATH_MODES,
   SEARCH_INS,
   SEARCH_SCOPES,
   SIZE_PRESETS,
@@ -21,13 +24,17 @@ export function emptyQuery(): SearchQuery {
     text: '',
     scope: 'all',
     searchIn: 'current',
+    drive: null,
     folderPath: '',
     modified: 'any',
+    around: null,
     fileType: 'any',
     tags: [],
     ownerId: null,
     size: { preset: 'any', min: null, max: null, unit: 'MB' },
     path: '',
+    pathMode: 'only',
+    excludePaths: [],
     wholePhrase: false,
   };
 }
@@ -58,8 +65,11 @@ export function toUrlQuery(query: SearchQuery): Record<string, string | string[]
   if (query.text) out.q = query.text;
   if (query.scope !== neutral.scope) out.scope = query.scope;
   if (query.searchIn !== neutral.searchIn) out.in = query.searchIn;
+  if (query.drive) out.drive = query.drive;
   if (query.searchIn === 'current' && query.folderPath) out.folder = query.folderPath;
   if (query.modified !== neutral.modified) out.modified = query.modified;
+  // The same three parameters the listing writes, so a window means one thing across the app.
+  Object.assign(out, toWindowQuery(query.around));
   if (query.fileType !== neutral.fileType) out.type = query.fileType;
   if (query.tags.length) out.tags = [...query.tags];
   if (query.ownerId) out.owner = query.ownerId;
@@ -68,6 +78,10 @@ export function toUrlQuery(query: SearchQuery): Record<string, string | string[]
   if (query.size.max !== null) out.max = String(query.size.max);
   if (query.size.unit !== neutral.size.unit) out.unit = query.size.unit;
   if (query.path) out.path = query.path;
+  // Only alongside a path: a mode on its own says nothing, and a URL that carried it would be describing a box
+  // that is empty.
+  if (query.path && query.pathMode !== neutral.pathMode) out.pathmode = query.pathMode;
+  if (query.excludePaths.length) out.skip = [...query.excludePaths];
   if (query.wholePhrase) out.phrase = '1';
   return out;
 }
@@ -78,8 +92,10 @@ export function fromUrlQuery(raw: LocationQuery): SearchQuery {
     text: first(raw.q) ?? '',
     scope: pick(first(raw.scope), SEARCH_SCOPES, neutral.scope),
     searchIn: pick(first(raw.in), SEARCH_INS, neutral.searchIn),
+    drive: first(raw.drive) || null,
     folderPath: first(raw.folder) ?? '',
     modified: pick(first(raw.modified), MODIFIED_PRESETS, neutral.modified),
+    around: fromWindowQuery(raw),
     fileType: pick(first(raw.type), FILE_TYPE_GROUPS, neutral.fileType),
     tags: [...new Set(all(raw.tags).map((t) => t.trim()).filter(Boolean))],
     ownerId: first(raw.owner) || null,
@@ -90,6 +106,8 @@ export function fromUrlQuery(raw: LocationQuery): SearchQuery {
       unit: pick(first(raw.unit), SIZE_UNITS, neutral.size.unit),
     },
     path: first(raw.path) ?? '',
+    pathMode: pick(first(raw.pathmode), PATH_MODES, neutral.pathMode),
+    excludePaths: [...new Set(all(raw.skip).map((p) => p.trim()).filter(Boolean))],
     wholePhrase: first(raw.phrase) === '1',
   };
 }
@@ -115,9 +133,14 @@ export const useSearchStore = defineStore('search', () => {
    * ever caught it, so a search against an unreachable server drew "No results", which is a claim about the drive.
    */
   const failed = ref(false);
+  /**
+   * What this browser has searched for before — what the query and Path boxes complete against. Read once, here,
+   * rather than per keystroke in the component: it is a file on disk as far as the browser is concerned.
+   */
+  const history = ref<SearchHistory>(readHistory());
 
   function assign(next: SearchQuery) {
-    Object.assign(query, next, { size: { ...next.size }, tags: [...next.tags] });
+    Object.assign(query, next, { size: { ...next.size }, tags: [...next.tags], excludePaths: [...next.excludePaths] });
   }
 
   function reset() {
@@ -155,6 +178,14 @@ export const useSearchStore = defineStore('search', () => {
 
   async function run() {
     const id = ++seq;
+    // Recorded on the way OUT, not on a keystroke and not on the answer: what a person searched for is what they
+    // asked, whether or not it found anything — a query that came back empty is exactly the one worth offering
+    // back when they try it again differently.
+    const recorded = remember(history.value, query);
+    if (recorded !== history.value) {
+      history.value = recorded;
+      writeHistory(recorded);
+    }
     loading.value = true;
     try {
       const result = await repository.search(JSON.parse(JSON.stringify(query)));
@@ -177,5 +208,5 @@ export const useSearchStore = defineStore('search', () => {
     }
   }
 
-  return { open, query, hits, total, capped, loading, failed, assign, reset, clearResults, openModal, close, run };
+  return { open, query, hits, total, capped, loading, failed, history, assign, reset, clearResults, openModal, close, run };
 });

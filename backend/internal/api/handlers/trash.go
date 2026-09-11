@@ -29,6 +29,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/realtime"
 	"github.com/brf-tech/filex/backend/internal/search"
 	"github.com/brf-tech/filex/backend/internal/trash"
+	"github.com/brf-tech/filex/backend/internal/writehook"
 )
 
 // Trash wires trash retention HTTP routes.
@@ -155,6 +156,10 @@ func (h *Trash) announceRestore(ctx context.Context, nodeID int64) {
 	if err != nil || node == nil {
 		return
 	}
+	// The node's own feed recorded `file.trashed` when it went in; without the
+	// counterpart the activity panel shows a file that was deleted and never
+	// came back.
+	writehook.OnFileRestored(ctx, node.StorageID, node.Path, node.Name, writehook.OriginManager)
 	sy := protocolsync.New(h.Store, h.Index, nil, "")
 	for _, n := range sy.CollectSubtree(ctx, node.StorageID, node) {
 		sy.IndexNode(ctx, n)

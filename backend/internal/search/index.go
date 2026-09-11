@@ -433,6 +433,41 @@ type Filter struct {
 	Restrict   bool
 	IncludeIDs []int64
 	ExcludeIDs []int64
+	// ExcludePaths drop a node whose path runs through the folder any of
+	// them names, normalised (see Parsed.ExcludePaths).
+	//
+	// Unlike the id sets above this one is NOT resolved against the
+	// database first, and that is the whole reason it is a separate
+	// field: a path exclusion is a negative, so the include set it would
+	// have to be turned into is "every node on the drive but these" —
+	// the one shape the id-set mechanism cannot carry (it is capped at
+	// facetIDCeiling, and a truncated include set silently hides files).
+	// The path is already IN the document, so the engine can answer it
+	// directly.
+	ExcludePaths []string
+}
+
+// PathExcluded reports whether a node's path runs through any of the
+// excluded folders — the Go-side half of Filter.ExcludePaths, for the
+// branches that never reach the index (the SQL LIKE fallback and the
+// bare `tag:` listing).
+//
+// Both sides are compared in Normalize's form and the exclusion has to
+// match a whole RUN of words, so `-path:demo archive` hides
+// `/demo/archive/q1.pdf` and leaves `/archive/demo.pdf` alone. Word runs
+// rather than raw substrings for the same reason the index side uses a
+// phrase query: `-path:doc` must not take `/documents` with it.
+func PathExcluded(path string, excludes []string) bool {
+	if len(excludes) == 0 {
+		return false
+	}
+	hay := " " + Normalize(path) + " "
+	for _, ex := range excludes {
+		if ex != "" && strings.Contains(hay, " "+ex+" ") {
+			return true
+		}
+	}
+	return false
 }
 
 // searchOverFetch is how many extra hits are pulled from Bleve so the
@@ -554,7 +589,7 @@ func (i *Index) SearchFiltered(_ context.Context, q string, limit int, scope Sco
 				})
 			}
 		}
-		res, err := runNameSearch(bx, applyFilter(nameQuery(q), f), fetch)
+		res, err := runNameSearch(bx, applyFilter(nameQuery(q), f, i.staleSchema), fetch)
 		if err != nil {
 			return nil, err
 		}
@@ -567,7 +602,7 @@ func (i *Index) SearchFiltered(_ context.Context, q string, limit int, scope Sco
 		// and closed this gate. Now only real matches do.
 		if len(out) < limit {
 			if fq := fuzzyNameQuery(q); fq != nil {
-				res, err := runNameSearch(bx, applyFilter(fq, f), fetch)
+				res, err := runNameSearch(bx, applyFilter(fq, f, i.staleSchema), fetch)
 				if err != nil {
 					return nil, err
 				}
@@ -597,7 +632,7 @@ func (i *Index) SearchFiltered(_ context.Context, q string, limit int, scope Sco
 			cq = mq
 		}
 		cq.SetField("content")
-		req := bleve.NewSearchRequest(applyFilter(cq, f))
+		req := bleve.NewSearchRequest(applyFilter(cq, f, i.staleSchema))
 		req.Size = fetch
 		req.Highlight = bleve.NewHighlight()
 		req.Highlight.AddField("content")
@@ -795,9 +830,13 @@ func fuzzyNameQuery(term string) query.Query {
 	return bleve.NewConjunctionQuery(subs...)
 }
 
-// applyFilter wraps a query in the node-ID Filter, when there is one.
-func applyFilter(q query.Query, f *Filter) query.Query {
-	if f == nil || (!f.Restrict && len(f.ExcludeIDs) == 0) {
+// applyFilter wraps a query in the Filter, when there is one.
+//
+// legacyPath asks for the pre-v2 half of a path exclusion — see
+// pathExcludeQuery. It is the index's own staleSchema, read by the caller
+// under the lock it already holds.
+func applyFilter(q query.Query, f *Filter, legacyPath bool) query.Query {
+	if f == nil || (!f.Restrict && len(f.ExcludeIDs) == 0 && len(f.ExcludePaths) == 0) {
 		return q
 	}
 	b := bleve.NewBooleanQuery()
@@ -808,7 +847,52 @@ func applyFilter(q query.Query, f *Filter) query.Query {
 	if len(f.ExcludeIDs) > 0 {
 		b.AddMustNot(bleve.NewDocIDQuery(docIDs(f.ExcludeIDs)))
 	}
+	if pq := pathExcludeQuery(f.ExcludePaths, legacyPath); pq != nil {
+		b.AddMustNot(pq)
+	}
 	return b
+}
+
+// pathExcludeQuery renders the excluded folders as the half of a boolean
+// a MustNot takes. Nil when there are none.
+//
+// A PHRASE on path_norm, not a wildcard. The whole cost of a negative
+// path filter is decided here: `path_norm` is already split into words by
+// the normaliser, so one folder name is one term and Bleve answers it
+// with a single seek. The obvious spelling — a `*folder*` wildcard —
+// costs a walk of the entire term dictionary (7.8 ms on 20k documents,
+// measured in docs/SEARCH.md) because a leading `*` gives the FST nothing
+// to seek on, and it would be paid on every pass of every search that
+// carries an exclusion. A phrase also gets the semantics right for free:
+// `-path:doc` does not take `/documents` with it.
+//
+// ⚠ legacyPath is the expensive spelling, and it is switched on ONLY
+// when the index on disk predates name_norm/path_norm (Index.staleSchema).
+// Those documents have no path_norm at all, so the phrase above matches
+// none of them — and a MustNot that matches nothing hides nothing. The
+// failure mode is the one no filter may have: it does not narrow, it
+// quietly stops narrowing, and the user reads the folder they excluded
+// still sitting in their results as a broken feature rather than an
+// un-rebuilt index. So on a stale index the wildcard is paid. It is the
+// state AutoRebuildIfStale exists to leave, which is what keeps this from
+// being the normal cost of the feature.
+func pathExcludeQuery(paths []string, legacyPath bool) query.Query {
+	subs := make([]query.Query, 0, len(paths)*2)
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		phrase := bleve.NewMatchPhraseQuery(p)
+		phrase.SetField("path_norm")
+		subs = append(subs, phrase)
+		if legacyPath {
+			subs = append(subs, wordWildcards(strings.Split(p, " "), "path", 1))
+		}
+	}
+	if len(subs) == 0 {
+		return nil
+	}
+	return bleve.NewDisjunctionQuery(subs...)
 }
 
 // docIDs renders node IDs as the string document IDs the index is keyed by.

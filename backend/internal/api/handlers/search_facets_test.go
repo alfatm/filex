@@ -250,3 +250,38 @@ func TestSearchFacets_PathPrefixIsNormalisedBeforeItIsCompared(t *testing.T) {
 	// A prefix that means the whole drive still means the whole drive.
 	require.Len(t, f.search(t, map[string]any{"query": "rapor", "path_prefix": "/"}), 2)
 }
+
+// "Around the same time as that file" is a window with two edges, and the
+// search took only the lower one — so the same question the listing chips
+// answer came back here with everything newer than the file as well.
+func TestSearchFacets_DateWindowHasBothEdgesAndReadsEitherDate(t *testing.T) {
+	f := newFacetFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	anchor := now.AddDate(0, 0, -30)
+
+	f.seed(t, "rapor-komsu.md", 1000, anchor.Add(2*time.Hour), nil)
+	f.seed(t, "rapor-eski.md", 1000, anchor.AddDate(0, 0, -3), nil)
+	f.seed(t, "rapor-yeni.md", 1000, now, nil)
+
+	window := f.search(t, map[string]any{
+		"query":           "rapor",
+		"modified_after":  anchor.Add(-24 * time.Hour).UnixMilli(),
+		"modified_before": anchor.Add(24 * time.Hour).UnixMilli(),
+	})
+	require.Equal(t, []string{"rapor-komsu.md"}, window,
+		"only the neighbour is inside; today's file is past the upper edge")
+
+	// created_at is when filex catalogued the row — a moment ago for all three,
+	// however old their contents are — so the same window over that column
+	// keeps everything, and a window in the past keeps nothing.
+	created := f.search(t, map[string]any{
+		"query":          "rapor",
+		"created_after":  now.Add(-24 * time.Hour).UnixMilli(),
+		"created_before": now.Add(24 * time.Hour).UnixMilli(),
+	})
+	require.Len(t, created, 3)
+	require.Empty(t, f.search(t, map[string]any{
+		"query":          "rapor",
+		"created_before": now.AddDate(0, 0, -1).UnixMilli(),
+	}))
+}

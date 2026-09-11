@@ -5,6 +5,7 @@ import { sharedDriveOf } from './owner';
 const drive = (name: string, rootId: string, shared: boolean, viaGroups: string[] = []): Storage => ({
   id: name,
   name,
+  serverId: 1,
   rootId,
   quota: noQuota(),
   shared,

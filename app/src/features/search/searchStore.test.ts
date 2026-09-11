@@ -36,6 +36,29 @@ describe('search URL mapping', () => {
     expect(fromUrlQuery(toUrlQuery(current))).toEqual(current);
   });
 
+  it('round-trips the folders left out, and the direction the Path box reads', () => {
+    const query = { ...emptyQuery(), text: 'config', path: '/demo/archive/', pathMode: 'skip' as const, excludePaths: ['Design/Old', 'tmp'] };
+    const url = toUrlQuery(query);
+    // Repeated params, like tags: a folder name may contain anything a folder name may contain.
+    expect(url.skip).toEqual(['Design/Old', 'tmp']);
+    expect(url.pathmode).toBe('skip');
+    expect(fromUrlQuery(url)).toEqual(query);
+
+    // The drive rides in the URL by NAME, so a shared link survives a re-import that renumbered the rows.
+    expect(toUrlQuery({ ...emptyQuery(), drive: 'demo' }).drive).toBe('demo');
+    expect(fromUrlQuery({ drive: 'demo' }).drive).toBe('demo');
+    // "All drives" is the neutral value and writes nothing.
+    expect(toUrlQuery({ ...emptyQuery(), drive: null })).not.toHaveProperty('drive');
+    expect(fromUrlQuery({}).drive).toBeNull();
+
+    // The mode is written only beside a path: on its own it describes an empty box.
+    expect(toUrlQuery({ ...emptyQuery(), pathMode: 'skip' })).not.toHaveProperty('pathmode');
+    // …and a link that carries a path without one still means what it always meant.
+    expect(fromUrlQuery({ path: '/demo/design/' }).pathMode).toBe('only');
+    // The same folder twice is one exclusion; it removes what it removes.
+    expect(fromUrlQuery({ skip: ['tmp', 'tmp'] }).excludePaths).toEqual(['tmp']);
+  });
+
   it('ignores unknown or malformed values', () => {
     // `case` and `ocr` are old links: the boxes they carried are gone, so they are read as no query at all.
     expect(fromUrlQuery({ q: ['a', 'b'], scope: 'bogus', min: 'x', tags: ' ', case: '1', ocr: '0', size: null })).toEqual({
@@ -65,7 +88,7 @@ describe('search URL mapping', () => {
   });
 
   it('labels a hit with the storage name and its folder path', () => {
-    const storages = [{ id: 'demo', name: 'Demo', rootId: 'demo', quota: { ...noQuota(), totalBytes: 1 }, shared: false, viaGroups: [] }];
+    const storages = [{ id: 'demo', serverId: 1, name: 'Demo', rootId: 'demo', quota: { ...noQuota(), totalBytes: 1 }, shared: false, viaGroups: [] }];
     const node = { id: 'x' } as SearchResult['hits'][number]['node'];
     expect(hitFolderLabel({ node, storageId: 'demo', folderPath: '' }, storages)).toBe('/Demo');
     expect(hitFolderLabel({ node, storageId: 'demo', folderPath: 'Design/Assets' }, storages)).toBe('/Demo/Design/Assets');
@@ -74,6 +97,23 @@ describe('search URL mapping', () => {
 });
 
 describe('search store', () => {
+  it('records what was searched for, so the boxes can offer it back', async () => {
+    setActivePinia(createPinia());
+    const store = useSearchStore();
+    vi.spyOn(repository, 'search').mockResolvedValue({ hits: [], total: 0, capped: false });
+
+    store.query.text = 'rapor';
+    store.query.path = '/demo/design/';
+    await store.run();
+    expect(store.history).toEqual({ queries: ['rapor'], paths: ['/demo/design/'] });
+
+    // A search that found nothing is exactly the one worth offering back when it is tried again differently.
+    store.query.text = 'plan';
+    await store.run();
+    expect(store.history.queries).toEqual(['plan', 'rapor']);
+  });
+
+
   it('opens neutral, resets to neutral and publishes what the repository answers', async () => {
     setActivePinia(createPinia());
     const store = useSearchStore();

@@ -119,6 +119,21 @@ type Store interface {
 	// `limit` is a ceiling on the set, and a truncated set is reported by the
 	// caller rather than silently narrowing the search.
 	ListNodeIDsMatching(ctx context.Context, storageID int64, f NodeFacets, limit int) ([]int64, error)
+	// ListNodesMatching is the same question answered as a LISTING: the node
+	// rows themselves, newest first, a page at a time.
+	//
+	// It exists for the request the full-text index cannot be asked — "every
+	// file except the ones under here". That has no positive text to score, so
+	// there is nothing for the index to rank and nothing for it to narrow on;
+	// what it needs is a page of a drive in a stated order, which is a listing.
+	// Reaching for ListNodeIDsMatching instead would mean materialising the
+	// whole drive as an id set (capped, so a long drive would silently lose its
+	// tail) purely to hand it back to an engine with no query to run.
+	//
+	// Newest first because that is this product's default listing order, and an
+	// answer that arrives in a different order than the folder it came from
+	// would read as a different feature.
+	ListNodesMatching(ctx context.Context, storageID int64, f NodeFacets, limit, offset int) ([]*model.Node, error)
 
 	// Users
 	CreateUser(ctx context.Context, email, passwordHash, role, locale, tz string) (*model.User, error)
@@ -285,7 +300,9 @@ type Store interface {
 	GetShareByID(ctx context.Context, id int64) (*model.Share, error)
 	GetShareByToken(ctx context.Context, token string) (*model.Share, error)
 	ListSharesByNode(ctx context.Context, nodeID int64) ([]*model.Share, error)
-	ListAllShares(ctx context.Context, creatorID *int64, activeOnly bool, limit, offset int) ([]*ShareWithMeta, int64, error)
+	// ListAllShares is the admin overview. `q` matches token, node path or
+	// creator email (empty = no filter); activeOnly drops revoked/expired rows.
+	ListAllShares(ctx context.Context, creatorID *int64, q string, activeOnly bool, limit, offset int) ([]*ShareWithMeta, int64, error)
 	RevokeShare(ctx context.Context, id int64) error
 	IncrementShareDownload(ctx context.Context, id int64) error
 	// ReserveShareDownload claims ONE download against the link's cap and
@@ -773,11 +790,28 @@ type NodeFacets struct {
 	// product, since tr ships — so a needle with such a letter can match in a
 	// cold folder and miss in a cached one. Closing it means folding the name
 	// into a stored column; until then this is the known edge.
-	NameContains  string
-	ModifiedAfter *time.Time
-	SizeMin       *int64
-	SizeMax       *int64
-	OwnerID       *int64
+	NameContains string
+	// ModifiedAfter and ModifiedBefore bound the date window from below and
+	// above. Two bounds rather than one because "around this file's date" is a
+	// window, not a cutoff: the details panel filters a listing to what was
+	// written within 24 hours either side of the row it describes, and a lone
+	// "since" cannot express the upper edge.
+	ModifiedAfter  *time.Time
+	ModifiedBefore *time.Time
+	// CreatedAfter and CreatedBefore are the same window over nodes.created_at
+	// — when filex first catalogued the node, which is what every listing row
+	// carries as `created_at` and what the panel's Created row shows.
+	CreatedAfter  *time.Time
+	CreatedBefore *time.Time
+	// Tags keeps the nodes carrying EVERY tag listed (AND, not OR): the chips
+	// narrow, and two tags naming a broader set than one would be the only
+	// filter in the toolbar that widens as you add to it. Tags live in
+	// node_meta as `tag:<value>` rows, so this is the one facet no node row can
+	// answer by itself — see Matches.
+	Tags    []string
+	SizeMin *int64
+	SizeMax *int64
+	OwnerID *int64
 	// FilesOnly drops directories. Type and size are properties of files, so a
 	// filter on either is a filter for files; a date or an owner is not.
 	FilesOnly bool
@@ -797,6 +831,7 @@ type NodeFacets struct {
 // Any reports whether the facets narrow anything at all.
 func (f NodeFacets) Any() bool {
 	return f.PathPrefix != "" || len(f.Exts) > 0 || f.NameContains != "" || f.ModifiedAfter != nil ||
+		f.ModifiedBefore != nil || f.CreatedAfter != nil || f.CreatedBefore != nil || len(f.Tags) > 0 ||
 		f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.FilesOnly ||
 		f.DirsOnly || f.SharedOnly
 }
@@ -843,6 +878,28 @@ func (f NodeFacets) Where(alias, modified string, bind func(any) string) []strin
 	}
 	if f.ModifiedAfter != nil {
 		where = append(where, alias+modified+" >= "+bind(*f.ModifiedAfter))
+	}
+	if f.ModifiedBefore != nil {
+		where = append(where, alias+modified+" <= "+bind(*f.ModifiedBefore))
+	}
+	// created_at is named outright rather than through the `modified` parameter:
+	// which column dates a row differs per listing, but when it was catalogued
+	// is the same column everywhere.
+	if f.CreatedAfter != nil {
+		where = append(where, alias+"created_at >= "+bind(*f.CreatedAfter))
+	}
+	if f.CreatedBefore != nil {
+		where = append(where, alias+"created_at <= "+bind(*f.CreatedBefore))
+	}
+	for _, tag := range f.Tags {
+		// ⚠ The outer id is qualified for the same reason SharedOnly's is: the
+		// subquery's own table has no `id`, but leaving it bare here would read
+		// whatever the enclosing query calls one.
+		outer := alias
+		if outer == "" {
+			outer = "nodes."
+		}
+		where = append(where, "EXISTS (SELECT 1 FROM node_meta tm WHERE tm.node_id = "+outer+"id AND tm.key = "+bind(tagMetaPrefix+tag)+")")
 	}
 	if f.SizeMin != nil {
 		where = append(where, alias+"size >= "+bind(*f.SizeMin))
@@ -892,7 +949,8 @@ func (f NodeFacets) Where(alias, modified string, bind func(any) string) []strin
 // (a grant on a path with no node behind it) can answer the rest from the path
 // alone, and uses this to tell "cannot be judged" from "judged and rejected".
 func (f NodeFacets) NeedsNodeRow() bool {
-	return f.ModifiedAfter != nil || f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.SharedOnly ||
+	return f.ModifiedAfter != nil || f.ModifiedBefore != nil || f.CreatedAfter != nil || f.CreatedBefore != nil ||
+		len(f.Tags) > 0 || f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.SharedOnly ||
 		(f.PathPrefix != "" && f.PathPrefix != "/")
 }
 
@@ -955,6 +1013,28 @@ func (f NodeFacets) Matches(n *model.Node) bool {
 	if f.ModifiedAfter != nil && (n.BackendMtime == nil || n.BackendMtime.Before(*f.ModifiedAfter)) {
 		return false
 	}
+	if f.ModifiedBefore != nil && (n.BackendMtime == nil || n.BackendMtime.After(*f.ModifiedBefore)) {
+		return false
+	}
+	// A node the caller built from a driver listing has no catalogue row behind
+	// it, so its CreatedAt is the zero time: unknown, and unknown is outside
+	// every window.
+	if f.CreatedAfter != nil && (n.CreatedAt.IsZero() || n.CreatedAt.Before(*f.CreatedAfter)) {
+		return false
+	}
+	if f.CreatedBefore != nil && (n.CreatedAt.IsZero() || n.CreatedAt.After(*f.CreatedBefore)) {
+		return false
+	}
+	// Tags are rows in node_meta, not a field of the node, so this predicate
+	// cannot answer for them the way the SQL does. Saying "no" is the honest
+	// reading on the paths that run it: a driver object has no catalogue row and
+	// therefore no tags at all. A caller that CAN resolve them — the shared
+	// listing, whose rows are real nodes — narrows by tag before it gets here
+	// and clears the facet, rather than being silently told none of its rows
+	// carry the tag.
+	if len(f.Tags) > 0 {
+		return false
+	}
 	if f.SizeMin != nil && n.Size < *f.SizeMin {
 		return false
 	}
@@ -969,6 +1049,12 @@ func (f NodeFacets) Matches(n *model.Node) bool {
 	}
 	return true
 }
+
+// tagMetaPrefix is how a tag is spelled as a node_meta key: one row per tag,
+// `tag:<lower-cased value>`, which is what SetNodeTags writes and what the tag
+// facet above tests for. The drivers spell the same prefix for their own tag
+// queries; it is defined here because the facet SQL is built here.
+const tagMetaPrefix = "tag:"
 
 // likeEscapeChar is the character that turns off LIKE's two wildcards in the
 // patterns built above.

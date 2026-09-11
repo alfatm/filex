@@ -315,7 +315,36 @@
     "name": "Фильтр в этой папке…",
     "anyone": "Любой",
     "clear": "Сбросить фильтры",
-    "title": "Фильтры"
+    "title": "Фильтры",
+    "remove": "Убрать этот фильтр",
+    "tagChip": "#{tag}",
+    "around": {
+      "modified": "Изменён в пределах {span} от {date}",
+      "created": "Создан в пределах {span} от {date}",
+      "short": "{date} {span}",
+      "edit": "Изменить окно по дате",
+      "field": {
+        "modified": "Дата изменения",
+        "created": "Дата создания"
+      },
+      "span": {
+        "hour": "±1 час",
+        "day": "±1 день",
+        "week": "±1 неделя"
+      },
+      "spanShort": {
+        "hour": "±1 ч",
+        "day": "±1 д",
+        "week": "±1 н"
+      },
+      "spanOf": {
+        "hour": "часа",
+        "day": "суток",
+        "week": "недели"
+      }
+    },
+    "tagTitle": "Тег «{tag}» — нажмите, чтобы убрать",
+    "tagEdit": "Заменить этот тег"
   },
   "sort": {
     "name": "Имя",
@@ -365,7 +394,12 @@
       "owner": "Владелец",
       "editor": "Редактор",
       "viewer": "Просмотр"
-    }
+    },
+    "tags": "Теги",
+    "noTags": "Тегов нет",
+    "tagsUnknown": "Не удалось прочитать теги",
+    "filterBy": "Отфильтровать список по «{value}»",
+    "openLocation": "Открыть {value}"
   },
   "type": {
     "folder": "Папка",
@@ -473,8 +507,18 @@
     "max": "Макс",
     "unit": "Единица",
     "path": "Путь",
-    "pathHelp": "Возвращаются только элементы, путь которых начинается с этого префикса.",
+    "pathHelp": "Указывает папку. «Только здесь» — искать в ней; «Кроме этой» — исключить её из результатов.",
     "pathHint": "Например: /demo/design/",
+    "pathModeOnly": "Только здесь",
+    "skipFolder": "Пропустить {folder}",
+    "unskipFolder": "Больше не пропускать {folder}",
+    "chipSkip": "Кроме {path}",
+    "pathModeSkip": "Кроме этой",
+    "pathMode": "Как читать путь",
+    "pathMissing": "Такой папки нет",
+    "pathUnknownDrive": "Такого диска нет",
+    "pathHintOnly": "Искать только внутри этой папки",
+    "pathHintSkip": "Не показывать эту папку в результатах",
     "contentOptions": "Параметры поиска по содержимому",
     "wholePhrase": "Точная фраза",
     "matching": "{count} совпадение | {count} совпадения | {count} совпадений",
@@ -496,7 +540,13 @@
     "chipQuery": "«{text}»",
     "chipTags": "Теги: {tags}",
     "chipPath": "Путь: {path}",
-    "refine": "Уточнить"
+    "drive": "Диск",
+    "allDrives": "Все диски",
+    "refine": "Уточнить",
+    "dateWindow": "Или рядом с датой",
+    "dateWindowDate": "Дата",
+    "dateWindowSpan": "Ширина окна",
+    "dateWindowField": "Какую дату читает окно"
   },
   "assistant": {
     "title": "ИИ-ассистент",

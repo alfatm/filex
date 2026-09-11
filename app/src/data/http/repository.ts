@@ -1,4 +1,5 @@
 import { ACCOUNT_DISABLED, DUPLICATE_NAME, FileLimitExceeded, INVALID_CODE, INVALID_CREDENTIALS, NOT_FOUND, OPERATION_PENDING, RBAC_DISABLED, ROLE_FORBIDDEN, SIGN_IN_LIMITED, TOTP_REQUIRED, UploadConflict, UploadRateLimited, WRONG_PASSWORD, type Repository } from '../repository';
+import { windowBounds } from '../dateWindow';
 import { MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
 import { noCapabilities, ROLE_PERMISSIONS, type Access, type ActivityEvent, type AssistantCard, type AssistantContext, type AssistantConversation, type AssistantMode, type AssistantReport, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type AuthOptions, type Branding, type Capabilities, type FolderListing, type GroupOption, type InviteOutcome, type ListingFilter, type Node, type Person, type Quota, type RolePermission, type Credentials, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type TotpEnrollment, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
@@ -241,7 +242,10 @@ const SIZE_UNIT_BYTES = { KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3 } as const;
  * they contradict and nothing can satisfy both. That is an answer, not a failure, and it costs no request.
  */
 function searchConfine(query: SearchQuery): { drive?: string; prefix: string } | null {
-  const typed = query.path.split('/').filter(Boolean);
+  // In `skip` mode the box names the folder to LEAVE OUT, so it confines nothing: it travels as a `-path:`
+  // exclusion instead (see searchExclusions). Reading it here too would confine the search to the one folder the
+  // user asked to be rid of.
+  const typed = query.pathMode === 'skip' ? [] : query.path.split('/').filter(Boolean);
   const scoped = query.searchIn === 'current' ? query.folderPath.split('/').filter(Boolean) : [];
   if (!typed.length) return { prefix: scoped.join('/') };
   const [drive, ...under] = typed;
@@ -249,6 +253,34 @@ function searchConfine(query: SearchQuery): { drive?: string; prefix: string } |
   const [deep, shallow] = under.length >= scoped.length ? [under, scoped] : [scoped, under];
   if (shallow.some((part, i) => part !== deep[i])) return null;
   return { drive, prefix: deep.join('/') };
+}
+
+/**
+ * The Path box in `skip` mode, as the query-language terms that carry it.
+ *
+ * The first segment is a DRIVE, exactly as searchConfine reads it — the box names a folder in the full address
+ * space, because that is what the breadcrumb shows. The drive is not part of a node's stored path, so only the
+ * segments below it become the `-path:` exclusion; a box naming nothing but a drive excludes no folder and is
+ * sieved by name with the hits instead (see `skipDrive`).
+ */
+function searchExclusions(query: SearchQuery): { terms: string[]; skipDrive?: string } {
+  // The chips first: they are already storage-relative, because they were taken off a hit.
+  const terms = query.excludePaths.map(pathExcludeTerm).filter(Boolean);
+  if (query.pathMode !== 'skip') return { terms };
+  const [drive, ...under] = query.path.split('/').filter(Boolean);
+  if (!drive) return { terms };
+  if (!under.length) return { terms, skipDrive: drive };
+  return { terms: [...terms, pathExcludeTerm(under.join('/'))].filter(Boolean), skipDrive: drive };
+}
+
+/** One storage-relative folder as the `-path:` term that carries it, or "" when there is no folder in it. */
+function pathExcludeTerm(relPath: string): string {
+  const parts = relPath.split('/').filter(Boolean);
+  if (!parts.length) return '';
+  const folder = parts.join(' ');
+  // Quoted whenever it is more than one segment, for the same reason a tag with a space is: the server splits a
+  // query on whitespace before it reads an operator.
+  return `-path:${parts.length > 1 ? `"${folder}"` : folder}`;
 }
 
 /**
@@ -261,6 +293,16 @@ function searchFacets(query: SearchQuery, confine: { prefix: string }): Record<s
   if (confine.prefix) out.path_prefix = `/${confine.prefix}`;
   if (query.fileType !== 'any') out.ext = extensionsOf(TYPE_GROUPS[query.fileType]);
   if (query.modified !== 'any') out.modified_after = Date.now() - MODIFIED_WINDOW_DAYS[query.modified] * DAY_MS;
+  if (query.around) {
+    const { after, before } = windowBounds(query.around);
+    if (query.around.field === 'modified') {
+      out.modified_after = after;
+      out.modified_before = before;
+    } else {
+      out.created_after = after;
+      out.created_before = before;
+    }
+  }
   if (query.size.preset === 'custom') {
     // A hand-typed range is bytes after a multiplication, which is exactly what the server takes. It used to be
     // sieved out of the answer instead, so past the hit limit it narrowed a WINDOW rather than the search.
@@ -301,6 +343,20 @@ function listingFacets(filter?: ListingFilter): Record<string, string | number |
     if (min > 0) out.size_min = min;
     if (Number.isFinite(max)) out.size_max = max;
   }
+  // A window around one row's date, as its two edges. The Modified chip writes `modified_after` too, but the two
+  // cannot both be set: picking either clears the other, since one column cannot answer two windows at once.
+  if (filter.around) {
+    const { after, before } = windowBounds(filter.around);
+    if (filter.around.field === 'modified') {
+      out.modified_after = after;
+      out.modified_before = before;
+    } else {
+      out.created_after = after;
+      out.created_before = before;
+    }
+  }
+  // Comma-joined like `ext`, and AND like the server reads it: a row has to carry every tag listed.
+  if (filter.tags.length) out.tag = filter.tags.join(',');
   const owner = Number(filter.personId);
   if (filter.personId && Number.isFinite(owner)) out.owner_id = owner;
   if (filter.name.trim()) out.name = filter.name.trim();
@@ -1347,6 +1403,12 @@ export class HttpRepository implements Repository {
     return tags ?? [];
   }
 
+  /** The drive's whole vocabulary, which is what makes the tag chip editable rather than only removable. */
+  async listAllTags(): Promise<string[]> {
+    const { tags } = await request<{ tags: string[] | null }>(`${MANAGER}/tags/all`);
+    return tags ?? [];
+  }
+
   async setTags(id: string, tags: string[]): Promise<void> {
     await write(`${MANAGER}/tags`, { method: 'POST', body: { node_id: this.nodeId(id), tags } });
   }
@@ -1600,8 +1662,14 @@ export class HttpRepository implements Repository {
     // fully quoted query as a phrase INSIDE files; filename matching drops the quotes and stays subsequence-based,
     // because `invoice 2026` has to keep finding `invoice_2026.pdf`. The tag terms stay outside the quotes.
     const phrase = query.wholePhrase ? quoted(query.text) : query.text;
-    const text = query.tags.length ? [phrase, ...query.tags.map((t) => `tag:${t}`)].join(' ').trim() : phrase;
+    const exclude = searchExclusions(query);
+    const terms = [phrase, ...query.tags.map((t) => `tag:${t}`), ...exclude.terms].filter(Boolean);
+    const text = terms.join(' ').trim();
     const confine = searchConfine(query);
+    // The drive picker, as the one thing the search endpoint takes to narrow by drive: a row id. Looked up from
+    // the cached drive list, so a name the caller cannot see — or a server too old to send ids — resolves to
+    // nothing and the search stays unscoped rather than silently answering about the wrong drive.
+    const drive = query.drive ? (await this.listStorages()).find((s) => s.id === query.drive) : undefined;
     // The Path box and the current-folder scope naming two folders neither of which holds the other. Nothing can
     // satisfy both, and that is the answer — no request is worth making for it.
     if (!confine) return { hits: [], total: 0, capped: false };
@@ -1615,6 +1683,7 @@ export class HttpRepository implements Repository {
       body: {
         query: text,
         limit: SEARCH_LIMIT,
+        ...(drive?.serverId ? { storage_id: drive.serverId } : {}),
         ...(scope ? { scope } : {}),
         // "Search in → Shared files" is a facet, not a scope: it says WHICH files may answer. Its meaning is the
         // one the `shared` badge carries in every listing — a file this account published a link to that still
@@ -1627,6 +1696,11 @@ export class HttpRepository implements Repository {
     for (const row of results) {
       if (!row.storage) continue;
       if (confine.drive && row.storage !== confine.drive) continue;
+      // Belt to the request's braces, and the whole answer on a server that does not know `storage_id` yet.
+      if (query.drive && row.storage !== query.drive) continue;
+      // "Skip this" naming a whole drive. The query language has no word for a drive — a node's path starts below
+      // one — so it is sieved here, the mirror of the confinement above.
+      if (exclude.skipDrive && !exclude.terms.length && row.storage === exclude.skipDrive) continue;
       const node = this.owned(fromModelNode(row, row.storage), row.owner_id !== undefined);
       this.remember(node.id, row.id);
       const parent = parentPath(node.id);

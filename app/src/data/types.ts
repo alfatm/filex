@@ -329,6 +329,17 @@ export function noQuota(): Quota {
 
 export interface Storage {
   id: string;
+  /**
+   * The drive's id on the server, for the one endpoint that takes one.
+   *
+   * `id` above is the NAME, and it stays the app's way of addressing a drive — every route, every node id and
+   * every other request is built from it. Search is the exception: `/api/files/search` narrows to a drive by
+   * `storage_id` and by nothing else, so before this the app could only ask for everything and drop the rows from
+   * other drives, which makes the result count a claim about a page rather than about the drive.
+   *
+   * 0 from a server too old to send it — the drive picker treats that as "cannot narrow" rather than as drive 0.
+   */
+  serverId: number;
   name: string;
   rootId: string;
   quota: Quota;
@@ -447,7 +458,31 @@ export interface ListingFilter {
   personId: string | null;
   /** Case-insensitive substring of the name; "" means any name. Keeps folders, like Modified and People do. */
   name: string;
+  /** Every tag listed has to be on the node (AND); empty means any. Lower-cased, as the server stores them. */
+  tags: string[];
+  /** "Written around the same time as that one" — see `DateWindow`; null means any date. */
+  around: DateWindow | null;
 }
+
+/**
+ * A window of a fixed width around one moment, which is what the details panel's date rows filter by: the files
+ * WRITTEN (or catalogued) within a day either side of the one being described.
+ *
+ * `modified` and `created` are two different columns on the server, so which one the window tests travels with it.
+ * It is separate from the Modified chip's presets — those are windows that end at now — and the two are mutually
+ * exclusive: setting either clears the other, because one date column cannot answer two windows at once.
+ */
+export interface DateWindow {
+  field: 'modified' | 'created';
+  /** ISO timestamp at the centre of the window. */
+  at: string;
+  /** How wide the window is, either side of `at`. */
+  span: AroundSpan;
+}
+
+/** The window widths the date chip offers. A day is what a property click starts with. */
+export const AROUND_SPANS = ['hour', 'day', 'week'] as const;
+export type AroundSpan = (typeof AROUND_SPANS)[number];
 
 /**
  * A folder's children as the server answered them. `total` counts the LIVE children before `ListingFilter` was
@@ -459,6 +494,9 @@ export interface FolderListing {
 }
 
 export type SizeUnit = (typeof SIZE_UNITS)[number];
+
+export const PATH_MODES = ['only', 'skip'] as const;
+export type PathMode = (typeof PATH_MODES)[number];
 
 export interface SizeRange {
   preset: SizePreset;
@@ -473,16 +511,49 @@ export interface SearchQuery {
   text: string;
   scope: SearchScope;
   searchIn: SearchIn;
+  /**
+   * One drive to search, by NAME, or null for every drive the account can see.
+   *
+   * It is the drive's name rather than its `serverId` because this object is written into the URL and read back
+   * out of it: `?drive=demo` still names the same drive after a re-import that renumbered the rows, and it is
+   * legible in a shared link. The id it travels to the server as is looked up at request time.
+   */
+  drive: string | null;
   /** Folder the `current` scope is restricted to: slash-separated path from the storage root, "" for the root. */
   folderPath: string;
   modified: ModifiedPreset;
+  /**
+   * "Around this moment", the same window the listing chips carry — and the only way to ask about the CREATION
+   * date, which the presets above do not reach. Mutually exclusive with `modified`: two windows over one column
+   * is a question nothing can answer.
+   */
+  around: DateWindow | null;
   fileType: FileTypeGroup;
   tags: string[];
   /** null = any owner. */
   ownerId: string | null;
   size: SizeRange;
-  /** Path prefix filter as typed, e.g. "/demo/design/". */
+  /** Path filter as typed, e.g. "/demo/design/". What it MEANS is `pathMode`'s. */
   path: string;
+  /**
+   * Which way the Path box reads: `only` confines the search to that subtree (the prefix filter it has always
+   * been), `skip` leaves it out.
+   *
+   * Two modes on one box rather than two boxes, because they are the same question asked in two directions and
+   * nobody asks both at once about the same folder. The mode travels with the path for the same reason a
+   * `DateWindow` carries its own field: a value whose meaning lives somewhere else is a value that eventually
+   * gets read the wrong way.
+   */
+  pathMode: PathMode;
+  /**
+   * Folders left OUT of the answer, storage-relative ("Design/Old"), as the chips above a result list express
+   * them: one per chip, added by pointing at a result that came from one.
+   *
+   * Separate from `path` because it is a different act. The Path box is a folder somebody TYPED, one at a time,
+   * before seeing anything; these are folders somebody REJECTED, from a list in front of them, and there is no
+   * reason the second one should replace the first. Both end up as `-path:` terms in the request.
+   */
+  excludePaths: string[];
   /** Sent as a quoted query: the words in that order, adjacent, inside the file. */
   wholePhrase: boolean;
 }

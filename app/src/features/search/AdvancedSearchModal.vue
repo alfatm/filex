@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import { Dialog, DialogPanel, DialogTitle } from '@headlessui/vue';
 import {
+  HardDrive,
   Calendar,
   File,
   FileText,
@@ -16,18 +17,25 @@ import {
   X,
 } from 'lucide-vue-next';
 import {
+  AROUND_SPANS,
   FILE_TYPE_GROUPS,
   MODIFIED_PRESETS,
   SEARCH_INS,
   SEARCH_SCOPES,
   SIZE_PRESETS,
   SIZE_UNITS,
+  type AroundSpan,
+  type DateWindow,
   type SearchScope,
 } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
 import { segments } from '@/lib/path';
+import { repository } from '@/data';
+import { NOT_FOUND } from '@/data/repository';
+import { errorMessage } from '@/lib/errors';
 import { useFilesStore } from '@/stores/files';
 import { Button, Checkbox, IconButton, Input, Radio, Select } from '@/ui';
+import Segmented from '@/features/settings/Segmented.vue';
 import HitIcon from './HitIcon.vue';
 import Snippet from './Snippet.vue';
 import { fromUrlQuery, hitFolderLabel, toUrlQuery, useSearchStore } from './searchStore';
@@ -61,7 +69,133 @@ const SCOPE_ICONS: Record<SearchScope, typeof FileText> = { all: FileText, conte
 // The label follows the query's own folder (set from the files route on open), not the files store, which is stale off that route.
 const folderName = computed(() => segments(query.folderPath).at(-1) ?? files.storage?.name ?? '');
 const modifiedOptions = computed(() => MODIFIED_PRESETS.map((value) => ({ value, label: t(`search.modifiedOptions.${value}`) })));
+const aroundFieldOptions = computed(() =>
+  (['modified', 'created'] as const).map((value) => ({ value, label: t(`filter.around.field.${value}`) })),
+);
+const aroundSpanOptions = computed(() => AROUND_SPANS.map((value) => ({ value, label: t(`filter.around.span.${value}`) })));
+
+/**
+ * The date window, as the listing chips and the details panel set it — and the only way to ask about the CREATION
+ * date, which the presets above do not reach.
+ *
+ * The box takes a DAY and the window is centred on its noon, so "±1 day" covers that day and a night either side
+ * rather than starting at midnight and ending at the next. A window that arrived with an exact moment (from a
+ * property click, through the URL) keeps it until the box is edited.
+ */
+const aroundDate = computed({
+  get: () => (query.around ? localDay(query.around.at) : ''),
+  set: (day: string | number) => {
+    const value = String(day);
+    if (!value) {
+      query.around = null;
+      return;
+    }
+    const at = new Date(`${value}T12:00:00`);
+    if (Number.isNaN(at.getTime())) return;
+    query.around = { field: query.around?.field ?? 'modified', at: at.toISOString(), span: query.around?.span ?? 'day' };
+    // Two windows over one column is a question nothing can be inside, so the preset steps aside.
+    query.modified = 'any';
+  },
+});
+const aroundField = computed({
+  get: () => query.around?.field ?? 'modified',
+  set: (field: DateWindow['field']) => {
+    if (query.around) query.around = { ...query.around, field };
+  },
+});
+const aroundSpan = computed({
+  get: () => query.around?.span ?? 'day',
+  set: (span: AroundSpan) => {
+    if (query.around) query.around = { ...query.around, span };
+  },
+});
+/** The preset and the window are the same question asked twice; picking one drops the other. */
+const modifiedPreset = computed({
+  get: () => query.modified,
+  set: (value: (typeof MODIFIED_PRESETS)[number]) => {
+    query.modified = value;
+    if (value !== 'any') query.around = null;
+  },
+});
+
+/** `YYYY-MM-DD` in the reader's own zone, which is what a date input takes and what the person saw on the row. */
+function localDay(iso: string): string {
+  const at = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+}
 const typeOptions = computed(() => FILE_TYPE_GROUPS.map((value) => ({ value, label: t(`search.typeOptions.${value}`) })));
+// The hint says what the box MEANS, not what it looks like: a path box that reads the opposite way depending on a
+// control above it has to spell out which way it is reading, or the control is decoration.
+/**
+ * Which drive answers, as the results page offers it (§7b). Picking one while the scope is "Current folder"
+ * widens the scope to that whole drive: the folder scope names a folder on ONE drive, so leaving both standing
+ * would be two controls describing different places at once.
+ */
+const driveOptions = computed(() => [
+  { value: '', label: t('search.allDrives') },
+  ...files.storages.map((s) => ({ value: s.id, label: s.name, disabled: !s.serverId })),
+]);
+
+const drive = computed({
+  get: () => query.drive ?? '',
+  set: (value: string) => {
+    query.drive = value || null;
+    if (value && query.searchIn === 'current') query.searchIn = 'all';
+  },
+});
+
+const pathModeOptions = computed(() => [
+  { value: 'only' as const, label: t('search.pathModeOnly') },
+  { value: 'skip' as const, label: t('search.pathModeSkip') },
+]);
+const pathHint = computed(() => (query.pathMode === 'skip' ? t('search.pathHintSkip') : t('search.pathHintOnly')));
+
+/**
+ * Whether the folder in the Path box exists, checked when the box is left.
+ *
+ * A path that names nothing is invisible in a result list: confining to it answers with nothing, which reads as
+ * "this search found nothing", and EXCLUDING it removes nothing at all, which reads as a filter that did not
+ * work — and no count says otherwise, since nothing counts what an exclusion removed.
+ *
+ * On leaving the box, not on every keystroke: half a typed path names nothing on the way to naming something, so
+ * a live check would spend a request per character to call a person wrong while they are still typing.
+ *
+ * Only the server SAYING the folder is not there becomes `missing`. A request that failed to reach it leaves the
+ * hint alone: "no such folder" is a claim about the drive, and an unreachable server has not made one.
+ */
+type PathCheck = 'idle' | 'checking' | 'ok' | 'missing' | 'unknownDrive';
+const pathCheck = ref<PathCheck>('idle');
+let pathSeq = 0;
+
+watch(() => query.path, () => {
+  pathSeq += 1;
+  pathCheck.value = 'idle';
+});
+
+async function checkPath() {
+  const [drive, ...under] = query.path.split('/').filter(Boolean);
+  const id = ++pathSeq;
+  if (!drive) return void (pathCheck.value = 'idle');
+  // The drive is answered without asking anything: the app already holds every drive this account can open.
+  if (!files.storages.some((s) => s.id === drive)) return void (pathCheck.value = 'unknownDrive');
+  if (!under.length) return void (pathCheck.value = 'ok');
+  pathCheck.value = 'checking';
+  try {
+    await repository.resolvePath(drive, under.join('/'));
+    if (id === pathSeq) pathCheck.value = 'ok';
+  } catch (error) {
+    if (id !== pathSeq) return;
+    pathCheck.value = errorMessage(error) === NOT_FOUND ? 'missing' : 'idle';
+  }
+}
+
+const pathProblem = computed(() => {
+  if (pathCheck.value === 'missing') return t('search.pathMissing');
+  if (pathCheck.value === 'unknownDrive') return t('search.pathUnknownDrive');
+  return '';
+});
+
 const sizeOptions = computed(() => SIZE_PRESETS.map((value) => ({ value, label: t(`search.sizeOptions.${value}`) })));
 const unitOptions = computed(() => SIZE_UNITS.map((value) => ({ value, label: t(`unit.${value.toLowerCase()}`) })));
 const ownerOptions = computed(() => [
@@ -172,6 +306,7 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
           :icon="Search"
           :placeholder="t('search.placeholder')"
           :label="t('search.search')"
+          :suggestions="store.history.queries"
           @enter="submit"
         />
 
@@ -217,10 +352,22 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
                   :label="t(`search.in.${option}`, { folder: folderName })"
                 />
               </div>
+              <!-- The same drive picker the results page carries (§7b), in the section that already answers
+                   "where". Without it the form could show a drive it could not change: the value rides through
+                   Refine untouched, so the box would have been the only control in here that only reads. -->
+              <Select v-model="drive" class="mt-2" :options="driveOptions" :icon="HardDrive" :label="t('search.drive')" />
             </section>
             <section>
               <h3 class="flex h-5 items-center text-13 font-semibold leading-none">{{ t('search.modified') }}</h3>
-              <Select v-model="query.modified" class="mt-2" :options="modifiedOptions" :icon="Calendar" :label="t('search.modified')" />
+              <Select v-model="modifiedPreset" class="mt-2" :options="modifiedOptions" :icon="Calendar" :label="t('search.modified')" />
+              <!-- The window the listing chips carry: a date, which of the two dates it reads, and how wide it is.
+                   Empty box = no window, and the presets above are back in charge. -->
+              <p class="mt-2 text-11.5 leading-none text-text-3">{{ t('search.dateWindow') }}</p>
+              <div class="mt-1.5 flex items-center gap-2">
+                <Input v-model="aroundDate" type="date" :height="34" :width="150" :label="t('search.dateWindowDate')" />
+                <Select v-model="aroundSpan" :options="aroundSpanOptions" dense :label="t('search.dateWindowSpan')" />
+              </div>
+              <Select v-if="query.around" v-model="aroundField" class="mt-2" :options="aroundFieldOptions" dense :label="t('search.dateWindowField')" />
             </section>
             <section>
               <h3 class="flex h-5 items-center text-13 font-semibold leading-none">{{ t('search.fileType') }}</h3>
@@ -267,8 +414,22 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
                   <title>{{ t('search.pathHelp') }}</title>
                 </HelpCircle>
               </h3>
-              <Input v-model="query.path" class="mt-2" :placeholder="t('search.pathHint')" :label="t('search.path')" @enter="submit" />
-              <p class="mt-1 text-11 leading-none text-text-3">{{ t('search.pathHint') }}</p>
+              <Segmented v-model="query.pathMode" class="mt-2" :options="pathModeOptions" :label="t('search.pathMode')" />
+              <!-- Completed against the paths this browser has searched with before, not against the folders that
+                   exist: what a person retypes is what they typed last time, and a tree they have never opened is
+                   a longer list that answers a different question. -->
+              <Input
+                v-model="query.path"
+                class="mt-2"
+                :placeholder="t('search.pathHint')"
+                :label="t('search.path')"
+                :suggestions="store.history.paths"
+                @blur="checkPath"
+                @enter="submit"
+              />
+              <p class="mt-1 text-11 leading-none" :class="pathProblem ? 'text-danger' : 'text-text-3'" aria-live="polite">
+                {{ pathProblem || pathHint }}
+              </p>
             </section>
             <section>
               <h3 class="flex h-5 items-center gap-2 text-13 font-semibold leading-none">

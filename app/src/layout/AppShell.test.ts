@@ -120,7 +120,7 @@ describe('AppShell drive usage', () => {
   it('reads the drive list again after a mutation', async () => {
     const { wrapper, files } = await mountShell();
     const listed = vi.spyOn(repository, 'listStorages').mockResolvedValue([
-      { id: 'demo', name: 'demo', rootId: 'demo://', quota: { ...noQuota(), usedBytes: 42, totalBytes: 100 }, shared: false, viaGroups: [] },
+      { id: 'demo', serverId: 1, name: 'demo', rootId: 'demo://', quota: { ...noQuota(), usedBytes: 42, totalBytes: 100 }, shared: false, viaGroups: [] },
     ]);
 
     await files.reload();

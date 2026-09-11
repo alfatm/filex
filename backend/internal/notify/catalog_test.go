@@ -84,7 +84,7 @@ func TestNoInlineEventTypes(t *testing.T) {
 func TestCatalogEventsAreDotted(t *testing.T) {
 	dotted := []EventType{
 		EventFileUploaded, EventFileUpdated, EventFileUploadFailed,
-		EventFileDeleted, EventFileMoved, EventFileTrashed,
+		EventFileDeleted, EventFileMoved, EventFileTrashed, EventFileRestored,
 		EventShareCreated, EventDropReceived, EventFileInfected,
 		EventCommentAdded, EventE2EEscrowUsed,
 	}

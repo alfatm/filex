@@ -151,6 +151,14 @@ upload landing real bytes, rename moving the file on the server (and a collision
 refused with neither file moved), trash and restore travelling through the
 server rather than the store, and Download handing back the bytes that went up.
 
+`search.spec.ts` is the second story: two folders with a file each, then the
+server's own index answering for them — a folder skipped from its own result row
+(the `-path:` exclusion the chip sends) leaving the answer and coming back with
+the chip, the drive picker narrowing by `storage_id` without losing rows that
+really are on that drive, and an exclusion with no query text answered as a
+listing. None of it can pass without a server: the index, the exclusion and the
+drive id are all the handler's work.
+
 ## Screenshots (`shots/`)
 
 `shots/capture.mjs` retakes every screenshot the project README shows — in

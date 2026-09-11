@@ -224,9 +224,12 @@ export const useFilesStore = defineStore('files', () => {
 
   async function read(target: Listing, seq: number) {
     if (target.kind === 'folder') {
+      // A tag filter is the server's alone — no listing row carries its tags, so nothing here could sieve by one.
+      // While one is set the folder is never held whole, however small it is.
+      const sievable = !filter.value.tags.length;
       // A folder already known to be small is asked for whole: the chips sieve it here, and a mutation in a filtered
       // folder costs one request rather than two.
-      const sieve = local.value && folder.value?.id === target.folderId;
+      const sieve = sievable && local.value && folder.value?.id === target.folderId;
       const [node, chain, first] = await Promise.all([
         repository.getNode(target.folderId),
         repository.getPath(target.folderId),
@@ -236,7 +239,7 @@ export const useFilesStore = defineStore('files', () => {
       const small = first.total < CLIENT_FILTER_MAX;
       // The answer's size disagrees with what the request assumed: a small folder was asked for filtered (its rows
       // must be the whole folder), or a folder that grew large was asked for whole. Once more, the other way.
-      const page = small === sieve || !isFiltered(filter.value)
+      const page = !sievable || small === sieve || !isFiltered(filter.value)
         ? first
         : await repository.listFolder(target.folderId, small ? emptyFilter() : filter.value);
       if (seq !== loadSeq) return;
@@ -244,7 +247,7 @@ export const useFilesStore = defineStore('files', () => {
       path.value = chain;
       items.value = page.nodes;
       total.value = page.total;
-      local.value = small;
+      local.value = small && sievable;
     } else {
       const loaders = {
         recent: repository.listRecent,
@@ -413,10 +416,17 @@ export const useFilesStore = defineStore('files', () => {
   async function setFilter(next: ListingFilter) {
     const previous = filter.value;
     const nameOnly =
-      next.fileType === previous.fileType && next.modified === previous.modified && next.size === previous.size && next.personId === previous.personId;
+      next.fileType === previous.fileType &&
+      next.modified === previous.modified &&
+      next.size === previous.size &&
+      next.personId === previous.personId &&
+      next.around === previous.around &&
+      next.tags.length === previous.tags.length &&
+      next.tags.every((tag, i) => tag === previous.tags[i]);
     filter.value = next;
     clearTimeout(nameTimer);
-    if (listing.value?.kind === 'folder' && local.value) return;
+    // `local` follows the tags too (see `read`), so a folder held whole is one every chip here can sieve.
+    if (listing.value?.kind === 'folder' && local.value && !next.tags.length) return;
     if (nameOnly) {
       nameTimer = setTimeout(() => void refresh(), NAME_DEBOUNCE_MS);
       return;

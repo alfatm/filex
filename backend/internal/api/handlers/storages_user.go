@@ -40,10 +40,22 @@ func NewStoragesUser(store db.Store) *StoragesUser { return &StoragesUser{Store:
 // AttachACL wires the RBAC resolver.
 func (h *StoragesUser) AttachACL(r *acl.Resolver) { h.ACL = r }
 
-// userStorage is deliberately narrow: a name to address the drive by and
-// whether writing to it is pointless. Driver, mount path and configuration are
-// operator business and stay on the admin route.
+// userStorage is deliberately narrow: what addresses the drive, and whether
+// writing to it is pointless. Driver, mount path and configuration are operator
+// business and stay on the admin route.
 type userStorage struct {
+	// ID is the drive's row id. The NAME is what addresses a drive everywhere
+	// in this API (`<name>://<path>`), and this is not a second way to do that
+	// — it is for the one endpoint that has never taken a name: /api/files/search
+	// narrows to a drive by `storage_id` and by nothing else, so a client that
+	// only knew names could not offer "search this drive" at all. It sieved the
+	// answer by name instead, which quietly turns `limit` into a lie: a hundred
+	// hits from another drive come back as an empty page.
+	//
+	// It is not a secret. It identifies a row the caller can already see by
+	// name, on a list already filtered to what they may open, and every
+	// endpoint that takes it re-checks the caller's grants anyway.
+	ID       int64  `json:"id"`
 	Name     string `json:"name"`
 	ReadOnly bool   `json:"read_only"`
 	// UsedBytes is what THIS drive holds. The quota endpoint next to it meters
@@ -125,7 +137,7 @@ func (h *StoragesUser) List(w http.ResponseWriter, r *http.Request) {
 			via = []string{}
 		}
 		out = append(out, userStorage{
-			Name: s.Name, ReadOnly: s.ReadOnly, UsedBytes: usage[s.ID], Shared: shared[s.ID], ViaGroups: via,
+			ID: s.ID, Name: s.Name, ReadOnly: s.ReadOnly, UsedBytes: usage[s.ID], Shared: shared[s.ID], ViaGroups: via,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"storages": out})

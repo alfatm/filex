@@ -965,9 +965,16 @@ func (h *Manager) vfSearch(w http.ResponseWriter, r *http.Request, s *model.Stor
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": terr.Error()})
 		return
 	}
+	tagFilter = withPathExcludes(tagFilter, parsed)
 
 	keep := func(n *model.Node) bool {
 		if n == nil || n.DeletedAt != nil {
+			return false
+		}
+		// `-path:` too: the toolbar speaks one query language with
+		// /api/files/search, and an operator that worked in one box and
+		// not the other is the thing that comment above is about.
+		if search.PathExcluded(n.Path, parsed.ExcludePaths) {
 			return false
 		}
 		return crossStorage || n.StorageID == s.ID
@@ -997,7 +1004,7 @@ func (h *Manager) vfSearch(w http.ResponseWriter, r *http.Request, s *model.Stor
 		plan := search.PlanFallback(parsed.Text)
 		accept := func(rows []*model.Node) {
 			for _, n := range rows {
-				if plan.Accepts(n.Name, n.Path) && tagFilterAccepts(tagFilter, n.ID) {
+				if plan.Accepts(n.Name, n.Path) && filterAccepts(tagFilter, n) {
 					nodes = append(nodes, n)
 				}
 			}

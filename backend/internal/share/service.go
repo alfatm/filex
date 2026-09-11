@@ -171,7 +171,7 @@ func (s *Service) CountOverMaxTTL(ctx context.Context, now time.Time) (int, erro
 	const page, maxShares = 500, 100000
 	over := 0
 	for offset := 0; offset < maxShares; offset += page {
-		rows, total, err := s.store.ListAllShares(ctx, nil, true, page, offset)
+		rows, total, err := s.store.ListAllShares(ctx, nil, "", true, page, offset)
 		if err != nil {
 			return 0, err
 		}

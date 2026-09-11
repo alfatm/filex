@@ -208,3 +208,27 @@ func TestNodeFacets_SharedOnlyNarrowsInTheQuery(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []int64{b.ID}, only)
 }
+
+// scopeSearchPaths is scopeSearch by PATH rather than by name — what a test
+// about folders has to assert on, since three files can share a name.
+func scopeSearchPaths(t *testing.T, h *handlers.Search, body map[string]any) []string {
+	t.Helper()
+	raw, err := json.Marshal(body)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/files/search", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.Search(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out struct {
+		Results []struct {
+			Path string `json:"path"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	paths := make([]string, 0, len(out.Results))
+	for _, r := range out.Results {
+		paths = append(paths, r.Path)
+	}
+	return paths
+}

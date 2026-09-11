@@ -100,8 +100,12 @@ const (
 	EventFileDeleted      EventType = "file.deleted"
 	EventFileMoved        EventType = "file.moved"
 	EventFileTrashed      EventType = "file.trashed"
-	EventShareCreated     EventType = "share.created"
-	EventDropReceived     EventType = "drop.received"
+	// EventFileRestored fires when a soft-deleted node is lifted back out of
+	// the trash. Without it a node's activity feed said a file went to the
+	// trash and never said it came back, so a restored file read as deleted.
+	EventFileRestored EventType = "file.restored"
+	EventShareCreated EventType = "share.created"
+	EventDropReceived EventType = "drop.received"
 	/* koru:k2 av */
 	// EventFileInfected fires when the async ClamAV scan flags an
 	// uploaded file; the payload carries the node plus a `signature`

@@ -345,6 +345,8 @@ export interface Repository {
   setStarred(ids: string[], starred: boolean): Promise<void>;
   /** The node's tags as the server holds them — lower-cased, over-long ones dropped. */
   listTags(id: string): Promise<string[]>;
+  /** Every distinct tag on the drives this account can see, alphabetical. What the tag chip's menu offers. */
+  listAllTags(): Promise<string[]>;
   /** Replaces the node's tag list; an empty array clears it. */
   setTags(id: string, tags: string[]): Promise<void>;
   move(ids: string[], targetFolderId: string, signal?: AbortSignal): Promise<void>;
