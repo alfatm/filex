@@ -2,7 +2,7 @@
 withDefaults(
   defineProps<{
     variant?: 'primary' | 'outline' | 'ghost';
-    size?: 'md' | 'lg';
+    size?: 'sm' | 'md' | 'lg';
     type?: 'button' | 'submit';
   }>(),
   { variant: 'primary', size: 'md', type: 'button' },
@@ -14,9 +14,12 @@ const variants = {
   ghost: 'text-text hover:bg-bg-muted',
 } as const;
 
+// The two control sizes from tokens.css: `md` is the default control, `lg` the primary call to action (the New
+// button). Both shrank with the density pass; `lg` is 40px, not a button a modal's footer would look small beside.
 const sizes = {
-  md: 'h-10 px-4 text-15 rounded-md',
-  lg: 'h-[52px] px-5 text-18 rounded-lg',
+  sm: 'h-control-sm px-2.5 text-13 rounded',
+  md: 'h-control-md px-3.5 text-13 rounded',
+  lg: 'h-control-lg px-4 text-13 rounded-md',
 } as const;
 </script>
 

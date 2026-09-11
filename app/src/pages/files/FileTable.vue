@@ -44,20 +44,20 @@ const settings = useSettingsStore();
 // the 12px the table extends past the ⋮ (icon at x 1618, table edge 1651): a narrower column would widen the flex
 // name column and push Owner off x 1035.
 const COLUMN_DEFS = {
-  owner: { width: 160 },
-  lastModified: { sort: 'modified', width: 236 },
-  fileSize: { sort: 'size', width: 160 },
-  sharedBy: { width: 220 },
-  sharedOn: { width: 236 },
-  deleted: { width: 236 },
-  originalPath: { width: 260 },
+  owner: { width: 132 },
+  lastModified: { sort: 'modified', width: 190 },
+  fileSize: { sort: 'size', width: 110 },
+  sharedBy: { width: 180 },
+  sharedOn: { width: 190 },
+  deleted: { width: 190 },
+  originalPath: { width: 220 },
 } satisfies Record<TableColumn, { sort?: SortKey; width: number }>;
 
 const columns = computed(() => props.columns.map((id) => ({ id, ...(COLUMN_DEFS[id] as { sort?: SortKey; width: number }) })));
 
 // The fixed ends of every row, and the narrowest the flex name column may become.
-const CHECKBOX_WIDTH = 63;
-const MENU_WIDTH = 60;
+const CHECKBOX_WIDTH = 48;
+const MENU_WIDTH = 48;
 // 200, not more: at the 1672 the design is drawn for, the narrowest the table ever gets is with the assistant panel
 // open, and a floor above that would start moving the reference layout instead of only rescuing broken ones.
 const NAME_MIN_WIDTH = 200;
@@ -122,7 +122,7 @@ function onContextMenu(node: Node, event: MouseEvent) {
         <col :style="{ width: `${MENU_WIDTH}px` }" />
       </colgroup>
       <thead>
-        <tr class="h-[38px] border-b border-border text-15 leading-none text-text-2 [&>th]:p-0">
+        <tr class="h-[30px] border-b border-border text-12 leading-none text-text-2 [&>th]:p-0">
           <th class="!pl-3 text-left font-normal">
             <Checkbox
               :label="t('files.selectAll')"
@@ -131,7 +131,7 @@ function onContextMenu(node: Node, event: MouseEvent) {
             />
           </th>
           <th class="text-left font-normal" :aria-sort="view.sortKey === 'name' ? (view.sortDir === 'asc' ? 'ascending' : 'descending') : undefined">
-            <button type="button" class="inline-flex h-[38px] items-center gap-1 hover:text-text" @click="view.setSortKey('name')">
+            <button type="button" class="inline-flex h-[30px] items-center gap-1 hover:text-text" @click="view.setSortKey('name')">
               <span>{{ t('files.name') }}</span>
               <template v-if="view.sortKey === 'name'">
                 <ArrowUp v-if="view.sortDir === 'asc'" :size="16" />
@@ -145,7 +145,7 @@ function onContextMenu(node: Node, event: MouseEvent) {
             class="text-left font-normal"
             :aria-sort="col.sort && view.sortKey === col.sort ? (view.sortDir === 'asc' ? 'ascending' : 'descending') : undefined"
           >
-            <button v-if="col.sort" type="button" class="inline-flex h-[38px] items-center gap-1 hover:text-text" @click="view.setSortKey(col.sort)">
+            <button v-if="col.sort" type="button" class="inline-flex h-[30px] items-center gap-1 hover:text-text" @click="view.setSortKey(col.sort)">
               <span>{{ t(`files.${col.id}`) }}</span>
               <template v-if="view.sortKey === col.sort">
                 <ArrowUp v-if="view.sortDir === 'asc'" :size="16" />
@@ -160,16 +160,16 @@ function onContextMenu(node: Node, event: MouseEvent) {
       <tbody>
         <template v-for="{ node, heading } in rows" :key="node.id">
           <tr v-if="heading" class="[&>td]:p-0">
-            <td :colspan="columns.length + 3" class="h-[46px] pt-3 align-bottom text-15 font-semibold leading-none text-text-2">{{ heading }}</td>
+            <td :colspan="columns.length + 3" class="h-[34px] pt-2 align-bottom text-13 font-semibold leading-none text-text-2">{{ heading }}</td>
           </tr>
           <tr
             :id="`node-${node.id}`"
             :data-id="node.id"
             role="row"
             :aria-selected="files.isSelected(node.id)"
-            class="cursor-pointer select-none border-b border-border-soft text-15 leading-none [&>td]:p-0"
+            class="cursor-pointer select-none border-b border-border-soft text-12 leading-none [&>td]:p-0"
             :class="[
-              settings.settings.compactList ? 'h-[34px]' : 'h-[42px]',
+              settings.settings.compactList ? 'h-[28px]' : 'h-[34px]',
               files.isSelected(node.id) ? 'bg-primary-soft' : 'hover:bg-hover-row',
               files.cursorId === node.id && 'cursor-row',
               drag.overId === node.id && '!bg-primary-tint outline outline-2 -outline-offset-2 outline-primary',
@@ -195,9 +195,9 @@ function onContextMenu(node: Node, event: MouseEvent) {
             </td>
             <td>
               <div class="flex items-center">
-                <HitIcon :node="node" />
-                <span class="ml-5 min-w-[96px] truncate pr-2 text-16 font-medium text-text">{{ node.name }}</span>
-                <Star v-if="node.starred" :size="14" fill="currentColor" class="mr-2 shrink-0 text-folder" role="img" :aria-label="t('panel.starred')" />
+                <HitIcon :node="node" :size="24" />
+                <span :title="node.name" class="ml-3 min-w-[96px] truncate pr-2 text-12.5 font-medium text-text">{{ node.name }}</span>
+                <Star v-if="node.starred" :size="12" fill="currentColor" class="mr-2 shrink-0 text-folder" role="img" :aria-label="t('panel.starred')" />
                 <span v-if="node.kind === 'folder'" class="shrink-0 text-text-3">
                   {{ node.itemCount === undefined ? t('type.folder') : t('files.items', node.itemCount) }}
                 </span>
@@ -208,16 +208,16 @@ function onContextMenu(node: Node, event: MouseEvent) {
               <template v-else-if="col.id === 'lastModified'">{{ formatDateTime(node.modifiedAt) }}</template>
               <template v-else-if="col.id === 'fileSize'">{{ node.kind === 'folder' ? '—' : formatSize(node.size) }}</template>
               <span v-else-if="col.id === 'sharedBy'" class="flex items-center">
-                <Avatar :initial="(node.sharedBy ?? '?').charAt(0)" :size="28" class="!text-13" />
-                <span class="ml-2.5 truncate">{{ node.sharedBy }}</span>
+                <Avatar :initial="(node.sharedBy ?? '?').charAt(0)" :size="22" class="!text-10" />
+                <span class="ml-2 truncate">{{ node.sharedBy }}</span>
               </span>
               <template v-else-if="col.id === 'sharedOn'">{{ node.sharedAt ? formatDateTime(node.sharedAt) : '—' }}</template>
               <template v-else-if="col.id === 'deleted'">{{ node.deletedAt ? formatDateTime(node.deletedAt) : '—' }}</template>
               <template v-else-if="col.id === 'originalPath'">{{ node.originalPath ?? '—' }}</template>
             </td>
             <td class="!pr-[7px] text-right">
-              <IconButton :label="t('files.more')" :size="32" class="text-text-3" data-menu-button @click.stop="openMenu(node, $event)" @dblclick.stop>
-                <MoreVertical :size="20" />
+              <IconButton :label="t('files.more')" :size="28" class="text-text-3" data-menu-button @click.stop="openMenu(node, $event)" @dblclick.stop>
+                <MoreVertical :size="16" />
               </IconButton>
             </td>
           </tr>

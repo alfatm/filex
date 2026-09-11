@@ -62,8 +62,8 @@ async function toggle(on: boolean) {
         <Link :size="18" />
       </span>
       <div class="ml-3 min-w-0 flex-1">
-        <p class="text-15 font-medium leading-none">{{ t('modal.share.linkSharing') }}</p>
-        <p class="mt-1 text-14 leading-none text-text-3">{{ url ? t('modal.share.anyoneCanView') : t('modal.share.off') }}</p>
+        <p class="text-13 font-medium leading-none">{{ t('modal.share.linkSharing') }}</p>
+        <p class="mt-1 text-11.5 leading-none text-text-3">{{ url ? t('modal.share.anyoneCanView') : t('modal.share.off') }}</p>
       </div>
       <Switch
         :model-value="!!url"
@@ -76,9 +76,9 @@ async function toggle(on: boolean) {
         <span class="inline-block h-5 w-5 rounded-full bg-white shadow-menu transition" :class="url ? 'translate-x-[22px]' : 'translate-x-0.5'" />
       </Switch>
     </div>
-    <p v-if="error" class="mt-3 text-13 leading-none text-danger" role="alert">{{ error }}</p>
+    <p v-if="error" class="mt-3 text-11 leading-none text-danger" role="alert">{{ error }}</p>
     <div v-if="url" class="mt-4 flex h-11 items-center rounded-md border border-border bg-bg-muted pl-4 pr-1">
-      <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ url }}</span>
+      <span class="min-w-0 flex-1 truncate-safe text-13 leading-none">{{ url }}</span>
       <IconButton :label="t('panel.copy')" :size="36" class="hover:bg-bg" @click="actions.copyLink(url)"><Copy :size="18" /></IconButton>
     </div>
     <template #footer>

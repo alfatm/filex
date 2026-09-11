@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink, useRoute } from 'vue-router';
 import {
@@ -150,31 +150,84 @@ function onFilesPicked(event: Event) {
   input.value = '';
 }
 
-// Spec §2: items span x 14..260; the active one paints that box.
+/**
+ * The sidebar's own drag handle, on its right edge: dragging right widens it, the mirror of SidePanel's handle
+ * on the right-hand panels. The rail is a fixed 60px, so the handle only exists while the sidebar is expanded.
+ */
+const SIDEBAR_KEYBOARD_STEP_PX = 16;
+let stopDrag: (() => void) | null = null;
+
+function startResize(event: PointerEvent) {
+  if (event.button !== 0) return;
+  event.preventDefault();
+  stopDrag?.();
+  const startX = event.clientX;
+  const startWidth = view.sidebarWidth;
+  const move = (moved: PointerEvent) => view.setSidebarWidth(startWidth + moved.clientX - startX);
+  const stop = () => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', stop);
+    window.removeEventListener('pointercancel', stop);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    stopDrag = null;
+  };
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', stop);
+  window.addEventListener('pointercancel', stop);
+  stopDrag = stop;
+}
+
+function onResizeKeydown(event: KeyboardEvent) {
+  const direction = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+  if (!direction) return;
+  event.preventDefault();
+  view.setSidebarWidth(view.sidebarWidth + direction * SIDEBAR_KEYBOARD_STEP_PX);
+}
+
+onBeforeUnmount(() => stopDrag?.());
+
+// Spec §2: a row is one --control-md tall and the active one paints the full width between the rail's gutters.
 // Rail mode keeps the same rows and paints the same active box; only the labels and the section captions go.
 const itemClass = computed(() =>
   view.sidebarCollapsed
-    ? 'flex h-10 w-10 items-center justify-center rounded-md text-16 font-medium leading-none text-text'
-    : 'flex h-10 items-center gap-[26px] rounded-md pl-[10px] pr-3 text-16 font-medium leading-none text-text',
+    ? 'flex h-control-md w-control-md items-center justify-center rounded-md text-13 font-medium leading-none text-text'
+    : 'flex h-control-md items-center gap-2 rounded-md px-3 text-13 font-medium leading-none text-text',
 );
 const linkClass = computed(() => `${itemClass.value} hover:bg-bg-muted`);
 const activeClass = 'bg-primary-soft';
-const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leading-[18px] tracking-[.06em] text-text-3';
+// 18 = the list's 6px gutter plus a row's own 12px inset, so a caption starts where the icons below it do.
+const captionClass = 'mt-4 px-[18px] text-10 font-semibold uppercase leading-none tracking-[.06em] text-text-3';
 </script>
 
 <template>
   <nav
-    class="flex h-full shrink-0 flex-col border-r border-border bg-bg-sidebar"
-    :class="view.sidebarCollapsed ? 'w-[76px] items-center' : 'w-[280px]'"
+    class="relative flex h-full shrink-0 flex-col border-r border-border bg-bg-sidebar"
+    :class="view.sidebarCollapsed ? 'w-[60px] items-center' : ''"
+    :style="view.sidebarCollapsed ? undefined : { width: `${view.sidebarWidth}px` }"
   >
-    <div class="flex h-[72px] items-center" :class="view.sidebarCollapsed ? 'justify-center' : 'pl-5'">
+    <div
+      v-if="!view.sidebarCollapsed"
+      role="separator"
+      aria-orientation="vertical"
+      :aria-label="t('nav.resize')"
+      :aria-valuenow="view.sidebarWidth"
+      tabindex="0"
+      class="absolute inset-y-0 right-0 z-10 w-1 cursor-col-resize hover:bg-primary focus-visible:bg-primary focus-visible:outline-none"
+      @pointerdown="startResize"
+      @keydown="onResizeKeydown"
+    />
+    <!-- Same height as the topbar beside it, so the two rules across the top of the app line up. -->
+    <div class="flex h-12 items-center" :class="view.sidebarCollapsed ? 'justify-center' : 'pl-2'">
       <IconButton
         :label="t(view.sidebarCollapsed ? 'nav.expandMenu' : 'nav.collapseMenu')"
         class="text-text"
         :aria-expanded="!view.sidebarCollapsed"
         @click="view.sidebarCollapsed = !view.sidebarCollapsed"
       >
-        <MenuIcon :size="22" :stroke-width="1.75" />
+        <MenuIcon :size="18" :stroke-width="1.75" />
       </IconButton>
       <!--
         The mark and the name are one control: clicking them reloads the app. Its accessible name is the visible
@@ -186,36 +239,36 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
         v-if="!view.sidebarCollapsed"
         type="button"
         :title="t('nav.reload')"
-        class="ml-6 flex items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+        class="ml-1 flex items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
         @click="reload"
       >
-        <img :src="branding.logoUrl || `${baseUrl}logo.svg`" alt="" class="h-8 w-8 object-contain" />
-        <span class="ml-4 text-22 font-semibold leading-none">{{ branding.name || t('app.name') }}</span>
+        <img :src="branding.logoUrl || `${baseUrl}logo.svg`" alt="" class="h-7 w-7 object-contain" />
+        <span class="ml-2 text-18 font-semibold leading-none">{{ branding.name || t('app.name') }}</span>
       </button>
     </div>
 
     <!-- Same left edge (x 14) as the active nav pill below; the button's own icon and label are centred inside it. -->
-    <div class="mt-[10px]" :class="view.sidebarCollapsed ? '' : 'pl-[14px]'">
+    <div class="mt-2" :class="view.sidebarCollapsed ? '' : 'px-1.5'">
       <Button
-        :size="view.sidebarCollapsed ? 'md' : 'lg'"
-        :class="view.sidebarCollapsed ? '!h-11 !w-11 !rounded-full !px-0' : 'w-[180px] !gap-0 !px-0'"
+        :size="view.sidebarCollapsed ? 'sm' : 'md'"
+        :class="view.sidebarCollapsed ? '!h-control-lg !w-control-lg !rounded-full !px-0' : 'w-full !gap-0 !px-0'"
         aria-haspopup="menu"
         :aria-expanded="!!newMenu"
         :aria-label="view.sidebarCollapsed ? t('new.button') : undefined"
         @click="openNewMenu"
       >
-        <Plus v-if="view.sidebarCollapsed" :size="20" />
+        <Plus v-if="view.sidebarCollapsed" :size="18" />
         <template v-else>
           <!-- The ref centres icon and label inside the button rather than aligning them to the nav columns below. -->
-          <span class="flex flex-1 items-center justify-center gap-[26px] font-semibold">
-            <Plus :size="20" />
+          <span class="flex flex-1 items-center justify-center gap-2 font-semibold">
+            <Plus :size="18" />
             {{ t('new.button') }}
           </span>
           <!-- One control, not two: the divider says a menu is behind the button, and both halves open the same one.
                It is a short centred rule in the ref, not a full-height edge. -->
-          <span class="h-7 w-px bg-white/25" />
-          <span class="flex w-11 items-center justify-center">
-            <ChevronDown :size="18" />
+          <span class="h-4 w-px bg-white/25" />
+          <span class="flex w-8 items-center justify-center">
+            <ChevronDown :size="16" />
           </span>
         </template>
       </Button>
@@ -227,15 +280,15 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
     </div>
 
     <div class="min-h-0 overflow-y-auto" :class="view.sidebarCollapsed && 'w-full'">
-      <ul class="mt-[22px] flex flex-col gap-px" :class="view.sidebarCollapsed ? 'items-center' : 'pl-[14px] pr-5'">
+      <ul class="mt-3 flex flex-col gap-px" :class="view.sidebarCollapsed ? 'items-center' : 'px-1.5'">
         <li v-for="item in nav" :key="item.name">
           <RouterLink
             :to="{ name: item.name }"
             :class="[linkClass, isNavActive(item.name) && activeClass]"
             :title="view.sidebarCollapsed ? t(item.label) : undefined"
           >
-            <component :is="item.icon" :size="20" :stroke-width="1.75" class="shrink-0" />
-            <span :class="view.sidebarCollapsed && 'sr-only'">{{ t(item.label) }}</span>
+            <component :is="item.icon" :size="18" :stroke-width="1.75" class="shrink-0" />
+            <span class="min-w-0 truncate" :class="view.sidebarCollapsed && 'sr-only'">{{ t(item.label) }}</span>
           </RouterLink>
         </li>
       </ul>
@@ -244,9 +297,9 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
       <template v-if="files.listedStorages.length">
         <p v-if="!view.sidebarCollapsed" :class="captionClass">{{ t('nav.storages') }}</p>
         <!-- The caption's place in rail mode: a rule, so the groups stay apart without a label. -->
-        <div v-else class="mx-auto mt-[22px] h-px w-8 bg-border" />
+        <div v-else class="mx-auto mt-3 h-px w-6 bg-border" />
       </template>
-      <ul class="mt-2 flex flex-col gap-px" :class="view.sidebarCollapsed ? 'items-center' : 'pl-[14px] pr-5'">
+      <ul class="mt-1 flex flex-col gap-px" :class="view.sidebarCollapsed ? 'items-center' : 'px-1.5'">
         <!--
           Active is the drive the listing is actually in, not "some files route": the condition used to be the
           route name alone, so with a second drive on the sidebar BOTH rows painted themselves active.
@@ -257,15 +310,15 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
             :class="[linkClass, route.name === 'files' && files.storage?.id === storage.id && activeClass]"
             :title="view.sidebarCollapsed ? storage.name : undefined"
           >
-            <HardDrive :size="20" :stroke-width="1.75" class="shrink-0" />
-            <span :class="view.sidebarCollapsed && 'sr-only'">{{ storage.name }}</span>
+            <HardDrive :size="18" :stroke-width="1.75" class="shrink-0" />
+            <span class="min-w-0 truncate" :class="view.sidebarCollapsed && 'sr-only'">{{ storage.name }}</span>
           </RouterLink>
         </li>
       </ul>
 
-      <p v-if="!view.sidebarCollapsed" :class="[captionClass, '!mt-[26px]']">{{ t('nav.connections') }}</p>
-      <div v-else class="mx-auto mt-[22px] h-px w-8 bg-border" />
-      <ul class="mt-2 flex flex-col gap-px" :class="view.sidebarCollapsed ? 'items-center' : 'pl-[14px] pr-5'">
+      <p v-if="!view.sidebarCollapsed" :class="[captionClass, '!mt-4']">{{ t('nav.connections') }}</p>
+      <div v-else class="mx-auto mt-3 h-px w-6 bg-border" />
+      <ul class="mt-1 flex flex-col gap-px" :class="view.sidebarCollapsed ? 'items-center' : 'px-1.5'">
         <li v-for="item in connections" :key="item.name">
           <RouterLink
             v-if="capabilities.can.connections"
@@ -273,8 +326,8 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
             :class="[linkClass, route.name === item.name && activeClass]"
             :title="view.sidebarCollapsed ? t(item.label) : undefined"
           >
-            <component :is="item.icon" :size="20" :stroke-width="1.75" class="shrink-0" />
-            <span :class="view.sidebarCollapsed && 'sr-only'">{{ t(item.label) }}</span>
+            <component :is="item.icon" :size="18" :stroke-width="1.75" class="shrink-0" />
+            <span class="min-w-0 truncate" :class="view.sidebarCollapsed && 'sr-only'">{{ t(item.label) }}</span>
           </RouterLink>
           <button
             v-else
@@ -283,19 +336,19 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
             aria-disabled="true"
             :title="view.sidebarCollapsed ? `${t(item.label)} — ${t('common.comingSoon')}` : t('common.comingSoon')"
           >
-            <component :is="item.icon" :size="20" :stroke-width="1.75" class="shrink-0" />
-            <span :class="view.sidebarCollapsed && 'sr-only'">{{ t(item.label) }}</span>
+            <component :is="item.icon" :size="18" :stroke-width="1.75" class="shrink-0" />
+            <span class="min-w-0 truncate" :class="view.sidebarCollapsed && 'sr-only'">{{ t(item.label) }}</span>
           </button>
         </li>
       </ul>
     </div>
 
     <!-- The quota block needs its labels; the rail drops it rather than showing a bar with no numbers. -->
-    <div v-if="files.storage && !view.sidebarCollapsed" class="mt-auto shrink-0 pb-[34px] pl-[26px] pt-6">
-      <p class="text-15 font-semibold leading-none">
-        {{ files.storage.id === files.homeStorageId ? t('storage.home', { name: files.storage.name }) : files.storage.name }}
+    <div v-if="files.storage && !view.sidebarCollapsed" class="mt-auto shrink-0 px-[18px] pb-4 pt-3">
+      <p class="text-12 font-semibold leading-none">
+        {{ files.storage.name }}
       </p>
-      <p class="mt-1.5 text-13 leading-none text-text-3">
+      <p class="mt-1 text-11 leading-none text-text-3">
         {{
           files.storage.quota.totalBytes
             ? t('quota.used', {
@@ -305,14 +358,13 @@ const captionClass = 'mt-[34px] px-[26px] text-12 font-semibold uppercase leadin
             : t('quota.usedUnlimited', { used: formatSize(files.storage.quota.usedBytes) })
         }}
       </p>
-      <p v-if="quotaLimits" class="mt-1.5 text-13 leading-tight text-text-3">{{ quotaLimits }}</p>
+      <p v-if="quotaLimits" class="mt-1 text-11 leading-tight text-text-3">{{ quotaLimits }}</p>
       <!-- An account with no ceiling has nothing to fill, so it gets the figure without the bar. -->
       <ProgressBar
         v-if="files.storage.quota.totalBytes"
-        class="mt-2.5"
+        class="mt-2"
         :value="files.storage.quota.usedBytes"
         :max="files.storage.quota.totalBytes"
-        :width="234"
       />
     </div>
   </nav>

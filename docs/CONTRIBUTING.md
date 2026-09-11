@@ -28,11 +28,16 @@ git clone https://github.com/brf-tech/filex.git
 cd filemanager
 
 pnpm install            # all workspace packages
-pnpm run dev            # parallel: package watch + admin Vite dev server
+pnpm run dev            # parallel: package watch + Vite dev servers + Go backend
+```
 
-# In another shell — Go backend
-cd backend
-go run ./cmd/filex serve --listen 127.0.0.1:5212 --data-dir ./.dev-data
+`backend/` is a workspace member whose only script is `dev`, so the root
+`pnpm run dev` starts the Go server alongside the frontends. It listens on
+`127.0.0.1:5212` and keeps its state in `backend/.dev-data/` (git-ignored);
+override with `FILEX_LISTEN` / `FILEX_DATA_DIR`. To run it on its own:
+
+```bash
+pnpm --filter=@brftech/filex-backend dev
 ```
 
 The admin SPA is served by Vite at <http://localhost:5173> in dev mode and

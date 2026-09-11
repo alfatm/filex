@@ -134,8 +134,8 @@ const CLOSE_CLASS =
         <div class="flex min-w-0 flex-1 items-center">
           <FileTypeTile :type="current.fileType ?? 'other'" :size="36" />
           <div class="ml-3 min-w-0">
-            <DialogTitle as="p" class="truncate-safe text-16 font-medium leading-none text-white">{{ current.name }}</DialogTitle>
-            <p class="mt-1 truncate-safe text-13 leading-none text-white/70">{{ meta }}</p>
+            <DialogTitle as="p" class="truncate-safe text-13 font-medium leading-none text-white">{{ current.name }}</DialogTitle>
+            <p class="mt-1 truncate-safe text-11 leading-none text-white/70">{{ meta }}</p>
           </div>
         </div>
         <div class="flex shrink-0 items-center gap-1">
@@ -207,15 +207,15 @@ const CLOSE_CLASS =
         />
 
         <template v-else-if="kind === 'text' || kind === 'csv'">
-          <p v-if="status === 'loading'" class="text-15 text-white/70" role="status">{{ t('preview.loading') }}</p>
+          <p v-if="status === 'loading'" class="text-13 text-white/70" role="status">{{ t('preview.loading') }}</p>
           <div v-else-if="status === 'error'" class="w-[420px] rounded-2xl bg-bg p-[26px] text-center shadow-modal">
-            <p class="text-15 text-text">{{ t('preview.loadError') }}</p>
-            <a v-if="download" :href="download" :download="current.name" class="mt-5 inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-15 font-medium text-white hover:bg-primary-hover">
+            <p class="text-13 text-text">{{ t('preview.loadError') }}</p>
+            <a v-if="download" :href="download" :download="current.name" class="mt-5 inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-13 font-medium text-white hover:bg-primary-hover">
               <Download :size="18" />{{ t('preview.download') }}
             </a>
           </div>
           <div v-else class="max-h-[80vh] w-[80vw] overflow-auto rounded-lg bg-bg text-text">
-            <table v-if="kind === 'csv'" class="w-full border-collapse text-14">
+            <table v-if="kind === 'csv'" class="w-full border-collapse text-11.5">
               <thead v-if="rows.length">
                 <tr class="border-b border-border bg-bg-muted">
                   <th v-for="(cell, c) in rows[0]" :key="c" class="whitespace-nowrap px-3 py-2 text-left font-semibold text-text-2">{{ cell }}</th>
@@ -227,17 +227,17 @@ const CLOSE_CLASS =
                 </tr>
               </tbody>
             </table>
-            <p v-if="kind === 'csv' && csvTruncated" class="px-3 py-2 text-13 text-text-3">{{ t('preview.csvTruncated', { count: CSV_MAX_ROWS }) }}</p>
+            <p v-if="kind === 'csv' && csvTruncated" class="px-3 py-2 text-11 text-text-3">{{ t('preview.csvTruncated', { count: CSV_MAX_ROWS }) }}</p>
             <pre v-if="kind === 'text'" class="py-3 text-[13px] leading-5" :style="{ fontFamily: MONO_FONT }"><ol class="list-none"><li v-for="(line, i) in lines" :key="i" class="flex"><span class="w-14 shrink-0 select-none pr-4 text-right text-text-3" aria-hidden="true">{{ i + 1 }}</span><span class="whitespace-pre pr-4">{{ line }}</span></li></ol></pre>
           </div>
         </template>
 
         <div v-else class="flex w-[420px] flex-col items-center rounded-2xl bg-bg p-[26px] text-center shadow-modal">
           <FileTypeTile :type="current.fileType ?? 'other'" :size="56" />
-          <p class="mt-4 max-w-full truncate text-16 font-medium text-text">{{ current.name }}</p>
-          <p class="mt-1 text-14 leading-none text-text-3">{{ formatSize(current.size) }}</p>
-          <p class="mt-4 text-15 text-text-2">{{ kind === 'pdf' ? t('preview.pdfFallback') : t('preview.noPreview') }}</p>
-          <a v-if="download" :href="download" :download="current.name" class="mt-5 inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-15 font-medium text-white hover:bg-primary-hover">
+          <p class="mt-4 max-w-full truncate text-13 font-medium text-text">{{ current.name }}</p>
+          <p class="mt-1 text-11.5 leading-none text-text-3">{{ formatSize(current.size) }}</p>
+          <p class="mt-4 text-13 text-text-2">{{ kind === 'pdf' ? t('preview.pdfFallback') : t('preview.noPreview') }}</p>
+          <a v-if="download" :href="download" :download="current.name" class="mt-5 inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-13 font-medium text-white hover:bg-primary-hover">
             <Download :size="18" />{{ t('preview.download') }}
           </a>
         </div>

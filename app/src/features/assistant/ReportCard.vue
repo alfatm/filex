@@ -31,8 +31,8 @@ function downloadCsv() {
     <div class="flex items-start gap-3">
       <FileText :size="22" class="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
       <div class="min-w-0 flex-1">
-        <p class="text-15 font-medium leading-snug">{{ report.title }}</p>
-        <p v-if="report.rows.length" class="mt-1 text-13 leading-none text-text-3">{{ t('assistant.report.files', report.rows.length) }}</p>
+        <p class="text-13 font-medium leading-snug">{{ report.title }}</p>
+        <p v-if="report.rows.length" class="mt-1 text-11 leading-none text-text-3">{{ t('assistant.report.files', report.rows.length) }}</p>
       </div>
       <IconButton :label="t('assistant.report.expand')" :size="28" class="-mr-1 -mt-1 shrink-0 text-text-2" @click="expanded = true">
         <Maximize2 :size="16" />
@@ -56,11 +56,11 @@ function downloadCsv() {
     <ul v-if="report.rows.length" class="max-h-[60vh] overflow-y-auto" :class="{ 'mt-3': report.text }">
       <li v-for="{ node } in report.rows" :key="node.id" class="flex items-center gap-3 border-b border-border-soft py-2.5 last:border-b-0">
         <div class="min-w-0 flex-1">
-          <p class="truncate-safe text-14 font-medium leading-snug">{{ node.name }}</p>
-          <p class="truncate-safe text-13 leading-snug text-text-3">{{ node.id }}</p>
+          <p class="truncate-safe text-11.5 font-medium leading-snug">{{ node.name }}</p>
+          <p class="truncate-safe text-11 leading-snug text-text-3">{{ node.id }}</p>
         </div>
-        <span v-if="node.kind === 'file'" class="shrink-0 text-13 text-text-3">{{ formatSize(node.size) }}</span>
-        <span v-if="node.modifiedAt" class="shrink-0 text-13 text-text-3">{{ formatDate(node.modifiedAt) }}</span>
+        <span v-if="node.kind === 'file'" class="shrink-0 text-11 text-text-3">{{ formatSize(node.size) }}</span>
+        <span v-if="node.modifiedAt" class="shrink-0 text-11 text-text-3">{{ formatDate(node.modifiedAt) }}</span>
       </li>
     </ul>
     <template #footer>

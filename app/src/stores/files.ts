@@ -180,6 +180,10 @@ export const useFilesStore = defineStore('files', () => {
     // `listing.value` — still the OLD folder until this load resolves — so letting it fire would reload the
     // folder the person just navigated away from and drop this navigation as the stale one.
     clearTimeout(nameTimer);
+    // Another listing: the rows on screen are the previous folder's. Keeping them until the answer arrived showed
+    // the old files under the new folder for as long as the request took. A refresh of the SAME listing keeps its
+    // rows, so a mutation or a filter change does not blink a skeleton over a listing that is already right.
+    if (listingKey(listing.value) !== listingKey(target)) clearRows();
     const seq = ++loadSeq;
     loading.value = true;
     error.value = null;
@@ -204,6 +208,18 @@ export const useFilesStore = defineStore('files', () => {
     } catch {
       // no new options for the chip; the listing is not affected
     }
+  }
+
+  /** Identity of a listing, for telling a navigation from a re-read of what is already open. */
+  function listingKey(target: Listing | null) {
+    if (!target) return '';
+    return target.kind === 'folder' ? `folder:${target.folderId}` : target.kind;
+  }
+
+  /** Drops the rows of the listing being left, so the pages draw their skeleton instead of stale files. */
+  function clearRows() {
+    items.value = [];
+    total.value = 0;
   }
 
   async function read(target: Listing, seq: number) {
@@ -253,8 +269,7 @@ export const useFilesStore = defineStore('files', () => {
     listing.value = null;
     folder.value = null;
     path.value = [];
-    items.value = [];
-    total.value = 0;
+    clearRows();
     selection.clear();
     selection.focusedId.value = null;
   }
@@ -280,7 +295,15 @@ export const useFilesStore = defineStore('files', () => {
   async function openPath(driveId: string | null, folderPath: string) {
     // A drive nobody has heard of is the same answer as a folder nobody has heard of. The active drive is left
     // where it was rather than moved to a name that does not resolve, so the sidebar keeps saying where you are.
+    const previous = lastAddress;
     lastAddress = { drive: driveId, path: folderPath };
+    // Resolving the address is a request of its own, and `load` — which owns the loading flag — only starts after
+    // it answers. Without this the rows of the folder being left stayed on screen, unmarked, for that whole round
+    // trip: the breadcrumb had already moved, so the new folder appeared to hold the old files.
+    if (!previous || previous.drive !== driveId || previous.path !== folderPath) {
+      clearRows();
+      loading.value = true;
+    }
     if (driveId && !storages.value.some((s) => s.id === driveId)) {
       showFailure('notFound');
       return;
@@ -317,8 +340,7 @@ export const useFilesStore = defineStore('files', () => {
   function showFailure(kind: 'notFound' | 'load') {
     loadSeq++;
     selection.clear();
-    items.value = [];
-    total.value = 0;
+    clearRows();
     folder.value = null;
     path.value = [];
     listing.value = null;

@@ -27,6 +27,11 @@ const apiProxy = {
 //
 // See docs/BACKEND-GAP.md § Hosting.
 export default defineConfig({
+  // Not alone in the terminal: the root `pnpm dev` runs this beside the other Vite server, the package
+  // watchers and the Go backend, and Vite's default screen-clearing wipes their output — a backend that
+  // failed to bind leaves no trace on screen. Only clears when stdout is a TTY, which is exactly the case
+  // a developer is looking at.
+  clearScreen: false,
   plugins: [vue()],
   base: '/',
   resolve: {

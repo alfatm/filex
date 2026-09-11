@@ -14,8 +14,10 @@ export const SORT_KEYS: readonly SortKey[] = ['name', 'modified', 'size'];
 const SORT_DIRS: SortDir[] = ['asc', 'desc'];
 /** Spec §6 draws the assistant at 432; the drag handle keeps it between a readable minimum and half a laptop screen. */
 export const ASSISTANT_WIDTH = { min: 320, default: 432, max: 720 } as const;
-/** Spec §3 draws the details panel at 364; the ref's own 320 is the narrowest its two-column facts still fit. */
-export const DETAILS_WIDTH = { min: 320, default: 364, max: 720 } as const;
+/** An inspector, not a dashboard (spec §3): 256 is the width its label/value pairs need and no more. */
+export const DETAILS_WIDTH = { min: 230, default: 256, max: 720 } as const;
+/** Spec §2 draws the sidebar at 192; the drag handle keeps it wide enough for an icon plus a readable label. */
+export const SIDEBAR_WIDTH = { min: 160, default: 192, max: 400 } as const;
 type WidthLimits = { min: number; default: number; max: number };
 
 /**
@@ -29,6 +31,7 @@ interface Persisted {
   /** The sidebar's rail mode: a layout choice, so it outlives the session unlike the right panels. */
   sidebarCollapsed: boolean;
   /** Panel widths in px: layout choices like the rail. */
+  sidebarWidth: number;
   assistantWidth: number;
   detailsWidth: number;
   assistantOpen: boolean;
@@ -39,6 +42,7 @@ const DEFAULTS: Persisted = {
   sortKey: 'modified',
   sortDir: 'desc',
   sidebarCollapsed: false,
+  sidebarWidth: SIDEBAR_WIDTH.default,
   assistantWidth: ASSISTANT_WIDTH.default,
   detailsWidth: DETAILS_WIDTH.default,
   assistantOpen: false,
@@ -67,6 +71,7 @@ function load(): Persisted {
     sortKey: pick(saved.sortKey, SORT_KEYS, DEFAULTS.sortKey),
     sortDir: pick(saved.sortDir, SORT_DIRS, DEFAULTS.sortDir),
     sidebarCollapsed: typeof saved.sidebarCollapsed === 'boolean' ? saved.sidebarCollapsed : DEFAULTS.sidebarCollapsed,
+    sidebarWidth: clampWidth(saved.sidebarWidth, SIDEBAR_WIDTH),
     assistantWidth: clampWidth(saved.assistantWidth, ASSISTANT_WIDTH),
     detailsWidth: clampWidth(saved.detailsWidth, DETAILS_WIDTH),
     assistantOpen: typeof saved.assistantOpen === 'boolean' ? saved.assistantOpen : DEFAULTS.assistantOpen,
@@ -79,17 +84,19 @@ export const useViewStore = defineStore('view', () => {
   const sortKey = ref<SortKey>(saved.sortKey);
   const sortDir = ref<SortDir>(saved.sortDir);
   const sidebarCollapsed = ref(saved.sidebarCollapsed);
+  const sidebarWidth = ref(saved.sidebarWidth);
   const assistantWidth = ref(saved.assistantWidth);
   const detailsWidth = ref(saved.detailsWidth);
   const detailsOpen = ref(true);
   const assistantOpen = ref(saved.assistantOpen);
 
-  watch([mode, sortKey, sortDir, sidebarCollapsed, assistantWidth, detailsWidth, assistantOpen], () => {
+  watch([mode, sortKey, sortDir, sidebarCollapsed, sidebarWidth, assistantWidth, detailsWidth, assistantOpen], () => {
     const data: Persisted = {
       mode: mode.value,
       sortKey: sortKey.value,
       sortDir: sortDir.value,
       sidebarCollapsed: sidebarCollapsed.value,
+      sidebarWidth: sidebarWidth.value,
       assistantWidth: assistantWidth.value,
       detailsWidth: detailsWidth.value,
       assistantOpen: assistantOpen.value,
@@ -115,6 +122,10 @@ export const useViewStore = defineStore('view', () => {
   }
 
   /** The drag handles report raw pointer math; the limits live here so the stored values are always sane. */
+  function setSidebarWidth(px: number) {
+    sidebarWidth.value = clampWidth(px, SIDEBAR_WIDTH);
+  }
+
   function setAssistantWidth(px: number) {
     assistantWidth.value = clampWidth(px, ASSISTANT_WIDTH);
   }
@@ -133,12 +144,14 @@ export const useViewStore = defineStore('view', () => {
     sortKey,
     sortDir,
     sidebarCollapsed,
+    sidebarWidth,
     assistantWidth,
     detailsWidth,
     detailsOpen,
     assistantOpen,
     toggleSortDir,
     setSortKey,
+    setSidebarWidth,
     setAssistantWidth,
     setDetailsWidth,
     togglePanel,

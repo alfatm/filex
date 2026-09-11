@@ -1,10 +1,10 @@
 <script setup lang="ts">
-withDefaults(defineProps<{ initial: string; size?: number; src?: string }>(), { size: 36, src: '' });
+withDefaults(defineProps<{ initial: string; size?: number; src?: string }>(), { size: 28, src: '' });
 </script>
 
 <template>
   <span
-    class="inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary-soft text-15 font-semibold leading-none text-primary"
+    class="inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary-soft text-11.5 font-semibold leading-none text-primary"
     :style="{ width: `${size}px`, height: `${size}px` }"
   >
     <!-- A picture that fails to load falls back to nothing, not to a broken-image glyph; the initial is the default. -->

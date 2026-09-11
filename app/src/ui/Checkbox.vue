@@ -15,7 +15,7 @@ const model = defineModel<boolean>({ required: true });
 
 <template>
   <!-- Without a visible label the wrapper takes no layout of its own, so the box sits exactly as a bare button would. -->
-  <component :is="showLabel ? 'label' : 'span'" :class="showLabel ? 'flex h-5 items-center gap-2 text-15 leading-none' : 'contents'">
+  <component :is="showLabel ? 'label' : 'span'" :class="showLabel ? 'flex h-5 items-center gap-2 text-13 leading-none' : 'contents'">
     <button
       type="button"
       role="checkbox"

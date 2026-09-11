@@ -24,7 +24,7 @@ function step(options: { value: T }[], delta: number) {
       role="radio"
       :aria-checked="model === option.value"
       :tabindex="model === option.value ? 0 : -1"
-      class="flex-1 px-3 text-14 font-medium leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-ring"
+      class="flex-1 px-3 text-11.5 font-medium leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-ring"
       :class="model === option.value ? 'bg-primary-soft text-primary' : 'text-text-2 hover:bg-hover-row'"
       @click="model = option.value"
     >

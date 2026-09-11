@@ -17,8 +17,8 @@ import EmptyState from './files/EmptyState.vue';
 import FileCard from './files/FileCard.vue';
 import FolderCard from './files/FolderCard.vue';
 
-/** One row of the 236px grid at the 1672 reference width. */
-const RECENT_COUNT = 5;
+/** One row of the card grid at the reference width. */
+const RECENT_COUNT = 6;
 
 const { t } = useI18n();
 const { formatSize } = useFormat();
@@ -64,31 +64,31 @@ watch(() => files.revision, load);
 </script>
 
 <template>
-  <main class="min-w-0 flex-1 overflow-y-auto pb-8 pl-[29px] pr-3 pt-[18px]" @click="onMainClick">
-    <div class="flex h-[38px] items-center">
-      <h1 class="text-22 font-semibold leading-none">{{ t('nav.home') }}</h1>
+  <main class="min-w-0 flex-1 overflow-y-auto pb-6 pl-4 pr-3 pt-3" @click="onMainClick">
+    <div class="flex h-control-md items-center">
+      <h1 class="text-18 font-semibold leading-none">{{ t('nav.home') }}</h1>
       <!-- Same toggle as the listings: a card picked here describes a node like any other. -->
-      <IconButton :label="t('files.details')" variant="outline" :active="view.detailsOpen" class="ml-auto mr-[10px] !w-11" @click="view.togglePanel('details')">
-        <Info :size="20" />
+      <IconButton :label="t('files.details')" variant="outline" :active="view.detailsOpen" class="ml-auto mr-2 !w-control-lg" @click="view.togglePanel('details')">
+        <Info :size="16" />
       </IconButton>
     </div>
 
     <!-- The home drive is "My files" in the sidebar; the cards are for the drives mounted beside it, if any. -->
     <template v-if="files.listedStorages.length">
-      <h2 class="mt-[30px] text-17 font-semibold leading-[26px]">{{ t('home.storages') }}</h2>
-      <div class="mt-1 grid gap-[14px]" style="grid-template-columns: repeat(auto-fill, 336px)">
+      <h2 class="mt-4 text-13 font-semibold leading-none">{{ t('home.storages') }}</h2>
+      <div class="mt-2 grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(248px, 1fr))">
         <RouterLink
           v-for="storage in files.listedStorages"
           :key="storage.id"
           :to="filesRoute(storage.id, [])"
-          class="flex h-[100px] items-center rounded-lg border border-border bg-bg px-5 hover:border-border-hover hover:bg-hover-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+          class="flex h-[76px] items-center rounded-lg border border-border bg-bg px-3 hover:border-border-hover hover:bg-hover-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
         >
-          <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded bg-primary-soft text-primary">
-            <HardDrive :size="22" :stroke-width="1.75" />
+          <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-primary-soft text-primary">
+            <HardDrive :size="18" :stroke-width="1.75" />
           </span>
-          <span class="ml-4 min-w-0 flex-1">
-            <span class="block truncate-safe text-16 font-medium leading-none">{{ storage.name }}</span>
-            <span class="mt-1.5 block text-13 leading-none text-text-3">
+          <span class="ml-2.5 min-w-0 flex-1">
+            <span class="block truncate-safe text-12.5 font-medium leading-none">{{ storage.name }}</span>
+            <span class="mt-1 block text-11 leading-none text-text-3">
               {{
                 storage.quota.totalBytes
                   ? t('quota.used', { used: formatSize(storage.quota.usedBytes), total: formatSize(storage.quota.totalBytes) })
@@ -98,7 +98,7 @@ watch(() => files.revision, load);
             <!-- Same rule as the sidebar: an account with no ceiling gets the figure without a bar that cannot fill. -->
             <ProgressBar
               v-if="storage.quota.totalBytes"
-              class="mt-2.5"
+              class="mt-2"
               :value="storage.quota.usedBytes"
               :max="storage.quota.totalBytes"
             />
@@ -107,13 +107,13 @@ watch(() => files.revision, load);
       </div>
     </template>
 
-    <EmptyState v-if="failed" class="mt-24" :icon="AlertTriangle" :title="t('error.load.title')" :hint="t('error.load.hint')">
+    <EmptyState v-if="failed" class="mt-16" :icon="AlertTriangle" :title="t('error.load.title')" :hint="t('error.load.hint')">
       <Button variant="outline" @click="load()">{{ t('error.retry') }}</Button>
     </EmptyState>
 
     <template v-else>
-      <h2 class="mt-[40px] text-17 font-semibold leading-[26px]">{{ t('home.recent') }}</h2>
-      <div v-if="recent.length" role="listbox" :aria-label="t('home.recent')" class="mt-1 grid gap-[14px]" style="grid-template-columns: repeat(auto-fill, 236px)">
+      <h2 class="mt-5 text-13 font-semibold leading-none">{{ t('home.recent') }}</h2>
+      <div v-if="recent.length" role="listbox" :aria-label="t('home.recent')" class="mt-2 grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(176px, 1fr))">
         <FileCard
           v-for="node in recent"
           :key="node.id"
@@ -125,10 +125,10 @@ watch(() => files.revision, load);
           @focus="files.focusedId = node.id"
         />
       </div>
-      <EmptyState v-else :icon="Clock" :title="t('empty.recent.title')" :hint="t('empty.recent.hint')" class="!py-10" />
+      <EmptyState v-else :icon="Clock" :title="t('empty.recent.title')" :hint="t('empty.recent.hint')" class="!py-8" />
 
-      <h2 class="mt-[40px] text-17 font-semibold leading-[26px]">{{ t('home.starred') }}</h2>
-      <div v-if="starred.length" role="listbox" :aria-label="t('home.starred')" class="mt-1 grid gap-[14px]" style="grid-template-columns: repeat(auto-fill, 236px)">
+      <h2 class="mt-5 text-13 font-semibold leading-none">{{ t('home.starred') }}</h2>
+      <div v-if="starred.length" role="listbox" :aria-label="t('home.starred')" class="mt-2 grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(176px, 1fr))">
         <template v-for="node in starred" :key="node.id">
           <FolderCard
             v-if="node.kind === 'folder'"
@@ -150,7 +150,7 @@ watch(() => files.revision, load);
           />
         </template>
       </div>
-      <EmptyState v-else :icon="Star" :title="t('empty.starred.title')" :hint="t('empty.starred.hint')" class="!py-10" />
+      <EmptyState v-else :icon="Star" :title="t('empty.starred.title')" :hint="t('empty.starred.hint')" class="!py-8" />
     </template>
   </main>
 

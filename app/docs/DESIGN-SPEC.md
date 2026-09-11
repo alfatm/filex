@@ -6,6 +6,19 @@ measured at the reference size **1672 × 941 CSS px** (treat this as the baselin
 viewport for screenshot comparison). Colours are approximations of the refs and
 may be tuned by overlay comparison.
 
+> **Density pass.** The geometry below is the post-density layout, roughly the
+> original drawn at 90 % — reached through the tokens in §1b and per-component
+> sizing, never through a global `zoom` or `transform`. Where a figure reads
+> like the reference screenshots' own (72px topbar, 280px sidebar, 236px cards),
+> that is the *pre-density* number and this document has been updated past it.
+> The look does not change: same palette, same soft borders, same rounded
+> controls, same dominant previews — only the spacing and the type get tighter.
+>
+> §1-§4 carry the new figures. §5-§7 keep their original geometry — the density
+> pass did not relayout the modals, the assistant panel or the trays — but every
+> type size they name has come down one step on §1's scale (their "15" is 13,
+> "14" is 11.5, "13" is 11, and so on); read the scale, not their numbers.
+
 ## 1. Tokens
 
 | Token | Value | Use |
@@ -42,29 +55,49 @@ sidebar `#1a1d23`, muted `#23272f`, border `#2e333c` / soft `#262a32` / hover
 danger `#f87171`, highlight `#6b5a17`, hover card/row `#1f232a`, overlay
 `rgba(0,0,0,.62)`. The folder yellow and the figma gradient stay as they are.
 
-Type scale (px / weight): 22/600 logo, 20/600 panel & modal titles, 18/600
-breadcrumb current, 17/600 section titles ("Folders", "24 matching items"),
-16/500 nav items and item names, 16/600 side-panel headings, 15/400 body,
-table cells, filter chips, 14/400 meta, 13/400 small meta, 12/600 uppercase
-captions (letter-spacing .06em). Body line-height 1.5, single-line rows 1.
+Type scale (px / weight): 18/600 logo and page titles, 17/600 modal titles,
+14/600 details-panel title, 13/600 section titles ("Folders", "24 matching
+items"), 13/500 nav items and item names, 12/600 side-panel headings and tabs,
+13/400 body, breadcrumbs, search box and table cells, 12.5/500 card names,
+12/400 filter chips, table rows and menu rows, 11.5/400 meta, 11/400 small meta
+and card meta, 10/600 uppercase captions (letter-spacing .06em). Nothing normal
+and secondary goes below 11. Body line-height 1.5, single-line rows 1.
 
-Icons: lucide, 20px stroke 1.75 in nav, 22px in topbar, 18px in chips/buttons.
+Icons: lucide, 18px stroke 1.75 in nav and topbar, 16px in chips, cards, table
+rows and toolbar buttons. The glyph is not the hit area — §1b.
+
+## 1b. Density tokens
+
+The app is sized from a short ladder rather than from per-component pixel
+counts, so "how big is a control here" has one answer per size. All three live
+in `tokens.css` and reach components as Tailwind's `h-control-*` / `w-control-*`.
+
+| Token | Value | Use |
+|---|---|---|
+| `--control-sm` | 28px | filter chips, the folder-filter box, card and row ⋮ buttons, menu rows |
+| `--control-md` | 34px | search box, sidebar rows, breadcrumb/filter rows, view toggle, default `IconButton`, `Button size="md"` |
+| `--control-lg` | 40px | the New button, modal footer buttons, the outlined Info / path toggles |
+| `--space-1..4` | 4 / 8 / 12 / 16px | the spacing ladder — Tailwind's `1 / 2 / 3 / 4`; anything off it needs a visual reason |
+| `--radius-sm/md/lg` | 6 / 8 / 10px | `rounded-sm` / `rounded` / `rounded-md`; cards `rounded-lg` 10, search box `rounded-md` 10, modal `rounded-2xl` 14 |
+
+**A smaller glyph is not a smaller target.** `IconButton`'s `size` is the hit
+area and stays at 28 or more while the glyph inside it is 16-18.
 
 ## 2. Shell (every page)
 
 ```
-┌ sidebar 280 ┬ topbar h72 ───────────────────────────────┬ right panel (optional) ┐
-│             ├ content x 309..1651 (see §3/§4)             │ 364 details / 432 AI  │
+┌ sidebar 192 ┬ topbar h48 ───────────────────────────────┬ right panel (optional) ┐
+│             ├ content (see §3/§4)                        │ 256 details / 432 AI  │
 ```
 
-Content padding: the column starts at x 309 (29px from the sidebar) with the
-breadcrumb row at y 90 and ends at x 1651 (or 1297 with the details panel
-open); §3/§4 are authoritative where an earlier draft said "padding 28 32".
+Content padding: the column is inset 16px from the sidebar and 12px from the
+right, 12px from the topbar, 24px at the foot. The sidebar and the inspector
+gave up 88px and 108px respectively, and the card grid (§3) takes all of it.
 
-**Sidebar** (w 280, bg `--c-bg-sidebar`, border-right 1px):
-- Row 1 (h 72): burger icon 22px at x 40 center (collapses the sidebar, see §7b); logo mark 32×32 radius 8
-  primary with white folder glyph at x 84; word "filex" 22/600 at x 132. Mark
-  and word are one button and reload the app.
+**Sidebar** (w 192, rail 60, bg `--c-bg-sidebar`, border-right 1px):
+- Row 1 (h 48, the topbar's height so the two rules line up): burger icon 18px;
+  logo mark 28×28 radius 8 primary with white folder glyph; word "filex" 18/600.
+  Mark and word are one button and reload the app.
 - **Branding** (`GET /api/branding`, public and pre-session, read once at
   start-up): `name` replaces "filex" here and in the tab title, `logo_url`
   replaces the mark (`object-contain`, so an operator's own aspect ratio is not
@@ -78,16 +111,19 @@ open); §3/§4 are authoritative where an earlier draft said "padding 28 32".
   and this app has no footer. An unbranded install answers with empty strings
   and a failed request is swallowed — branding is decoration and must never
   keep the app from opening.
-- **New** button: x 14, y 82, w 180, h 52, radius 12, primary bg, white
-  `Plus` 20px + "New" 18/600, the two centred in the button as the ref draws
-  them (not aligned to the nav columns below). A 44px `ChevronDown` cell closes
-  the right end behind a 1×28 white/25 rule, centred rather than full height; it
-  is an affordance, not a second action — both halves open the same dropdown
-  (Folder, File — disabled until a backend, divider, Upload files, Upload folder).
-- Nav list starts y 156, item h 40, gap 1, padding-left 24 (icon), text at x 70,
-  icon 20px. Active item: bg `--c-primary-soft`, radius 10, extends x 14..260.
+- **New** button: full width inside a 12px gutter, h --control-lg (40),
+  radius 10, primary bg, white `Plus` 18px + "New" 13/600, the two centred in
+  the button as the ref draws them (not aligned to the nav columns below). A
+  32px `ChevronDown` cell closes the right end behind a 1×16 white/25 rule,
+  centred rather than full height; it is an affordance, not a second action —
+  both halves open the same dropdown (Folder, File — disabled until a backend,
+  divider, Upload files, Upload folder). It stays a full-width primary CTA: the
+  density pass takes its height, not its rank.
+- Nav list: item h --control-md (34), gap 1, padding-inline 12, icon 18 with an
+  8px gap to the label 13/500. Active item: bg `--c-primary-soft`, radius 10,
+  spanning the row between the list's own 6px gutters.
   Items: Home, My files, Shared with me, Recent, Starred, Trash.
-- Caption "STORAGES" at y 438 (12/600 uppercase, `--c-text-3`, x 26); storage
+- Caption "STORAGES" (10/600 uppercase, `--c-text-3`, 12px inset); storage
   items same geometry as nav (icon `HardDrive`), active state identical. Active
   is the drive the LISTING is in, not "some files route" — the condition was the
   route name alone, and a second drive made every row light up at once.
@@ -107,33 +143,34 @@ open); §3/§4 are authoritative where an earlier draft said "padding 28 32".
   not-found state and leaves the sidebar saying where you still are; no drives
   at all is the server failing, not the address, and gets the `load` state with
   its retry — which re-runs start-up, not just the listing.
-- Caption "CONNECTIONS" at y 530; items "How to connect" (`Cable`, `/connect`)
+- Caption "CONNECTIONS"; items "How to connect" (`Cable`, `/connect`)
   and "API keys" (`KeyRound`, `/api-keys`), same geometry and active state as
   the nav above. Both pages mount shared `@brftech/filex-core` components —
   `ConnectionsPanel` and `TokensPanel` — which read the live deployment, so
   they are links only when a server is answering (`Capabilities.connections`)
   and stay inert ("Coming soon") against the mock.
-- Quota block pinned bottom, x 26, bottom 34: storage name 15/600, "12.4 GB of
-  100 GB used" 13 `--c-text-3`, progress bar h 6 radius pill bg `#e5e7eb`,
-  fill primary, w 234.
+- Quota block pinned bottom, 12px inset, 16 from the foot: storage name 12/600,
+  "12.4 GB of 100 GB used" 11 `--c-text-3`, progress bar h 6 radius pill bg
+  `#e5e7eb`, fill primary, full width of the block.
 
-**Topbar** (h 72, white, border-bottom 1px):
-- Search box: x 322 (42px from sidebar), h 48, radius 14, bg `--c-bg-muted`,
-  `Search` icon 20 at left padding 20, placeholder "Search in {storage}…"
-  16 `--c-text-3`. Width fills to 1180 (right icons start at 1400). Right end:
-  `SlidersHorizontal` 18 icon button 32 (opens the Advanced search modal;
-  product addition, not in the ref), then two kbd chips "⌘" "K" 24×24 radius 6
-  border 1px bg white 12px, gap 4, right padding 20. Enter in the box runs a
-  quick search (`/search?q=…`, all filters default); the modal is the
-  separate advanced search. When the AI panel is open the box ends at x 962.
-- Right cluster (icons 22px `--c-text-2`, hit area 40×40, gap 8): `Sparkles`
+**Topbar** (h 48, white, border-bottom 1px):
+- Search box: 16px from the sidebar, h --control-md (34), radius 10, bg
+  `--c-bg-muted`, `Search` icon 16 at left padding 12, placeholder "Search in
+  {storage}…" 13 `--c-text-3`. It grows with the bar up to 760 (560 while the
+  assistant panel is open) — capped, because a field the width of the window
+  reads as a page rather than a control. Right end: `SlidersHorizontal` 16 in a
+  28 hit area (opens the Advanced search modal; product addition, not in the
+  ref), then two kbd chips "⌘" "K" 20×20 radius 6 border 1px bg white 10px,
+  gap 4. Enter in the box runs a quick search (`/search?q=…`, all filters
+  default); the modal is the separate advanced search.
+- Right cluster (glyphs 18px `--c-text-2`, hit area 34×34, gap 2): `Sparkles`
   (opens the AI assistant; hidden while the panel is open so the bar keeps the
   reference width), the theme button, `Settings`, `HelpCircle`, then avatar 36
   circle bg `--c-primary-soft` letter 15/600 primary, then `ChevronDown` 16.
   Help is inert for now (`aria-disabled`, tooltip "Coming soon", no dimming).
   The ref's `LayoutGrid` (view/apps) is dropped: it led nowhere.
-- Theme button (product addition, not in the ref; it takes 48px, so the icons
-  start at x 1352 rather than 1400): one control cycling light → system → dark,
+- Theme button (product addition, not in the ref): one control cycling
+  light → system → dark,
   its icon the state it IS — `Sun` / `Monitor` / `Moon`. A menu would be three
   clicks for what is usually the next one along. Writes straight through, so it
   applies on click; the settings modal's Appearance row is the same setting
@@ -144,52 +181,61 @@ open); §3/§4 are authoritative where an earlier draft said "padding 28 32".
 
 ## 3. Page: My files — grid + Details (ref 1)
 
-Content column x 309..1297 when the details panel is open (panel x 1322..1640).
-
-- **Breadcrumb row** y 90..128: `Home` icon 20 at x 320 (goes to the storage
-  root), `ChevronRight` 16 gray, "demo" 18/600, `ChevronRight` 16 (dropdown of
-  sibling folders; inert for now).
-- Right side of that row: segmented view toggle x 1141..1240 h 40 radius 10
-  border 1px: two 48px cells, `List` and `LayoutGrid` icons 20; active cell bg
-  `--c-primary-soft` icon primary. Then `Info` button 44×40 radius 10 border 1px
-  at x 1254 (toggles details panel; filled tint when open).
-- **Filter chips** row y 140, h 38, pill, border 1px, bg white, text 15 +
-  `ChevronDown` 16, padding 0 18, gap 10: Type (w 94), People (106), Modified
-  (120), Size (92) — inert for now ("Coming soon"). Right-aligned: "Name" 15 +
-  `ArrowUp` 16 (sort), then `MoreVertical` 20 at x 1276 (inert).
-- Section title "Folders" 17/600 at y 222; grid starts y 252: 4 columns, card
-  w 236, gap 14; folder card h 84, radius 12, border 1px, bg white, padding 0 20.
-  Content: `Folder` filled icon 36×30 `--c-folder`, name 16/500 at x+80, meta
-  "12 items" 14 `--c-text-3` below (line gap 4), `MoreVertical` 20 gray at right
-  (x+212). Shared folder shows a small people glyph inside the folder icon.
+- **Breadcrumb row**, h --control-md (34): `Home` icon 16 in a 28 hit area
+  (goes to the storage root), `ChevronRight` 14 gray, "demo" 13/600,
+  `ChevronRight` 14 (dropdown of sibling folders).
+- Right side of that row: the path-edit button, then the segmented view toggle
+  h --control-md radius 10 border 1px: two 40px cells, `List` and `LayoutGrid`
+  icons 16; active cell bg `--c-primary-soft` icon primary. Then `Info` button
+  40 wide × --control-md radius 10 border 1px (toggles details panel; filled
+  tint when open).
+- **Filter chips** row h --control-md, chips themselves h --control-sm (28),
+  radius 8, border 1px, bg white, text 12 + `ChevronDown` 14, padding-inline 10,
+  gap 8: Type (w 76), People (86), Modified (96), Size (74). The "Filter in this
+  folder…" box beside them is the same 28 high, w 210, radius 8. Right-aligned:
+  "Name" 12 + `ArrowUp` 14 (sort), then `MoreVertical` 16.
+- Section title "Folders" 13/600, 8px above the grid. The grid is fluid —
+  `repeat(auto-fill, minmax(176px, 1fr))`, gap 8 — so the width the sidebar and
+  the inspector gave up turns into more cards per row at every viewport rather
+  than into a wider gutter. Folder card h 56, radius 10, border 1px, bg white,
+  padding-left 12. Content: `Folder` filled icon 28×24 `--c-folder`, name
+  12.5/500, meta "12 items" 11 `--c-text-3` below (line gap 4), `MoreVertical`
+  16 gray in a 28 hit area at the right. A folder card stays a CARD — icon,
+  title, secondary line, overflow menu, hover and selected states — and is never
+  flattened into a text row in grid mode. Shared folder shows a small people
+  glyph inside the folder icon.
   Selected card: `--c-primary-ring` edge 2px wide, bg `--c-primary-tint`. The
   edge is a 1px border plus a 1px outline, not a 2px border: a border comes
   out of the content box, which shifts the thumbnail and rounds its top
   corners at the wrong radius. Outline changes no layout.
   Hover: bg `--c-hover-card`, border `#d1d5db`; cursor `pointer`.
-- Section title "Files" 17/600 at y 484; file card w 236 h 174 radius 12 border
-  1px overflow hidden: thumbnail area h 108 (image cover / dark code block /
-  document page mock / video with centered 44px play circle and duration badge
-  "02:14" bottom-right 12px on rgba(0,0,0,.65) radius 6); footer h 66 padding
-  0 14: type tile 28×28 radius 6 (colour by kind: md `#374151`, image
-  `#2f6ceb`, ts `#2f6ceb`, pdf `#dc2626`, fig multicolour, csv `#16a34a`,
-  mp4 `#7c3aed`) with white glyph, name 15/500, meta "2.4 KB • Jul 10, 2026"
-  13 `--c-text-3`, `MoreVertical` at right.
-- Empty state: centered illustration + "Drop files here or use New" 16 gray.
+- Section title "Files" 13/600; file card h 166 radius 10 border 1px overflow
+  hidden, on the same fluid grid. **The thumbnail keeps its 108px**: the preview
+  is the strongest part of this design and the density pass does not touch it —
+  the footer below it is what gives ground, 66 → 58. Thumbnail: image cover /
+  dark code block / document page mock / video with centered 44px play circle
+  and duration badge "02:14" bottom-right 12px on rgba(0,0,0,.65) radius 6.
+  Footer h 58 padding-left 8: type tile 24×24 radius 6 (colour by kind: md
+  `#374151`, image `#2f6ceb`, ts `#2f6ceb`, pdf `#dc2626`, fig multicolour, csv
+  `#16a34a`, mp4 `#7c3aed`) with white glyph, name 12.5/500, meta "2.4 KB •
+  Jul 10, 2026" 11 `--c-text-3`, `MoreVertical` 16 in a 28 hit area at right.
+- Section spacing: 20px above a section title, 8px below it. Sections stay
+  further apart than the elements inside them, but not by a blank screenful.
+- Empty state: centered icon 40 + title 13/500 + hint 11.5 gray.
 
-**Details panel** (w 364 flush right, border-left 1px, padding 20 22 with 33
-on the left). The ref draws a 320 panel at x 1322 with white to its right; here
-the panel is flush right and 364 wide so the content column still ends at
-x 1297 (4 × 236 + 3 × 14 from x 309), and the extra left padding keeps the
-labels at x 1342 / values at x 1440 below. 364 is the default: the same 4px
-handle as the assistant's (§6) drags it between 320 and 720, remembered with
-the other layout choices. **Not in the reference.**
-- Header y 100: `Folder` icon 52×44 amber, name 20/600, meta "Folder • 8 items"
-  14 `--c-text-3`; `X` 22 at top-right.
-- Tabs y 190..236: "Details" | "Activity", each 50%, 16/500, active primary with
+**Details panel** (w 256 flush right, border-left 1px, padding 12). A
+properties inspector, not a dashboard: section title, content, divider, section
+title — nothing wrapped in its own rounded card, hierarchy carried by the
+dividers and the spacing alone. 256 is the default: the same 4px handle as the
+assistant's (§6) drags it between 230 and 720, remembered with the other layout
+choices. **Not in the reference.**
+- Header: `Folder` icon 34×28 amber (files: their 28px type tile), name 14/600,
+  meta "Folder • 8 items" 11 `--c-text-3`; `X` 16 in a 28 hit area at top-right.
+- Tabs: "Details" | "Activity", each 50%, h 38, 12/500, active primary with
   2px primary underline, strip bottom border 1px.
-- "General" 16/600 at y 268; rows (label `--c-text-3` 15 at x 1342, value
-  `--c-text` 15 at x 1440, row h 31): Type, Location, Size ("—" for folders),
+- "General" 12/600; rows (label `--c-text-3` 11.5 in a 76px column, value
+  `--c-text` 11.5, row h 25 — a fifth off the old 31, so the five facts read as
+  one block rather than five bands): Type, Location, Size ("—" for folders),
   Modified "Jul 8, 2026, 11:24 AM", Created, Owner "You".
 - **Who the Owner row and the Owner column name.** On a drive of one's own:
   "You" for the caller's rows, the person's name for anybody else's. On a
@@ -200,32 +246,33 @@ the other layout choices. **Not in the reference.**
   that the drive is not theirs. filex has no group entity and none was invented
   for this: the drive IS the group. The rule lives in
   `features/files/owner.ts` so the panel and the listing cannot disagree.
-- Divider 1px at y 494.
-- "People with access" 16/600; row: avatar 36 + name 15 + role 13 gray.
-- Divider. "Shared link" 16/600; row: `Link` icon in 32 circle `--c-bg-muted`,
-  "Not shared" 15 gray; right button "Create link" h 40 radius 10 border 1px
-  15/500. When shared: URL text truncated + `Copy` icon button + "Remove".
+- Divider 1px, 12px of air each side.
+- "People with access" 12/600; row: avatar 24 + name 11.5 + role 11 gray.
+- Divider. "Shared link" 12/600; row: `Link` 14 in a 24 circle `--c-bg-muted`,
+  "Not shared" 11.5 gray; right button "Create link" h --control-md radius 10
+  border 1px 13/500. When shared: URL text truncated + `Copy` icon button +
+  "Remove".
 - Activity tab: vertical list of events (avatar, "You renamed …", time),
   version entries and comments, newest first.
 
 ## 4. Page: My files — list view (ref 2)
 
-Details panel closed; content x 309..1651.
-- Table header y 200..238: checkbox 20×20 radius 5 border 1.5px at x 320;
-  "Name ↑" 15 `--c-text-2` at x 372 (clickable sort, icon 16); "Owner" at
-  x 1035; "Last modified" at x 1197; "File size" at x 1433. Header
-  border-bottom 1px `--c-border`.
-- Row h 42, separator 1px `--c-border-soft`, padding 0 12: checkbox at x 320,
-  icon at x 372 (folder 32×26 amber; file: 32×32 thumb radius 6 or type tile),
-  name 16/500 at x 424, "12 items" 15 `--c-text-3` at x 520 (folders only),
-  owner 15, date 15 "Jul 8, 2026, 11:24 AM", size 15 ("—" for folders),
-  `MoreVertical` 20 at x 1618.
+- Table header h 30: checkbox 20×20 radius 5 border 1.5px; "Name ↑" 12
+  `--c-text-2` (clickable sort, icon 16), then "Owner", "Last modified", "File
+  size". Header border-bottom 1px `--c-border`.
+- Row h 34 (28 in the compact-list setting), separator 1px `--c-border-soft`:
+  checkbox, icon 24 (folder amber; file: 24×24 thumb radius 6 or type tile),
+  name 12.5/500, "12 items" 12 `--c-text-3` (folders only), owner 12, date 12
+  "Jul 8, 2026, 11:24 AM", size 12 ("—" for folders), `MoreVertical` 16 in a 28
+  hit area. 34 is a comfortable row, not a hairline — §14's "thin hard-to-click
+  rows" is exactly what this must not become.
 - Selected: bg `--c-primary-soft`, checkbox filled primary with white check.
-  Hover: bg `--c-hover-row`; cursor `pointer`. Column widths: name flex, owner 160, modified 236, size
-  160, menu 60 (the 48 of the ref plus the 12px the table extends past the ⋮:
-  a 48 column would widen the flex name column and push Owner off x 1035).
-- Right of filter chips: sort control pill h 40 border 1px: "Name" 15 +
-  `ArrowUp` 16 + divider + `ChevronDown` 16 (x 1502..1650).
+  Hover: bg `--c-hover-row`; cursor `pointer`. Column widths: name flex,
+  owner 132, modified 190, size 110, checkbox 48, menu 48 — the fixed columns
+  shrank with the text they hold and the flexible name column takes the
+  difference.
+- Right of filter chips: sort control pill h --control-md border 1px: "Name" 12
+  + `ArrowUp` 14 + divider + `ChevronDown` 14.
 - Keyboard: ↑↓ move focus, Space toggles, Enter opens, Delete → trash, F2 rename,
   Ctrl/Cmd+A select all, Esc clears, Ctrl/Cmd+X/C/V cut / copy / paste,
   Ctrl/Cmd+Z takes back the last action and Ctrl/Cmd+Shift+Z puts it back,

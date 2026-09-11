@@ -10,12 +10,12 @@ const bar = 'rounded bg-bg-muted';
 
 <template>
   <div class="animate-pulse" role="status" :aria-label="t('common.loading')">
-    <div v-if="mode === 'grid'" class="grid gap-[14px]" style="grid-template-columns: repeat(auto-fill, 236px)">
-      <div v-for="i in rows" :key="i" class="h-[174px] w-[236px] rounded-lg border border-border">
-        <div class="h-[108px] rounded-t-[11px] bg-bg-muted" />
-        <div class="flex h-[66px] items-center px-[14px]">
-          <div :class="[bar, 'h-9 w-9 shrink-0']" />
-          <div class="ml-2.5 min-w-0 flex-1">
+    <div v-if="mode === 'grid'" class="grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(176px, 1fr))">
+      <div v-for="i in rows" :key="i" class="h-[166px] w-full rounded-lg border border-border">
+        <div class="h-[108px] rounded-t-[9px] bg-bg-muted" />
+        <div class="flex h-[58px] items-center px-2">
+          <div :class="[bar, 'h-6 w-6 shrink-0']" />
+          <div class="ml-2 min-w-0 flex-1">
             <div :class="[bar, 'h-3 w-3/4']" />
             <div :class="[bar, 'mt-2 h-2.5 w-1/2']" />
           </div>
@@ -23,10 +23,10 @@ const bar = 'rounded bg-bg-muted';
       </div>
     </div>
     <div v-else>
-      <div v-for="i in rows" :key="i" class="flex h-[42px] items-center border-b border-border-soft pl-3">
+      <div v-for="i in rows" :key="i" class="flex h-[34px] items-center border-b border-border-soft pl-3">
         <div :class="[bar, 'h-5 w-5 shrink-0']" />
-        <div :class="[bar, 'ml-5 h-6 w-6 shrink-0']" />
-        <div :class="[bar, 'ml-5 h-3 w-[220px]']" />
+        <div :class="[bar, 'ml-4 h-5 w-5 shrink-0']" />
+        <div :class="[bar, 'ml-4 h-3 w-[220px]']" />
         <div :class="[bar, 'ml-auto mr-[9px] h-3 w-[120px]']" />
       </div>
     </div>

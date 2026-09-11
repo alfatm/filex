@@ -31,31 +31,31 @@ function pick(id: string) {
 <template>
   <div
     class="flex items-center"
-    :class="variant === 'pill' && 'h-10 overflow-visible rounded-md border border-border bg-bg'"
+    :class="variant === 'pill' && 'h-control-md overflow-visible rounded-md border border-border bg-bg'"
   >
     <button
       type="button"
-      class="flex items-center gap-1 text-15 leading-none text-text hover:bg-hover-row"
-      :class="variant === 'pill' ? 'h-full rounded-l-md pl-4 pr-3' : 'h-[38px] rounded-md px-2'"
+      class="flex items-center gap-1 text-13 leading-none text-text hover:bg-hover-row"
+      :class="variant === 'pill' ? 'h-full rounded-l-md pl-3 pr-2' : 'h-control-sm rounded px-2'"
       @click="view.toggleSortDir()"
     >
       <span>{{ t(`sort.${view.sortKey}`) }}</span>
       <!-- Accessible name reads "Name, ascending"; the arrow alone says nothing to a screen reader. -->
       <span class="sr-only">, {{ t(view.sortDir === 'asc' ? 'sort.ascending' : 'sort.descending') }}</span>
-      <ArrowUp v-if="view.sortDir === 'asc'" :size="16" />
-      <ArrowDown v-else :size="16" />
+      <ArrowUp v-if="view.sortDir === 'asc'" :size="14" />
+      <ArrowDown v-else :size="14" />
     </button>
     <span v-if="variant === 'pill'" class="h-full w-px bg-border" />
     <IconButton
       :label="t('sort.by')"
-      :size="38"
+      :size="28"
       class="text-text-2"
       :class="variant === 'pill' && 'rounded-l-none rounded-r-md'"
       aria-haspopup="menu"
       :aria-expanded="!!menu"
       @click="menu = anchorBelow($event.currentTarget as HTMLElement, MENU_WIDTH)"
     >
-      <ChevronDown :size="16" />
+      <ChevronDown :size="14" />
     </IconButton>
     <FloatingMenu v-if="menu" :items="items" :x="menu.x" :y="menu.y" :width="MENU_WIDTH" :label="t('sort.by')" @select="pick" @close="menu = null" />
   </div>

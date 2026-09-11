@@ -39,14 +39,17 @@ export default {
       'hover-row': 'var(--c-hover-row)',
       overlay: 'var(--c-overlay)',
     },
+    // The density pass moved every step down one notch (cards 12 → 10, search box 14 → 12, modals 16 → 14) so the
+    // smaller controls keep the same *proportion* of rounding rather than looking blobbier at their new size.
+    // `sm` / `DEFAULT` / `md` are --radius-sm / --radius-md / --radius-lg from tokens.css.
     borderRadius: {
       none: '0',
-      sm: '6px',
-      DEFAULT: '8px',
-      md: '10px',
-      lg: '12px',
-      xl: '14px',
-      '2xl': '16px',
+      sm: 'var(--radius-sm)',
+      DEFAULT: 'var(--radius-md)',
+      md: 'var(--radius-lg)',
+      lg: '10px',
+      xl: '12px',
+      '2xl': '14px',
       full: '9999px',
     },
     boxShadow: {
@@ -58,9 +61,24 @@ export default {
       sans: ['var(--font)'],
     },
     extend: {
+      // Control heights from tokens.css, so a control says which SIZE it is rather than which pixel count.
+      height: {
+        'control-sm': 'var(--control-sm)',
+        'control-md': 'var(--control-md)',
+        'control-lg': 'var(--control-lg)',
+      },
+      width: {
+        'control-sm': 'var(--control-sm)',
+        'control-md': 'var(--control-md)',
+        'control-lg': 'var(--control-lg)',
+      },
       fontSize: {
         // px scale from the spec; line-height 1 for single-line rows is set per element.
+        '10': ['10px', '1.5'],
+        '11': ['11px', '1.5'],
+        '11.5': ['11.5px', '1.5'],
         '12': ['12px', '1.5'],
+        '12.5': ['12.5px', '1.5'],
         '13': ['13px', '1.5'],
         '14': ['14px', '1.5'],
         '15': ['15px', '1.5'],

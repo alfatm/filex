@@ -53,7 +53,8 @@
     "search": "Arama",
     "collapseMenu": "Menüyü daralt",
     "expandMenu": "Menüyü genişlet",
-    "reload": "Yeniden yükle"
+    "reload": "Yeniden yükle",
+    "resize": "Kenar çubuğunun genişliğini değiştir"
   },
   "new": {
     "button": "Yeni",
@@ -61,9 +62,6 @@
     "file": "Dosya",
     "fileUpload": "Dosya yükle",
     "folderUpload": "Klasör yükle"
-  },
-  "storage": {
-    "home": "{name} — ana klasör"
   },
   "quota": {
     "used": "{total} alanın {used} kadarı kullanıldı",
@@ -230,6 +228,7 @@
     "movedMany": "{count} öğe {folder} klasörüne taşındı",
     "copiedOne": "“{name}” {folder} klasörüne kopyalandı",
     "copiedMany": "{count} öğe {folder} klasörüne kopyalandı",
+    "nameCopied": "Ad kopyalandı",
     "linkCopied": "Bağlantı kopyalandı",
     "tagsSaved": "“{name}” etiketleri kaydedildi"
   },
@@ -358,6 +357,7 @@
     "notShared": "Paylaşılmadı",
     "shareUnknown": "Bağlantı durumu okunamadı",
     "createLink": "Bağlantı oluştur",
+    "copyName": "Adı kopyala",
     "copy": "Bağlantıyı kopyala",
     "remove": "Kaldır",
     "starred": "Yıldızlı",
@@ -485,6 +485,7 @@
     "cancel": "İptal",
     "search": "Ara",
     "resultsTitle": "Arama sonuçları",
+    "blankQuery": "Aramak için yazın",
     "noResults": "Sonuç yok",
     "failed": "Arama başarısız oldu",
     "colName": "Ad",

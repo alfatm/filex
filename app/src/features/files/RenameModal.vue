@@ -43,7 +43,7 @@ async function submit() {
 <template>
   <Modal :title="t('modal.rename.title')" :close-label="t('modal.cancel')" :initial-focus="input?.el" @close="emit('close')">
     <Input ref="input" v-model="name" :height="44" :label="t('modal.rename.title')" @enter="submit" @update:model-value="error = null" />
-    <p v-if="error" class="mt-2 text-13 leading-none text-danger" role="alert">{{ error }}</p>
+    <p v-if="error" class="mt-2 text-11 leading-none text-danger" role="alert">{{ error }}</p>
     <template #footer>
       <Button variant="outline" @click="emit('close')">{{ t('modal.cancel') }}</Button>
       <Button :disabled="!valid" class="disabled:opacity-50" @click="submit">{{ t('modal.rename.confirm') }}</Button>

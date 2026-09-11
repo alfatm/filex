@@ -12,7 +12,7 @@
   "author": "BRF Tech <hello@brf.sh>",
   "scripts": {
     "build": "pnpm -r --filter=\"./packages/*\" build && pnpm --filter=\"./web\" build",
-    "dev": "pnpm -r --parallel dev",
+    "dev": "pnpm run build:packages && pnpm -r --parallel --filter='!./desktop' --filter='!./packages/react' dev",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
     "clean": "pnpm -r clean && rm -rf bin/ goreleaser-dist/",

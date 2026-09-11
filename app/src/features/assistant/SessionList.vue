@@ -51,7 +51,7 @@ onMounted(() => void assistant.loadSessions());
 <template>
   <div class="mt-4 flex min-h-0 flex-1 flex-col">
     <Input v-model="query" :height="40" :placeholder="t('assistant.searchSessions')" :label="t('assistant.searchSessions')" />
-    <p class="mt-2 shrink-0 text-13 leading-normal text-text-3">
+    <p class="mt-2 shrink-0 text-11 leading-normal text-text-3">
       {{ t('assistant.capacity', { count: assistant.sessions.length, max: assistant.sessionMax }) }}
     </p>
 
@@ -77,8 +77,8 @@ onMounted(() => void assistant.loadSessions());
             :class="assistant.sessionId === session.id && 'font-medium text-primary'"
             @click="emit('open', session.id)"
           >
-            <span class="block truncate-safe text-15 leading-none">{{ titleOf(session.title) }}</span>
-            <span class="mt-1.5 block truncate-safe text-13 leading-none text-text-3">
+            <span class="block truncate-safe text-13 leading-none">{{ titleOf(session.title) }}</span>
+            <span class="mt-1.5 block truncate-safe text-11 leading-none text-text-3">
               {{ t('assistant.sessionMeta', session.messageCount) }} · {{ formatDateTime(session.lastActiveAt) }}
             </span>
           </button>
@@ -104,7 +104,7 @@ onMounted(() => void assistant.loadSessions());
         </template>
       </li>
     </ul>
-    <p v-else class="mt-6 text-15 leading-none text-text-3">
+    <p v-else class="mt-6 text-13 leading-none text-text-3">
       {{ assistant.sessions.length ? t('assistant.noMatches') : t('assistant.noSessions') }}
     </p>
   </div>

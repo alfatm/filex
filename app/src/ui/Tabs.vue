@@ -20,7 +20,7 @@ function step(delta: 1 | -1, event: KeyboardEvent) {
       :data-tab="tab.id"
       :aria-selected="model === tab.id"
       :tabindex="model === tab.id ? 0 : -1"
-      class="-mb-px flex h-[46px] flex-1 items-center justify-center border-b-2 text-16 font-medium leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-ring"
+      class="-mb-px flex h-[38px] flex-1 items-center justify-center border-b-2 text-12 font-medium leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary-ring"
       :class="model === tab.id ? 'border-primary text-primary' : 'border-transparent text-text-3 hover:text-text'"
       @click="model = tab.id"
     >

@@ -197,8 +197,8 @@ onBeforeUnmount(() => {
     <div class="flex shrink-0 items-center pl-7">
       <Sparkles :size="26" class="shrink-0 text-primary" />
       <div class="ml-3 min-w-0 flex-1">
-        <h2 class="text-20 font-semibold leading-tight">{{ t('assistant.title') }}</h2>
-        <p class="mt-0.5 flex items-center text-13 leading-none text-text-3">
+        <h2 class="text-17 font-semibold leading-tight">{{ t('assistant.title') }}</h2>
+        <p class="mt-0.5 flex items-center text-11 leading-none text-text-3">
           <span class="mr-1.5 inline-block h-2 w-2 rounded-full" :class="online ? 'bg-success' : 'bg-text-3'" />
           {{ t(online ? 'assistant.online' : 'assistant.offline') }}
         </p>
@@ -220,20 +220,20 @@ onBeforeUnmount(() => {
     <template v-else>
       <div ref="log" role="log" aria-live="off" class="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto">
         <!-- The intro is a placeholder for the empty log, not a heading: the first message takes its place. -->
-        <p v-if="!assistant.messages.length" class="text-15 leading-normal text-text-3">{{ t('assistant.intro') }}</p>
+        <p v-if="!assistant.messages.length" class="text-13 leading-normal text-text-3">{{ t('assistant.intro') }}</p>
         <template v-for="{ message, followUp, streaming } in rows" :key="message.id">
           <div v-if="message.role === 'user'" class="flex items-start justify-end">
             <div class="max-w-[300px] rounded-xl bg-primary-soft px-4 py-3">
-              <p class="whitespace-pre-wrap text-15 leading-[1.45]">{{ message.text }}</p>
-              <p class="mt-1 text-12 leading-none text-text-3">{{ formatTime(message.at) }}</p>
+              <p class="whitespace-pre-wrap text-13 leading-[1.45]">{{ message.text }}</p>
+              <p class="mt-1 text-10 leading-none text-text-3">{{ formatTime(message.at) }}</p>
             </div>
             <Avatar :initial="files.user?.initial ?? ''" :src="files.user?.avatarUrl" class="ml-3" />
           </div>
           <div v-else-if="followUp" :aria-live="streaming ? 'off' : undefined">
             <AnswerText :text="message.text" />
-            <p v-if="message.error" class="mt-1 text-14 text-danger">{{ t(`assistant.failure.${message.error}`) }}</p>
-            <p v-else-if="message.aborted" class="mt-1 text-13 text-text-3">{{ t('assistant.stopped') }}</p>
-            <p class="mt-1 text-12 leading-none text-text-3">{{ formatTime(message.at) }}</p>
+            <p v-if="message.error" class="mt-1 text-11.5 text-danger">{{ t(`assistant.failure.${message.error}`) }}</p>
+            <p v-else-if="message.aborted" class="mt-1 text-11 text-text-3">{{ t('assistant.stopped') }}</p>
+            <p class="mt-1 text-10 leading-none text-text-3">{{ formatTime(message.at) }}</p>
           </div>
           <div v-else class="space-y-3">
             <div class="flex items-start">
@@ -242,9 +242,9 @@ onBeforeUnmount(() => {
               </span>
               <div class="ml-3 min-w-0 rounded-xl bg-bg-muted px-4 py-3" :aria-live="streaming ? 'off' : undefined">
                 <AnswerText :text="message.text" />
-                <p v-if="message.error" class="mt-1 text-14 text-danger">{{ t(`assistant.failure.${message.error}`) }}</p>
-                <p v-else-if="message.aborted" class="mt-1 text-13 text-text-3">{{ t('assistant.stopped') }}</p>
-                <p class="mt-1 text-12 leading-none text-text-3">{{ formatTime(message.at) }}</p>
+                <p v-if="message.error" class="mt-1 text-11.5 text-danger">{{ t(`assistant.failure.${message.error}`) }}</p>
+                <p v-else-if="message.aborted" class="mt-1 text-11 text-text-3">{{ t('assistant.stopped') }}</p>
+                <p class="mt-1 text-10 leading-none text-text-3">{{ formatTime(message.at) }}</p>
               </div>
             </div>
             <ResultCard v-for="hit in message.hits" :key="hit.node.id" :hit="hit" />
@@ -256,7 +256,7 @@ onBeforeUnmount(() => {
               <div v-if="assistant.isPlan(card)" class="rounded-2xl border border-border-soft bg-bg-muted p-4">
                 <div class="flex items-start gap-3">
                   <Sparkles :size="22" class="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
-                  <p class="min-w-0 flex-1 text-15 font-medium leading-snug">{{ card.summary || t('assistant.plan.title') }}</p>
+                  <p class="min-w-0 flex-1 text-13 font-medium leading-snug">{{ card.summary || t('assistant.plan.title') }}</p>
                   <IconButton :label="t('assistant.plan.copy')" :size="28" class="-mt-1 shrink-0 text-text-2" @click="copyPlan(card)">
                     <Copy :size="16" />
                   </IconButton>
@@ -269,7 +269,7 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     :disabled="!canSend || assistant.isDeciding(card)"
-                    class="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-14 font-medium leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                    class="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-11.5 font-medium leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
                     @click="decidePlan(card, true)"
                   >
                     <Play :size="16" fill="currentColor" :stroke-width="0" aria-hidden="true" />
@@ -278,23 +278,23 @@ onBeforeUnmount(() => {
                   <button
                     type="button"
                     :disabled="!canSend || assistant.isDeciding(card)"
-                    class="inline-flex h-10 items-center rounded-full border border-border bg-bg px-5 text-14 font-medium leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                    class="inline-flex h-10 items-center rounded-full border border-border bg-bg px-5 text-11.5 font-medium leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
                     @click="decidePlan(card, false)"
                   >
                     {{ t('assistant.plan.refuse') }}
                   </button>
                 </div>
-                <p v-else-if="card.status === 'cancelled'" class="mt-3 text-13 leading-none text-text-3">{{ t('assistant.plan.cancelled') }}</p>
-                <p v-if="assistant.decisionErrorOf(card)" class="mt-2 text-13 leading-snug text-danger" role="alert">{{ assistant.decisionErrorOf(card) }}</p>
+                <p v-else-if="card.status === 'cancelled'" class="mt-3 text-11 leading-none text-text-3">{{ t('assistant.plan.cancelled') }}</p>
+                <p v-if="assistant.decisionErrorOf(card)" class="mt-2 text-11 leading-snug text-danger" role="alert">{{ assistant.decisionErrorOf(card) }}</p>
               </div>
 
               <div v-else class="rounded-xl border border-border p-4">
-              <p class="text-14 font-medium leading-snug">{{ t('assistant.card.title') }}</p>
-              <p class="mt-1 break-all text-14 leading-snug text-text-3">{{ card.path }}</p>
-              <p v-if="card.reason" class="mt-1 text-13 leading-snug text-text-3">{{ card.reason }}</p>
+              <p class="text-11.5 font-medium leading-snug">{{ t('assistant.card.title') }}</p>
+              <p class="mt-1 break-all text-11.5 leading-snug text-text-3">{{ card.path }}</p>
+              <p v-if="card.reason" class="mt-1 text-11 leading-snug text-text-3">{{ card.reason }}</p>
               <p
                 v-if="decisionOf(card)"
-                class="mt-3 text-13 leading-none"
+                class="mt-3 text-11 leading-none"
                 :class="decisionOf(card) === 'allowed' ? 'text-success' : 'text-text-3'"
               >
                 {{ t(`assistant.card.${decisionOf(card)}`) }}
@@ -304,7 +304,7 @@ onBeforeUnmount(() => {
                 <button
                   type="button"
                   :disabled="!online || assistant.isDeciding(card)"
-                  class="inline-flex h-9 items-center rounded-full bg-primary px-4 text-14 leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                  class="inline-flex h-9 items-center rounded-full bg-primary px-4 text-11.5 leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
                   @click="assistant.decideRead(card, true)"
                 >
                   {{ t('assistant.card.allow') }}
@@ -312,18 +312,18 @@ onBeforeUnmount(() => {
                 <button
                   type="button"
                   :disabled="!online || assistant.isDeciding(card)"
-                  class="inline-flex h-9 items-center rounded-full border border-border px-4 text-14 leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                  class="inline-flex h-9 items-center rounded-full border border-border px-4 text-11.5 leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
                   @click="assistant.decideRead(card, false)"
                 >
                   {{ t('assistant.card.deny') }}
                 </button>
               </div>
-              <p v-if="assistant.decisionErrorOf(card)" class="mt-2 text-13 leading-snug text-danger" role="alert">{{ assistant.decisionErrorOf(card) }}</p>
+              <p v-if="assistant.decisionErrorOf(card)" class="mt-2 text-11 leading-snug text-danger" role="alert">{{ assistant.decisionErrorOf(card) }}</p>
               </div>
             </template>
           </div>
         </template>
-        <p v-if="activityLabel" class="flex items-center text-13 leading-snug text-text-3">
+        <p v-if="activityLabel" class="flex items-center text-11 leading-snug text-text-3">
           <Loader2 :size="14" class="mr-2 shrink-0 animate-spin" />
           <span class="min-w-0 break-all">{{ activityLabel }}</span>
         </p>
@@ -340,7 +340,7 @@ onBeforeUnmount(() => {
             :aria-checked="assistant.mode === mode"
             :tabindex="assistant.mode === mode ? 0 : -1"
             :title="t(`assistant.modeHint.${mode}`)"
-            class="inline-flex h-[38px] items-center gap-2 rounded-full px-4 text-15 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+            class="inline-flex h-[38px] items-center gap-2 rounded-full px-4 text-13 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
             :class="assistant.mode === mode ? 'bg-primary text-white' : 'border border-border text-text hover:bg-hover-row'"
             @click="assistant.mode = mode"
             @keydown="onModeKeydown($event, index)"
@@ -359,7 +359,7 @@ onBeforeUnmount(() => {
             :disabled="!online"
             :placeholder="t('assistant.placeholder')"
             :aria-label="t('assistant.placeholder')"
-            class="h-14 min-w-0 flex-1 resize-none rounded-lg border border-border bg-bg px-4 py-4 text-15 leading-[1.45] text-text placeholder:text-text-3 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-bg-muted"
+            class="h-14 min-w-0 flex-1 resize-none rounded-lg border border-border bg-bg px-4 py-4 text-13 leading-[1.45] text-text placeholder:text-text-3 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-bg-muted"
             @keydown.enter.exact.prevent="send(draft)"
           />
           <button
@@ -384,7 +384,7 @@ onBeforeUnmount(() => {
     @close="expanded = null"
   >
     <PlanDetails :card="expanded" list-class="max-h-[60vh]" />
-    <p v-if="expanded.status === 'cancelled'" class="mt-3 text-13 leading-none text-text-3">{{ t('assistant.plan.cancelled') }}</p>
+    <p v-if="expanded.status === 'cancelled'" class="mt-3 text-11 leading-none text-text-3">{{ t('assistant.plan.cancelled') }}</p>
     <template v-if="expanded.status === 'pending'" #footer>
       <Button variant="outline" :disabled="!canSend || assistant.isDeciding(expanded)" @click="decidePlan(expanded, false)">{{ t('assistant.plan.refuse') }}</Button>
       <Button :disabled="!canSend || assistant.isDeciding(expanded)" class="disabled:opacity-60" @click="decidePlan(expanded, true)">{{ t('assistant.plan.approve') }}</Button>

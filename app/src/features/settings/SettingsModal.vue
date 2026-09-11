@@ -424,7 +424,7 @@ async function save() {
 
 /** Sections are told apart by a rule and the space around it — no card inside the card. */
 const SECTION = 'mt-6 border-t border-border pt-6';
-const LABEL = 'block text-13 leading-none text-text-3';
+const LABEL = 'block text-11 leading-none text-text-3';
 const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 text-left';
 </script>
 
@@ -438,10 +438,10 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
         class="flex h-[680px] max-h-[calc(100vh-48px)] w-[800px] flex-col rounded-2xl bg-bg px-4 py-5 focus:outline-none shadow-modal"
       >
         <div class="flex items-start">
-          <Avatar :initial="files.user?.initial ?? ''" :src="avatarUrl" :size="44" class="!text-16" />
+          <Avatar :initial="files.user?.initial ?? ''" :src="avatarUrl" :size="44" class="!text-13" />
           <div class="ml-4 min-w-0 flex-1">
-            <DialogTitle class="truncate-safe text-20 font-semibold leading-none">{{ t('settings.title') }}</DialogTitle>
-            <p class="mt-1.5 truncate-safe text-14 leading-none text-text-3">{{ t('settings.subtitle') }}</p>
+            <DialogTitle class="truncate-safe text-17 font-semibold leading-none">{{ t('settings.title') }}</DialogTitle>
+            <p class="mt-1.5 truncate-safe text-11.5 leading-none text-text-3">{{ t('settings.subtitle') }}</p>
           </div>
           <button
             type="button"
@@ -472,7 +472,7 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
               :aria-selected="active === item.id"
               :aria-controls="`settings-panel-${item.id}`"
               :tabindex="active === item.id ? 0 : -1"
-              class="flex h-10 w-full items-center gap-3 rounded-md px-3 text-15 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+              class="flex h-10 w-full items-center gap-3 rounded-md px-3 text-13 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
               :class="active === item.id ? 'bg-primary-soft font-medium text-primary' : 'text-text-2 hover:bg-hover-row'"
               @click="active = item.id"
             >
@@ -489,19 +489,19 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
             class="scroll-thin min-h-0 flex-1 overflow-y-auto pr-6 focus:outline-none"
           >
             <section v-if="active === 'profile'">
-              <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.profile') }}</h3>
-              <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.profile.hint') }}</p>
+              <h3 class="text-13 font-semibold leading-none">{{ t('settings.nav.profile') }}</h3>
+              <p class="mt-1.5 text-11 leading-none text-text-3">{{ t('settings.profile.hint') }}</p>
 
               <div class="mt-5 flex items-center">
-                <Avatar :initial="files.user?.initial ?? ''" :src="avatarUrl" :size="62" class="!text-22 shrink-0" />
+                <Avatar :initial="files.user?.initial ?? ''" :src="avatarUrl" :size="62" class="!text-18 shrink-0" />
                 <div class="ml-4 min-w-0 flex-1">
                   <p class="flex items-center gap-2">
-                    <span class="truncate-safe text-17 font-semibold leading-none">{{ displayName }}</span>
-                    <span v-if="files.user" class="flex h-[22px] shrink-0 items-center rounded-full bg-primary-soft px-2 text-12 font-medium leading-none text-primary">
+                    <span class="truncate-safe text-13 font-semibold leading-none">{{ displayName }}</span>
+                    <span v-if="files.user" class="flex h-[22px] shrink-0 items-center rounded-full bg-primary-soft px-2 text-10 font-medium leading-none text-primary">
                       {{ t(`settings.roles.${files.user.role}`) }}
                     </span>
                   </p>
-                  <p class="mt-2 truncate-safe text-14 leading-none text-text-3">{{ files.user?.email }}</p>
+                  <p class="mt-2 truncate-safe text-11.5 leading-none text-text-3">{{ files.user?.email }}</p>
                 </div>
                 <input ref="photoInput" type="file" accept="image/*" class="sr-only" @change="pickPhoto" />
                 <!-- Removal is offered only once there is a picture to remove. -->
@@ -525,7 +525,7 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                 <div>
                   <span :class="LABEL">{{ t('settings.profile.email') }}</span>
                   <!-- Read-only: the address is the login identity, changed by an admin. -->
-                  <p class="mt-2 flex h-10 items-center rounded-md border border-border bg-bg-muted px-3 text-15 leading-none text-text-3">
+                  <p class="mt-2 flex h-10 items-center rounded-md border border-border bg-bg-muted px-3 text-13 leading-none text-text-3">
                     {{ files.user?.email }}
                   </p>
                 </div>
@@ -537,8 +537,8 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
             </section>
 
             <section v-else-if="active === 'preferences'">
-              <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.preferences') }}</h3>
-              <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.prefs.hint') }}</p>
+              <h3 class="text-13 font-semibold leading-none">{{ t('settings.nav.preferences') }}</h3>
+              <p class="mt-1.5 text-11 leading-none text-text-3">{{ t('settings.prefs.hint') }}</p>
 
               <div class="mt-3 flex flex-col gap-1">
                 <SettingRow :label="t('settings.prefs.language')">
@@ -559,8 +559,8 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                    file count or for the rolling window has nowhere else in the app that states where it stands. -->
               <!-- Upload defaults have no tab of their own: they are preferences, told apart by a rule. -->
               <div :class="SECTION">
-                <h3 class="text-16 font-semibold leading-none">{{ t('settings.storage.title') }}</h3>
-                <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.storage.hint') }}</p>
+                <h3 class="text-13 font-semibold leading-none">{{ t('settings.storage.title') }}</h3>
+                <p class="mt-1.5 text-11 leading-none text-text-3">{{ t('settings.storage.hint') }}</p>
 
                 <div class="mt-3 flex flex-col gap-1">
                   <SettingRow :label="t('settings.storage.defaultFolder')">
@@ -582,13 +582,13 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                   </SettingRow>
                   <template v-if="quota">
                     <SettingRow :label="t('settings.storage.usedBytes')">
-                      <p class="text-15 leading-none text-text-2">{{ quotaBytes }}</p>
+                      <p class="text-13 leading-none text-text-2">{{ quotaBytes }}</p>
                     </SettingRow>
                     <SettingRow :label="t('settings.storage.usedFiles')">
-                      <p class="text-15 leading-none text-text-2">{{ quotaFiles }}</p>
+                      <p class="text-13 leading-none text-text-2">{{ quotaFiles }}</p>
                     </SettingRow>
                     <SettingRow :label="t('settings.storage.uploadWindow')" :hint="t('settings.storage.uploadWindowHint', { hours: quota.uploadWindowHours })">
-                      <p class="text-15 leading-none text-text-2">{{ quotaUpload }}</p>
+                      <p class="text-13 leading-none text-text-2">{{ quotaUpload }}</p>
                     </SettingRow>
                   </template>
                 </div>
@@ -596,8 +596,8 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
             </section>
 
             <section v-else-if="active === 'notifications'">
-              <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.notifications') }}</h3>
-              <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.notify.hint') }}</p>
+              <h3 class="text-13 font-semibold leading-none">{{ t('settings.nav.notifications') }}</h3>
+              <p class="mt-1.5 text-11 leading-none text-text-3">{{ t('settings.notify.hint') }}</p>
               <div v-if="notify" class="mt-3 flex flex-col gap-1">
                 <SettingRow
                   v-for="key in (['shared', 'comments', 'uploads'] as const)"
@@ -609,12 +609,12 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                 </SettingRow>
               </div>
               <!-- An install with notifications switched off has nothing to offer here, and says so. -->
-              <p v-else class="mt-3 text-13 leading-none text-text-3">{{ t('settings.notify.unavailable') }}</p>
+              <p v-else class="mt-3 text-11 leading-none text-text-3">{{ t('settings.notify.unavailable') }}</p>
             </section>
 
             <section v-else-if="active === 'security'">
-              <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.security') }}</h3>
-              <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.security.hint') }}</p>
+              <h3 class="text-13 font-semibold leading-none">{{ t('settings.nav.security') }}</h3>
+              <p class="mt-1.5 text-11 leading-none text-text-3">{{ t('settings.security.hint') }}</p>
               <ul class="mt-3 flex flex-col gap-1">
                 <li>
                   <!-- Offered only where the realm allows it; an OIDC account's password lives elsewhere, and the
@@ -625,8 +625,8 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                       <Input v-model="newPassword" type="password" :label="t('settings.security.newPassword')" :placeholder="t('settings.security.newPassword')" />
                       <Input v-model="repeatPassword" type="password" :label="t('settings.security.repeatPassword')" :placeholder="t('settings.security.repeatPassword')" />
                     </div>
-                    <p v-if="passwordError" class="mt-2 text-12 leading-none text-danger" role="alert">{{ passwordError }}</p>
-                    <p v-else class="mt-2 text-12 leading-none text-text-3">{{ t('settings.security.otherSessions') }}</p>
+                    <p v-if="passwordError" class="mt-2 text-10 leading-none text-danger" role="alert">{{ passwordError }}</p>
+                    <p v-else class="mt-2 text-10 leading-none text-text-3">{{ t('settings.security.otherSessions') }}</p>
                     <div class="mt-3 flex gap-2">
                       <Button type="submit" :disabled="passwordBusy">{{ t('settings.security.submit') }}</Button>
                       <Button variant="outline" type="button" @click="passwordOpen = false">{{ t('settings.cancel') }}</Button>
@@ -634,14 +634,14 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                   </form>
                   <button v-else-if="auth?.changePassword" type="button" :class="[SECURITY_ROW, 'hover:bg-hover-row']" @click="openPassword">
                     <KeyRound :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
-                    <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ t('settings.security.password') }}</span>
-                    <span class="truncate-safe text-13 leading-none text-text-3">{{ passwordStatus }}</span>
+                    <span class="min-w-0 flex-1 truncate-safe text-13 leading-none">{{ t('settings.security.password') }}</span>
+                    <span class="truncate-safe text-11 leading-none text-text-3">{{ passwordStatus }}</span>
                     <ChevronRight :size="16" class="shrink-0 text-text-3" />
                   </button>
                   <div v-else :class="[SECURITY_ROW, 'cursor-default']">
                     <KeyRound :size="18" :stroke-width="1.75" class="shrink-0 text-text-3" />
-                    <span class="min-w-0 flex-1 truncate-safe text-15 leading-none text-text-3">{{ t('settings.security.password') }}</span>
-                    <span class="truncate-safe text-13 leading-none text-text-3">{{ passwordStatus }}</span>
+                    <span class="min-w-0 flex-1 truncate-safe text-13 leading-none text-text-3">{{ t('settings.security.password') }}</span>
+                    <span class="truncate-safe text-11 leading-none text-text-3">{{ passwordStatus }}</span>
                   </div>
                 </li>
                 <li>
@@ -649,18 +649,18 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                        else it belongs to the auth provider, and the row only says so. -->
                   <div v-if="totpPanel" class="rounded-md border border-border p-3">
                     <div v-if="totpPanel === 'enroll'">
-                      <p class="text-14 font-medium leading-none">{{ t('settings.security.twoFactorTurnOn') }}</p>
+                      <p class="text-11.5 font-medium leading-none">{{ t('settings.security.twoFactorTurnOn') }}</p>
                       <div v-if="enrollment" class="mt-3 flex gap-4">
                         <!-- White behind the QR on purpose: a dark code on the dark theme's surface does not scan.
                              The SVG is the server's own drawing of the otpauth URL, from the origin the app trusts. -->
                         <!-- eslint-disable-next-line vue/no-v-html -->
                         <div class="h-40 w-40 shrink-0 rounded-md bg-white p-2 [&>svg]:h-full [&>svg]:w-full" v-html="enrollment.qrSvg" />
                         <div class="min-w-0 flex-1">
-                          <p class="text-13 leading-[18px] text-text-2">{{ t('settings.security.twoFactorScan') }}</p>
-                          <p class="mt-3 text-12 leading-none text-text-3">{{ t('settings.security.twoFactorKey') }}</p>
+                          <p class="text-11 leading-[18px] text-text-2">{{ t('settings.security.twoFactorScan') }}</p>
+                          <p class="mt-3 text-10 leading-none text-text-3">{{ t('settings.security.twoFactorKey') }}</p>
                           <div class="mt-1.5 flex items-center gap-2">
-                            <code class="min-w-0 flex-1 truncate-safe rounded-md bg-bg-muted px-2 py-2 font-mono text-13 leading-none">{{ enrollment.secret }}</code>
-                            <Button variant="outline" class="!h-8 shrink-0 px-2.5 !text-13" @click="copyText(enrollment.secret, 'secret')">
+                            <code class="min-w-0 flex-1 truncate-safe rounded-md bg-bg-muted px-2 py-2 font-mono text-11 leading-none">{{ enrollment.secret }}</code>
+                            <Button variant="outline" class="!h-8 shrink-0 px-2.5 !text-11" @click="copyText(enrollment.secret, 'secret')">
                               {{ t(copied === 'secret' ? 'settings.security.copied' : 'settings.security.copy') }}
                             </Button>
                           </div>
@@ -678,12 +678,12 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                         <Button type="submit" :disabled="totpBusy || !enrollment || !totpCode.trim()">{{ t('settings.security.verify') }}</Button>
                         <Button variant="outline" type="button" @click="closeTotp">{{ t('settings.cancel') }}</Button>
                       </form>
-                      <p v-if="totpError" class="mt-2 text-12 leading-none text-danger" role="alert">{{ totpError }}</p>
+                      <p v-if="totpError" class="mt-2 text-10 leading-none text-danger" role="alert">{{ totpError }}</p>
                     </div>
                     <div v-else-if="totpPanel === 'recovery'">
-                      <p class="text-14 font-medium leading-none">{{ t('settings.security.recoveryCodes') }}</p>
-                      <p class="mt-1.5 text-12 leading-[18px] text-text-3">{{ t('settings.security.recoveryCodesHint') }}</p>
-                      <ul :aria-label="t('settings.security.recoveryCodes')" class="mt-3 grid grid-cols-2 gap-x-6 gap-y-1.5 font-mono text-13 leading-none">
+                      <p class="text-11.5 font-medium leading-none">{{ t('settings.security.recoveryCodes') }}</p>
+                      <p class="mt-1.5 text-10 leading-[18px] text-text-3">{{ t('settings.security.recoveryCodesHint') }}</p>
+                      <ul :aria-label="t('settings.security.recoveryCodes')" class="mt-3 grid grid-cols-2 gap-x-6 gap-y-1.5 font-mono text-11 leading-none">
                         <li v-for="code in enrollment?.recoveryCodes ?? []" :key="code" class="select-all">{{ code }}</li>
                       </ul>
                       <div class="mt-3 flex gap-2">
@@ -709,7 +709,7 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                           :placeholder="t('settings.security.twoFactorAnyCode')"
                         />
                       </div>
-                      <p v-if="totpError" class="mt-2 text-12 leading-none text-danger" role="alert">{{ totpError }}</p>
+                      <p v-if="totpError" class="mt-2 text-10 leading-none text-danger" role="alert">{{ totpError }}</p>
                       <div class="mt-3 flex gap-2">
                         <Button type="submit" class="!bg-danger hover:!bg-danger hover:brightness-95" :disabled="totpBusy || !totpPassword || !totpCode.trim()">
                           {{ t('settings.security.twoFactorTurnOff') }}
@@ -720,8 +720,8 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                   </div>
                   <button v-else-if="auth?.provider === 'local'" type="button" :class="[SECURITY_ROW, 'hover:bg-hover-row']" @click="openTotp">
                     <ShieldCheck :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
-                    <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ t('settings.security.twoFactor') }}</span>
-                    <span class="flex items-center gap-1.5 truncate-safe text-13 leading-none text-text-3">
+                    <span class="min-w-0 flex-1 truncate-safe text-13 leading-none">{{ t('settings.security.twoFactor') }}</span>
+                    <span class="flex items-center gap-1.5 truncate-safe text-11 leading-none text-text-3">
                       <span v-if="secondFactorOn" class="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
                       {{ secondFactorLabel }}
                     </span>
@@ -729,8 +729,8 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                   </button>
                   <div v-else :class="[SECURITY_ROW, 'cursor-default']">
                     <ShieldCheck :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
-                    <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ t('settings.security.twoFactor') }}</span>
-                    <span class="flex items-center gap-1.5 truncate-safe text-13 leading-none text-text-3">
+                    <span class="min-w-0 flex-1 truncate-safe text-13 leading-none">{{ t('settings.security.twoFactor') }}</span>
+                    <span class="flex items-center gap-1.5 truncate-safe text-11 leading-none text-text-3">
                       <span v-if="secondFactorOn" class="h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
                       {{ secondFactorLabel }}
                     </span>
@@ -748,14 +748,14 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                     @click="sessionsOpen = !sessionsOpen"
                   >
                     <Monitor :size="18" :stroke-width="1.75" class="shrink-0 text-text-2" />
-                    <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ t('settings.security.sessions') }}</span>
-                    <span class="truncate-safe text-13 leading-none text-text-3">{{ t('settings.security.sessionsCount', sessions.length) }}</span>
+                    <span class="min-w-0 flex-1 truncate-safe text-13 leading-none">{{ t('settings.security.sessions') }}</span>
+                    <span class="truncate-safe text-11 leading-none text-text-3">{{ t('settings.security.sessionsCount', sessions.length) }}</span>
                     <ChevronRight :size="16" class="shrink-0 text-text-3 transition-transform" :class="{ 'rotate-90': sessionsOpen }" />
                   </button>
                   <!-- A server without the endpoint leaves the row standing and silent. -->
                   <div v-else :class="[SECURITY_ROW, 'cursor-default']">
                     <Monitor :size="18" :stroke-width="1.75" class="shrink-0 text-text-3" />
-                    <span class="min-w-0 flex-1 truncate-safe text-15 leading-none text-text-3">{{ t('settings.security.sessions') }}</span>
+                    <span class="min-w-0 flex-1 truncate-safe text-13 leading-none text-text-3">{{ t('settings.security.sessions') }}</span>
                   </div>
 
                   <ul
@@ -765,25 +765,25 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                   >
                     <li v-for="session in sessions" :key="session.id" class="flex min-h-9 items-center gap-3">
                       <div class="min-w-0 flex-1">
-                        <p class="truncate-safe text-14 leading-none">{{ deviceLabel(session.userAgent) || t('settings.security.unknownDevice') }}</p>
-                        <p class="mt-1.5 truncate-safe text-12 leading-none text-text-3">
+                        <p class="truncate-safe text-11.5 leading-none">{{ deviceLabel(session.userAgent) || t('settings.security.unknownDevice') }}</p>
+                        <p class="mt-1.5 truncate-safe text-10 leading-none text-text-3">
                           {{ [session.ip, t('settings.security.signedIn', { when: formatDate(session.createdAt) })].filter(Boolean).join(' · ') }}
                         </p>
                       </div>
-                      <span v-if="session.current" class="shrink-0 text-12 leading-none text-text-3">{{ t('settings.security.currentSession') }}</span>
-                      <Button v-else variant="outline" class="!h-8 shrink-0 px-2.5 !text-13" @click="endSession(session.id)">
+                      <span v-if="session.current" class="shrink-0 text-10 leading-none text-text-3">{{ t('settings.security.currentSession') }}</span>
+                      <Button v-else variant="outline" class="!h-8 shrink-0 px-2.5 !text-11" @click="endSession(session.id)">
                         {{ t('settings.security.endSession') }}
                       </Button>
                     </li>
                   </ul>
-                  <p v-if="sessionsError" class="mt-1 pl-[30px] text-12 leading-none text-danger" role="alert">{{ sessionsError }}</p>
+                  <p v-if="sessionsError" class="mt-1 pl-[30px] text-10 leading-none text-danger" role="alert">{{ sessionsError }}</p>
                 </li>
               </ul>
             </section>
 
             <section v-else>
-              <h3 class="text-16 font-semibold leading-none">{{ t('settings.nav.assistant') }}</h3>
-              <p class="mt-1.5 text-13 leading-none text-text-3">{{ t('settings.assistant.hint') }}</p>
+              <h3 class="text-13 font-semibold leading-none">{{ t('settings.nav.assistant') }}</h3>
+              <p class="mt-1.5 text-11 leading-none text-text-3">{{ t('settings.assistant.hint') }}</p>
               <div class="mt-3 flex flex-col gap-1">
                 <SettingRow :label="t('settings.assistant.enabled')">
                   <Toggle v-model="draft.assistantEnabled" :label="t('settings.assistant.enabled')" />
@@ -792,7 +792,7 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                   <Select v-model="draft.assistantMode" :options="modeOptions" :width="212" :label="t('settings.assistant.defaultMode')" />
                 </SettingRow>
               </div>
-              <p class="mt-3 text-13 leading-tight text-text-3">{{ t('settings.assistant.providerNote') }}</p>
+              <p class="mt-3 text-11 leading-tight text-text-3">{{ t('settings.assistant.providerNote') }}</p>
             </section>
           </div>
         </div>

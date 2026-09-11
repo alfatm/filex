@@ -24,14 +24,14 @@ const folderLabel = computed(() => hitFolderLabel(props.hit, files.storages));
 <template>
   <tr
     tabindex="0"
-    class="h-[42px] cursor-pointer select-none border-b border-border-soft text-15 leading-none hover:bg-hover-row focus-visible:bg-hover-row focus-visible:outline-none [&>td]:p-0"
+    class="h-[42px] cursor-pointer select-none border-b border-border-soft text-13 leading-none hover:bg-hover-row focus-visible:bg-hover-row focus-visible:outline-none [&>td]:p-0"
     @click="emit('open', hit)"
     @keydown.enter.self="emit('open', hit)"
   >
     <td class="!pl-3">
       <div class="flex items-center">
         <HitIcon :node="hit.node" />
-        <span class="ml-5 truncate text-16 font-medium text-text">{{ hit.node.name }}</span>
+        <span class="ml-5 truncate text-13 font-medium text-text">{{ hit.node.name }}</span>
         <span v-if="hit.node.kind === 'folder'" class="ml-4 shrink-0 text-text-3">{{ hit.node.itemCount === undefined ? t('type.folder') : t('files.items', hit.node.itemCount) }}</span>
       </div>
     </td>

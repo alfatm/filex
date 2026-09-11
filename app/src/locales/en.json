@@ -53,7 +53,8 @@
     "search": "Search",
     "collapseMenu": "Collapse menu",
     "expandMenu": "Expand menu",
-    "reload": "Reload"
+    "reload": "Reload",
+    "resize": "Resize sidebar"
   },
   "new": {
     "button": "New",
@@ -61,9 +62,6 @@
     "file": "File",
     "fileUpload": "Upload files",
     "folderUpload": "Upload folder"
-  },
-  "storage": {
-    "home": "{name} — home folder"
   },
   "quota": {
     "used": "{used} of {total} used",
@@ -230,6 +228,7 @@
     "movedMany": "{count} item moved to {folder} | {count} items moved to {folder}",
     "copiedOne": "“{name}” copied to {folder}",
     "copiedMany": "{count} item copied to {folder} | {count} items copied to {folder}",
+    "nameCopied": "Name copied",
     "linkCopied": "Link copied",
     "tagsSaved": "Tags of “{name}” saved"
   },
@@ -358,6 +357,7 @@
     "notShared": "Not shared",
     "shareUnknown": "Could not read the link status",
     "createLink": "Create link",
+    "copyName": "Copy name",
     "copy": "Copy link",
     "remove": "Remove",
     "starred": "Starred",
@@ -485,6 +485,7 @@
     "cancel": "Cancel",
     "search": "Search",
     "resultsTitle": "Search results",
+    "blankQuery": "Type to search",
     "noResults": "No results",
     "failed": "Search failed",
     "colName": "Name",

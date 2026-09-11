@@ -83,25 +83,25 @@ const actions = computed<Action[]>(() =>
 <template>
   <!-- Spec §7. Takes the filter row's slot so the table header stays put. -->
   <div
-    class="flex h-12 items-center gap-1 rounded-md bg-primary-soft pl-4 pr-1"
+    class="flex h-control-md items-center gap-0.5 rounded-md bg-primary-soft pl-3 pr-1"
     role="toolbar"
     :aria-label="t('selection.count', { count: files.selected.length })"
   >
-    <span class="mr-3 text-15 font-medium leading-none">{{ t('selection.count', { count: files.selected.length }) }}</span>
+    <span class="mr-2 text-12 font-medium leading-none">{{ t('selection.count', { count: files.selected.length }) }}</span>
     <IconButton
       v-for="action in actions"
       :key="action.id"
       :label="t(`selection.${action.id}`)"
-      :size="36"
+      :size="28"
       class="text-text-2 hover:bg-primary-tint disabled:opacity-40 disabled:hover:bg-transparent"
       :disabled="action.disabled || !!action.hint"
       :disabled-hint="action.hint"
       @click="action.run?.()"
     >
-      <component :is="action.icon" :size="20" :fill="action.id === 'unstar' ? 'currentColor' : 'none'" />
+      <component :is="action.icon" :size="16" :fill="action.id === 'unstar' ? 'currentColor' : 'none'" />
     </IconButton>
-    <IconButton :label="t('selection.clear')" :size="36" class="ml-auto text-text-2 hover:bg-primary-tint" @click="files.clearSelection()">
-      <X :size="20" />
+    <IconButton :label="t('selection.clear')" :size="28" class="ml-auto text-text-2 hover:bg-primary-tint" @click="files.clearSelection()">
+      <X :size="16" />
     </IconButton>
   </div>
 </template>

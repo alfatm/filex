@@ -14,11 +14,11 @@ const emit = defineEmits<{ action: []; close: []; pause: []; resume: [] }>();
     @focusin="emit('pause')"
     @focusout="emit('resume')"
   >
-    <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ text }}</span>
+    <span class="min-w-0 flex-1 truncate-safe text-13 leading-none">{{ text }}</span>
     <button
       v-if="actionLabel"
       type="button"
-      class="ml-3 h-9 shrink-0 rounded-md px-3 text-15 font-medium leading-none text-primary hover:bg-primary-soft"
+      class="ml-3 h-9 shrink-0 rounded-md px-3 text-13 font-medium leading-none text-primary hover:bg-primary-soft"
       @click="emit('action')"
     >
       {{ actionLabel }}

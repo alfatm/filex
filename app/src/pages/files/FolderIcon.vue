@@ -2,8 +2,8 @@
 import { Users } from 'lucide-vue-next';
 
 withDefaults(defineProps<{ width?: number; height?: number; shared?: boolean }>(), {
-  width: 36,
-  height: 30,
+  width: 28,
+  height: 24,
   shared: false,
 });
 </script>

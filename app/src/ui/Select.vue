@@ -18,13 +18,13 @@ const model = defineModel<T>({ required: true });
 </script>
 
 <template>
-  <span class="relative flex h-10 items-center" :style="{ width: width ? `${width}px` : undefined }">
-    <component :is="icon" v-if="icon" :size="18" class="pointer-events-none absolute left-3 text-text-3" />
+  <span class="relative flex h-control-md items-center" :style="{ width: width ? `${width}px` : undefined }">
+    <component :is="icon" v-if="icon" :size="16" class="pointer-events-none absolute left-2.5 text-text-3" />
     <select
       v-model="model"
       :aria-label="label"
       class="h-full w-full appearance-none rounded-md border border-border bg-bg leading-none text-text focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
-      :class="[icon ? 'pl-[42px]' : dense ? 'pl-2.5' : 'pl-3', dense ? 'pr-6 text-14' : 'pr-9 text-15']"
+      :class="[icon ? 'pl-[38px]' : dense ? 'pl-2' : 'pl-2.5', dense ? 'pr-6 text-11.5' : 'pr-8 text-13']"
     >
       <option v-for="option in options" :key="option.value" :value="option.value" :disabled="option.disabled">{{ option.label }}</option>
     </select>

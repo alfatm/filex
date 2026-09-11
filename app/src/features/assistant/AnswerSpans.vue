@@ -60,7 +60,7 @@ async function open(address: string) {
   <template v-for="(span, at) in spans" :key="at">
     <strong v-if="span.kind === 'strong'" class="font-semibold">{{ span.text }}</strong>
     <em v-else-if="span.kind === 'em'">{{ span.text }}</em>
-    <code v-else-if="span.kind === 'code'" class="rounded-sm bg-bg px-1 font-code text-13">{{ span.text }}</code>
+    <code v-else-if="span.kind === 'code'" class="rounded-sm bg-bg px-1 font-code text-11">{{ span.text }}</code>
     <a
       v-else-if="span.kind === 'link'"
       :href="span.href"
@@ -77,7 +77,7 @@ async function open(address: string) {
     >
       {{ span.text }}
     </button>
-    <code v-else-if="span.kind === 'path'" class="break-all rounded-sm bg-bg px-1 font-code text-13">{{ span.text }}</code>
+    <code v-else-if="span.kind === 'path'" class="break-all rounded-sm bg-bg px-1 font-code text-11">{{ span.text }}</code>
     <template v-else>{{ span.text }}</template>
   </template>
 </template>

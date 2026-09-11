@@ -166,15 +166,15 @@ watch(() => [props.x, props.y], place);
         :aria-checked="item.checked"
         :aria-disabled="item.disabled || undefined"
         :title="item.disabled ? item.hint : undefined"
-        class="flex h-[38px] w-full items-center gap-3 rounded px-3 text-15 leading-none hover:bg-bg-muted focus:outline-none focus-visible:bg-bg-muted"
+        class="flex h-control-sm w-full items-center gap-2 rounded px-2.5 text-12 leading-none hover:bg-bg-muted focus:outline-none focus-visible:bg-bg-muted"
         :class="item.disabled ? 'cursor-default text-text-3' : item.danger ? 'text-danger' : 'text-text'"
         @click="onSelect(item)"
       >
         <!-- The column is reserved for every entry of a single-choice menu, so the labels stay on one line. -->
-        <span v-if="item.checked !== undefined" class="flex w-[18px] shrink-0 justify-center text-primary">
-          <Check v-if="item.checked" :size="16" :stroke-width="2.5" />
+        <span v-if="item.checked !== undefined" class="flex w-4 shrink-0 justify-center text-primary">
+          <Check v-if="item.checked" :size="14" :stroke-width="2.5" />
         </span>
-        <component :is="item.icon" v-if="item.icon" :size="18" class="shrink-0" />
+        <component :is="item.icon" v-if="item.icon" :size="16" class="shrink-0" />
         <span>{{ item.label }}</span>
       </button>
     </template>

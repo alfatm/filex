@@ -42,35 +42,35 @@ onMounted(() => files.openListing(props.listing));
 </script>
 
 <template>
-  <main class="min-w-0 flex-1 overflow-y-auto pb-8 pl-[29px] pr-3 pt-[18px]" @click="onMainClick" @contextmenu="onMainContextMenu">
-    <div class="flex h-[38px] items-center">
-      <h1 class="text-22 font-semibold leading-none">{{ title }}</h1>
+  <main class="min-w-0 flex-1 overflow-y-auto pb-6 pl-4 pr-3 pt-3" @click="onMainClick" @contextmenu="onMainContextMenu">
+    <div class="flex h-control-md items-center">
+      <h1 class="text-18 font-semibold leading-none">{{ title }}</h1>
     </div>
 
     <slot name="banner" />
 
-    <SelectionBar v-if="files.selected.length >= 2" class="-mb-[5px] mr-[9px] mt-[7px]" />
-    <div v-else class="mt-3 flex h-[38px] items-center gap-[10px]">
-      <div role="group" :aria-label="t('filter.title')" class="flex items-center gap-[10px]">
+    <SelectionBar v-if="files.selected.length >= 2" class="mr-[9px] mt-2" />
+    <div v-else class="mt-2 flex h-control-md items-center gap-2">
+      <div role="group" :aria-label="t('filter.title')" class="flex items-center gap-2">
         <FilterChip v-for="id in filters" :key="id" :id="id" />
       </div>
-      <SortControl v-if="sortable" variant="pill" class="ml-auto mr-[10px]" />
+      <SortControl v-if="sortable" variant="pill" class="ml-auto mr-2" />
       <!-- Same toggle as My files, in the same place: a row selected here describes a node like any other. -->
       <IconButton
         :label="t('files.details')"
         variant="outline"
         :active="view.detailsOpen"
-        class="!w-11"
+        class="!w-control-lg"
         :class="sortable ? '' : 'ml-auto'"
         @click="view.togglePanel('details')"
       >
-        <Info :size="20" />
+        <Info :size="16" />
       </IconButton>
     </div>
 
-    <ListingSkeleton v-if="files.loading && !files.ordered.length" class="mr-[9px] mt-[22px]" />
+    <ListingSkeleton v-if="files.loading && !files.ordered.length" class="mr-[9px] mt-3" />
 
-    <div v-else-if="files.ordered.length" class="mr-[9px] mt-[22px]">
+    <div v-else-if="files.ordered.length" class="mr-[9px] mt-3">
       <FileTable
         tabindex="0"
         :aria-activedescendant="activeDescendant"
@@ -80,13 +80,13 @@ onMounted(() => files.openListing(props.listing));
         @open="open"
       />
     </div>
-    <EmptyState v-else-if="files.error" class="mt-24" :icon="AlertTriangle" :title="t(`error.${files.error}.title`)" :hint="t(`error.${files.error}.hint`)">
+    <EmptyState v-else-if="files.error" class="mt-16" :icon="AlertTriangle" :title="t(`error.${files.error}.title`)" :hint="t(`error.${files.error}.hint`)">
       <Button variant="outline" @click="files.retry()">{{ t('error.retry') }}</Button>
     </EmptyState>
 
     <EmptyState
       v-else-if="files.listing?.kind === listing"
-      class="mt-24"
+      class="mt-16"
       :icon="files.filtered ? Filter : emptyIcon"
       :title="files.filtered ? t('empty.filtered.title') : emptyTitle"
       :hint="files.filtered ? t('empty.filtered.hint') : emptyHint"

@@ -184,7 +184,7 @@ const failed = ref(false);
       </span>
       <span
         v-if="duration"
-        class="absolute bottom-2 right-2 rounded-sm px-1.5 py-0.5 text-12 font-medium leading-none text-white"
+        class="absolute bottom-2 right-2 rounded-sm px-1.5 py-0.5 text-10 font-medium leading-none text-white"
         style="background: rgba(0, 0, 0, 0.65)"
         >{{ duration }}</span>
     </div>

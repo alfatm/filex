@@ -36,7 +36,7 @@ async function confirm() {
 
 <template>
   <Modal :title="t(`modal.delete.${variant}.title`)" :close-label="t('modal.cancel')" @close="emit('close')">
-    <p class="text-15 leading-[22px] text-text-2">{{ body }}</p>
+    <p class="text-13 leading-[22px] text-text-2">{{ body }}</p>
     <template #footer>
       <Button variant="outline" @click="emit('close')">{{ t('modal.cancel') }}</Button>
       <Button :class="variant !== 'trash' && '!bg-danger hover:!bg-danger hover:brightness-95'" @click="confirm">

@@ -193,7 +193,7 @@ async function revoke(person: Person) {
 
 <template>
   <Modal :title="t('modal.access.title')" :close-label="t('modal.close')" :width="560" :initial-focus="input?.el" @close="emit('close')">
-    <p class="text-14 leading-tight text-text-3">{{ t('modal.access.hint', { name: node.name }) }}</p>
+    <p class="text-11.5 leading-tight text-text-3">{{ t('modal.access.hint', { name: node.name }) }}</p>
 
     <template v-if="canManage">
       <!-- A grant goes to a person or to a group; the toggle says which the box below is naming. -->
@@ -221,8 +221,8 @@ async function revoke(person: Person) {
               <li v-for="option in groupResults" :key="option.id">
                 <button type="button" class="flex w-full items-center px-3 py-2 text-left hover:bg-hover-row" @click="pickGroup(option)">
                   <Users :size="18" class="shrink-0 text-text-2" />
-                  <span class="ml-2.5 min-w-0 flex-1 truncate-safe text-15 leading-none">{{ option.name }}</span>
-                  <span class="ml-3 shrink-0 text-13 leading-none text-text-3">{{ t('modal.access.members', { count: option.memberCount }, option.memberCount) }}</span>
+                  <span class="ml-2.5 min-w-0 flex-1 truncate-safe text-13 leading-none">{{ option.name }}</span>
+                  <span class="ml-3 shrink-0 text-11 leading-none text-text-3">{{ t('modal.access.members', { count: option.memberCount }, option.memberCount) }}</span>
                 </button>
               </li>
             </ul>
@@ -236,9 +236,9 @@ async function revoke(person: Person) {
     <!-- No account behind that address, so filex minted a public link instead. It is a different thing from a
          grant, and the only place the link is ever shown. -->
     <div v-if="sharedLink" class="mt-4 rounded-md border border-border bg-bg-muted p-3" role="status">
-      <p class="text-14 leading-tight text-text-2">{{ t('modal.access.sharedInstead') }}</p>
+      <p class="text-11.5 leading-tight text-text-2">{{ t('modal.access.sharedInstead') }}</p>
       <div class="mt-2 flex items-center">
-        <p class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ sharedLink }}</p>
+        <p class="min-w-0 flex-1 truncate-safe text-13 leading-none">{{ sharedLink }}</p>
         <IconButton :label="t('panel.copy')" :size="36" class="ml-2 text-text-2" @click="actions.copyLink(sharedLink)">
           <Copy :size="18" />
         </IconButton>
@@ -253,14 +253,14 @@ async function revoke(person: Person) {
         </span>
         <Avatar v-else :initial="person.initial" />
         <div class="ml-3 min-w-0 flex-1">
-          <p class="truncate-safe text-15 leading-none">{{ person.id === files.user?.id ? t('panel.you') : person.name }}</p>
-          <p class="mt-1.5 truncate-safe text-13 leading-none text-text-3">
+          <p class="truncate-safe text-13 leading-none">{{ person.id === files.user?.id ? t('panel.you') : person.name }}</p>
+          <p class="mt-1.5 truncate-safe text-11 leading-none text-text-3">
             {{ person.principal === 'group' ? t('modal.access.members', { count: person.memberCount ?? 0 }, person.memberCount ?? 0) : person.id }}
           </p>
         </div>
         <!-- The owner's role is not a permission anyone can hand out, so that row is read-only — and for a caller
              who may not manage the list at all, every row is. -->
-        <span v-if="!canManage || person.role === 'owner'" class="ml-3 text-15 leading-none text-text-3">{{ t(`panel.role.${person.role}`) }}</span>
+        <span v-if="!canManage || person.role === 'owner'" class="ml-3 text-13 leading-none text-text-3">{{ t(`panel.role.${person.role}`) }}</span>
         <template v-else>
           <Select
             :model-value="person.role"
@@ -276,7 +276,7 @@ async function revoke(person: Person) {
         </template>
       </li>
     </ul>
-    <p v-if="error" class="mt-3 text-13 leading-none text-danger" role="alert">{{ error }}</p>
+    <p v-if="error" class="mt-3 text-11 leading-none text-danger" role="alert">{{ error }}</p>
 
     <template #footer>
       <Button variant="outline" @click="emit('close')">{{ t('modal.done') }}</Button>

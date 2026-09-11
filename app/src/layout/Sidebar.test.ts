@@ -57,7 +57,7 @@ describe('Sidebar storages', () => {
   });
 
   // The home drive is "My files"; listing it under Storages made it look like one more mount to pick.
-  it('keeps the home drive off the list and names it as the home in the quota block', async () => {
+  it('keeps the home drive off the list', async () => {
     const { files, wrapper } = await mountSidebar();
     files.storages = [
       { id: 'main', name: 'main', rootId: 'main://', quota: noQuota(), shared: false, viaGroups: [] },
@@ -67,7 +67,6 @@ describe('Sidebar storages', () => {
 
     const rows = wrapper.findAll('a').filter((a) => ['main', 'demo'].includes(a.text()));
     expect(rows.map((a) => a.text())).toEqual(['demo']);
-    expect(wrapper.text()).toContain('main — home folder');
 
     // With nothing but the home drive there is no section to head.
     files.storages = files.storages.slice(0, 1);
@@ -119,26 +118,6 @@ describe('Sidebar storages', () => {
     await files.openPath('archive', '');
     await nextTick();
     expect(activeRows(wrapper)).toEqual(['archive']);
-    wrapper.unmount();
-  });
-
-  /**
-   * The highlight was moved off the `main` constant onto the store's `homeStorageId`; the quota-block label was
-   * not, so on a dataset with no drive called `main` the home drive got no "home folder" label at all.
-   */
-  it('names the home drive as the home in the quota block whatever it is called', async () => {
-    const { files, wrapper } = await mountSidebar();
-    files.storages = [drive('demo'), drive('archive')];
-    await wrapper.vm.$router.push('/files/demo');
-    await files.openPath('demo', '');
-    await nextTick();
-    expect(wrapper.text()).toContain('demo — home folder');
-
-    // A drive that is not the home one is named plainly.
-    await wrapper.vm.$router.push('/files/archive');
-    await files.openPath('archive', '');
-    await nextTick();
-    expect(wrapper.text()).not.toContain('archive — home folder');
     wrapper.unmount();
   });
 

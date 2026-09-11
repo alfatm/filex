@@ -97,16 +97,16 @@ const rows = computed(() => {
       <FileTypeTile v-else :type="row.fileType" :size="THUMB_PX" class="!rounded-lg" />
 
       <span class="min-w-0 flex-1">
-        <span class="block truncate text-14 font-medium leading-snug text-text" :title="row.item.path">{{ row.name }}</span>
-        <span class="block break-words text-13 leading-snug text-text-3">{{ row.detail }}</span>
+        <span class="block truncate text-11.5 font-medium leading-snug text-text" :title="row.item.path">{{ row.name }}</span>
+        <span class="block break-words text-11 leading-snug text-text-3">{{ row.detail }}</span>
         <!--
           The one plan that hands something back. The URL is the whole point of approving it, so it is
           shown in full and selectable rather than behind a "copy" button that a screen reader has to
           guess at. Not an anchor: it is a credential to hand on, not a place this panel should navigate.
         -->
         <span v-if="row.url" class="mt-1 flex items-start gap-2">
-          <code class="min-w-0 flex-1 select-all break-all font-code text-12 text-text">{{ row.url }}</code>
-          <button type="button" class="shrink-0 text-13 text-primary hover:underline" @click="copyLink(row.url)">
+          <code class="min-w-0 flex-1 select-all break-all font-code text-10 text-text">{{ row.url }}</code>
+          <button type="button" class="shrink-0 text-11 text-primary hover:underline" @click="copyLink(row.url)">
             {{ t('assistant.plan.copyLink') }}
           </button>
         </span>
@@ -116,5 +116,5 @@ const rows = computed(() => {
       <CircleCheck v-else :size="20" class="shrink-0" :class="row.state === 'done' ? 'text-success' : 'text-border-hover'" aria-hidden="true" />
     </li>
   </ul>
-  <p v-if="card.status === 'done'" class="mt-3 text-13 leading-none text-success">{{ t('assistant.plan.ran') }}</p>
+  <p v-if="card.status === 'done'" class="mt-3 text-11 leading-none text-success">{{ t('assistant.plan.ran') }}</p>
 </template>

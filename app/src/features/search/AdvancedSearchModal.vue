@@ -155,8 +155,8 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
             <Search :size="18" />
           </span>
           <div class="ml-3.5">
-            <DialogTitle class="text-20 font-semibold leading-none">{{ t('search.title') }}</DialogTitle>
-            <p class="mt-1 text-14 leading-[21px] text-text-3">{{ t('search.subtitle') }}</p>
+            <DialogTitle class="text-17 font-semibold leading-none">{{ t('search.title') }}</DialogTitle>
+            <p class="mt-1 text-11.5 leading-[21px] text-text-3">{{ t('search.subtitle') }}</p>
           </div>
           <IconButton :label="t('search.close')" class="ml-auto -mr-2 -mt-2 self-start" @click="cancel">
             <X :size="22" />
@@ -189,7 +189,7 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
             role="radio"
             :aria-checked="query.scope === scope"
             :tabindex="query.scope === scope ? 0 : -1"
-            class="flex flex-1 items-center justify-center gap-2 rounded text-15 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+            class="flex flex-1 items-center justify-center gap-2 rounded text-13 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
             :class="query.scope === scope ? 'bg-primary-soft text-primary' : 'text-text-2 hover:text-text'"
             @click="query.scope = scope"
           >
@@ -202,7 +202,7 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
           <!-- Left column -->
           <div class="flex flex-col gap-[18px]">
             <section>
-              <h3 :id="searchInId" class="flex h-5 items-center gap-1.5 text-15 font-semibold leading-none">
+              <h3 :id="searchInId" class="flex h-5 items-center gap-1.5 text-13 font-semibold leading-none">
                 {{ t('search.searchIn') }}
                 <HelpCircle :size="14" class="text-text-3" :aria-label="t('search.searchInHelp')" role="img">
                   <title>{{ t('search.searchInHelp') }}</title>
@@ -219,21 +219,21 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
               </div>
             </section>
             <section>
-              <h3 class="flex h-5 items-center text-15 font-semibold leading-none">{{ t('search.modified') }}</h3>
+              <h3 class="flex h-5 items-center text-13 font-semibold leading-none">{{ t('search.modified') }}</h3>
               <Select v-model="query.modified" class="mt-2" :options="modifiedOptions" :icon="Calendar" :label="t('search.modified')" />
             </section>
             <section>
-              <h3 class="flex h-5 items-center text-15 font-semibold leading-none">{{ t('search.fileType') }}</h3>
+              <h3 class="flex h-5 items-center text-13 font-semibold leading-none">{{ t('search.fileType') }}</h3>
               <Select v-model="query.fileType" class="mt-2" :options="typeOptions" :icon="File" :label="t('search.fileType')" />
             </section>
             <section>
-              <h3 class="flex h-5 items-center text-15 font-semibold leading-none">{{ t('search.tags') }}</h3>
+              <h3 class="flex h-5 items-center text-13 font-semibold leading-none">{{ t('search.tags') }}</h3>
               <Input v-model="tagDraft" class="mt-2" :placeholder="t('search.tagsPlaceholder')" :label="t('search.tags')" @enter="addTag" />
               <ul v-if="query.tags.length" class="mt-2 flex flex-wrap gap-2">
                 <li
                   v-for="tag in query.tags"
                   :key="tag"
-                  class="flex h-7 items-center gap-1 rounded-full bg-primary-soft pl-3 pr-2 text-14 leading-none text-primary"
+                  class="flex h-7 items-center gap-1 rounded-full bg-primary-soft pl-3 pr-2 text-11.5 leading-none text-primary"
                 >
                   <span>{{ tag }}</span>
                   <button type="button" class="flex h-4 w-4 items-center justify-center rounded-full hover:bg-white/60" :aria-label="t('search.removeTag', { tag })" @click="removeTag(tag)">
@@ -247,31 +247,31 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
           <!-- Right column -->
           <div class="flex flex-col gap-[18px]">
             <section>
-              <h3 class="flex h-5 items-center text-15 font-semibold leading-none">{{ t('search.owner') }}</h3>
+              <h3 class="flex h-5 items-center text-13 font-semibold leading-none">{{ t('search.owner') }}</h3>
               <Select v-model="owner" class="mt-2" :options="ownerOptions" :icon="User" :label="t('search.owner')" />
             </section>
             <section>
-              <h3 class="flex h-5 items-center text-15 font-semibold leading-none">{{ t('search.sizeRange') }}</h3>
+              <h3 class="flex h-5 items-center text-13 font-semibold leading-none">{{ t('search.sizeRange') }}</h3>
               <div class="mt-2 flex items-center gap-1.5">
                 <Select v-model="query.size.preset" :options="sizeOptions" :width="94" dense :label="t('search.sizeRange')" />
                 <Input v-model="sizeMin" type="number" :width="64" :placeholder="t('search.min')" :label="t('search.min')" @enter="submit" />
-                <span class="text-15 leading-none text-text-3">–</span>
+                <span class="text-13 leading-none text-text-3">–</span>
                 <Input v-model="sizeMax" type="number" :width="64" :placeholder="t('search.max')" :label="t('search.max')" @enter="submit" />
                 <Select v-model="query.size.unit" :options="unitOptions" :width="62" dense :label="t('search.unit')" />
               </div>
             </section>
             <section>
-              <h3 class="flex h-5 items-center gap-1.5 text-15 font-semibold leading-none">
+              <h3 class="flex h-5 items-center gap-1.5 text-13 font-semibold leading-none">
                 {{ t('search.path') }}
                 <HelpCircle :size="14" class="text-text-3" :aria-label="t('search.pathHelp')" role="img">
                   <title>{{ t('search.pathHelp') }}</title>
                 </HelpCircle>
               </h3>
               <Input v-model="query.path" class="mt-2" :placeholder="t('search.pathHint')" :label="t('search.path')" @enter="submit" />
-              <p class="mt-1 text-13 leading-none text-text-3">{{ t('search.pathHint') }}</p>
+              <p class="mt-1 text-11 leading-none text-text-3">{{ t('search.pathHint') }}</p>
             </section>
             <section>
-              <h3 class="flex h-5 items-center gap-2 text-15 font-semibold leading-none">
+              <h3 class="flex h-5 items-center gap-2 text-13 font-semibold leading-none">
                 <FileText :size="18" class="text-text-2" />
                 {{ t('search.contentOptions') }}
               </h3>
@@ -285,27 +285,27 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
         <div class="mt-3 h-px bg-border" />
 
         <div class="mt-[14px] flex h-[26px] items-center justify-between">
-          <h3 class="text-17 font-semibold leading-none" aria-live="polite">{{ t(store.capped ? 'search.matchingMore' : 'search.matching', store.total) }}</h3>
-          <button type="button" class="text-14 leading-none text-primary hover:underline" @click="submit">{{ t('search.viewAll') }}</button>
+          <h3 class="text-13 font-semibold leading-none" aria-live="polite">{{ t(store.capped ? 'search.matchingMore' : 'search.matching', store.total) }}</h3>
+          <button type="button" class="text-11.5 leading-none text-primary hover:underline" @click="submit">{{ t('search.viewAll') }}</button>
         </div>
 
         <ul class="mt-2" :aria-busy="store.loading">
           <li v-for="hit in liveHits" :key="hit.node.id" class="flex h-9 items-center leading-none">
             <span class="flex w-6 shrink-0 justify-center"><HitIcon :node="hit.node" :size="24" /></span>
-            <span class="ml-[26px] min-w-[72px] truncate text-15 font-medium">{{ hit.node.name }}</span>
-            <span class="ml-2 shrink-0 text-13 text-text-3">{{ hitFolderLabel(hit, files.storages) }}</span>
-            <span class="min-w-0 flex-1 truncate px-4 text-center text-13 text-text-3">
+            <span class="ml-[26px] min-w-[72px] truncate text-13 font-medium">{{ hit.node.name }}</span>
+            <span class="ml-2 shrink-0 text-11 text-text-3">{{ hitFolderLabel(hit, files.storages) }}</span>
+            <span class="min-w-0 flex-1 truncate px-4 text-center text-11 text-text-3">
               <Snippet v-if="hit.snippet" :text="hit.snippet.text" :ranges="hit.snippet.ranges" />
             </span>
-            <span class="shrink-0 text-13 text-text-3">
+            <span class="shrink-0 text-11 text-text-3">
               {{ hit.node.kind === 'folder' ? t('search.updated', { date: formatDate(hit.node.modifiedAt) }) : formatDate(hit.node.modifiedAt) }}
             </span>
-            <span class="ml-4 w-14 shrink-0 text-right text-13">
+            <span class="ml-4 w-14 shrink-0 text-right text-11">
               {{ hit.node.kind === 'folder' ? (hit.node.itemCount === undefined ? t('type.folder') : t('files.items', hit.node.itemCount)) : formatSize(hit.node.size) }}
             </span>
           </li>
-          <li v-if="store.failed" class="flex h-9 items-center text-15 text-danger" role="alert">{{ t('search.failed') }}</li>
-          <li v-else-if="!liveHits.length && !store.loading" class="flex h-9 items-center text-15 text-text-3">{{ t('search.noResults') }}</li>
+          <li v-if="store.failed" class="flex h-9 items-center text-13 text-danger" role="alert">{{ t('search.failed') }}</li>
+          <li v-else-if="!liveHits.length && !store.loading" class="flex h-9 items-center text-13 text-text-3">{{ t('search.noResults') }}</li>
         </ul>
 
         <div class="mt-[25px] flex items-center">

@@ -130,14 +130,14 @@ function startOidc() {
         </div>
 
         <h1 class="mt-8 text-center text-[32px] font-bold leading-none tracking-tight">{{ t('login.title') }}</h1>
-        <p class="mt-3 text-center text-16 text-text-2">{{ t('login.subtitle', { app: branding.name || t('app.name') }) }}</p>
+        <p class="mt-3 text-center text-13 text-text-2">{{ t('login.subtitle', { app: branding.name || t('app.name') }) }}</p>
 
-        <p v-if="leaving" class="mt-8 text-center text-15 text-text-2">{{ t('login.redirecting') }}</p>
+        <p v-if="leaving" class="mt-8 text-center text-13 text-text-2">{{ t('login.redirecting') }}</p>
 
         <!-- A real element and not a <template>: the hand-off flips this whole block away mid-render, and Vue's
              fragment removal needs an anchor that survives it. -->
         <div v-else>
-          <p v-if="error" role="alert" class="mt-8 rounded-md border border-danger bg-bg-muted px-4 py-3 text-15 text-danger">{{ error }}</p>
+          <p v-if="error" role="alert" class="mt-8 rounded-md border border-danger bg-bg-muted px-4 py-3 text-13 text-danger">{{ error }}</p>
 
           <!-- SSO leads whenever the installation has a provider: it is the path most of those accounts must take. -->
           <Button v-if="oidcOffered" size="lg" class="mt-8 w-full" @click="startOidc">
@@ -147,12 +147,12 @@ function startOidc() {
 
           <div v-if="oidcOffered && showLocalForm" class="my-6 flex items-center gap-3">
             <span class="h-px flex-1 bg-border" />
-            <span class="text-13 uppercase tracking-wide text-text-3">{{ t('login.or') }}</span>
+            <span class="text-11 uppercase tracking-wide text-text-3">{{ t('login.or') }}</span>
             <span class="h-px flex-1 bg-border" />
           </div>
 
           <form v-if="showLocalForm" class="mt-8" @submit.prevent="submit">
-            <label class="block text-14 font-semibold text-text-2" for="login-identifier">{{ t('login.identifier') }}</label>
+            <label class="block text-11.5 font-semibold text-text-2" for="login-identifier">{{ t('login.identifier') }}</label>
             <label for="login-identifier" class="mt-2 flex h-[60px] cursor-text items-center rounded-lg border border-border bg-bg-muted px-5 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary">
               <Mail :size="20" class="shrink-0 text-text-3" />
               <input
@@ -161,11 +161,11 @@ function startOidc() {
                 type="text"
                 autocomplete="username"
                 required
-                class="ml-4 min-w-0 flex-1 bg-transparent text-16 text-text placeholder:text-text-3 focus:outline-none"
+                class="ml-4 min-w-0 flex-1 bg-transparent text-13 text-text placeholder:text-text-3 focus:outline-none"
               />
             </label>
 
-            <label class="mt-6 block text-14 font-semibold text-text-2" for="login-password">{{ t('login.password') }}</label>
+            <label class="mt-6 block text-11.5 font-semibold text-text-2" for="login-password">{{ t('login.password') }}</label>
             <div class="mt-2 flex h-[60px] items-center rounded-lg border border-border bg-bg-muted px-5 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary">
               <!-- The row is the target, not the text: everything but the eye is inside the label. It stops there
                    because a <button> inside a <label> is a labelable element that is not the label's control. -->
@@ -177,7 +177,7 @@ function startOidc() {
                   :type="showPassword ? 'text' : 'password'"
                   autocomplete="current-password"
                   required
-                  class="mx-4 min-w-0 flex-1 bg-transparent text-16 text-text placeholder:text-text-3 focus:outline-none"
+                  class="mx-4 min-w-0 flex-1 bg-transparent text-13 text-text placeholder:text-text-3 focus:outline-none"
                 />
               </label>
               <button
@@ -196,7 +196,7 @@ function startOidc() {
             <div class="mt-3 text-right">
               <button
                 type="button"
-                class="rounded-sm text-15 text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                class="rounded-sm text-13 text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
                 @click="showTotp = !showTotp"
               >
                 {{ showTotp ? t('login.hideTotp') : t('login.useTotp') }}
@@ -204,7 +204,7 @@ function startOidc() {
             </div>
 
             <template v-if="showTotp">
-              <label class="mt-3 block text-14 font-semibold text-text-2" for="login-totp">{{ t('login.totp') }}</label>
+              <label class="mt-3 block text-11.5 font-semibold text-text-2" for="login-totp">{{ t('login.totp') }}</label>
               <label for="login-totp" class="mt-2 flex h-[60px] cursor-text items-center rounded-lg border border-border bg-bg-muted px-5 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary">
                 <input
                   id="login-totp"
@@ -213,14 +213,14 @@ function startOidc() {
                   inputmode="numeric"
                   autocomplete="one-time-code"
                   placeholder="123456"
-                  class="min-w-0 flex-1 bg-transparent text-16 text-text placeholder:text-text-3 focus:outline-none"
+                  class="min-w-0 flex-1 bg-transparent text-13 text-text placeholder:text-text-3 focus:outline-none"
                 />
               </label>
             </template>
 
-            <Checkbox v-model="remember" show-label :label="t('login.remember')" class="mt-6 !text-16" />
+            <Checkbox v-model="remember" show-label :label="t('login.remember')" class="mt-6 !text-13" />
 
-            <Button type="submit" size="lg" class="mt-6 h-[60px] w-full text-16" :disabled="auth.pending">
+            <Button type="submit" size="lg" class="mt-6 h-[60px] w-full text-13" :disabled="auth.pending">
               <Lock :size="18" />
               {{ t('login.submit') }}
             </Button>
@@ -230,17 +230,17 @@ function startOidc() {
           <div v-if="localOffered && autoRedirect && !wantLocal" class="mt-6 text-center">
             <RouterLink
               :to="{ name: 'login', query: { ...route.query, local: '1' } }"
-              class="text-14 text-text-3 underline-offset-2 hover:text-text hover:underline"
+              class="text-11.5 text-text-3 underline-offset-2 hover:text-text hover:underline"
             >
               {{ t('login.local') }}
             </RouterLink>
           </div>
 
-          <p v-if="!localOffered && !oidcOffered" class="mt-8 text-center text-15 text-danger">{{ t('login.errNoRealm') }}</p>
+          <p v-if="!localOffered && !oidcOffered" class="mt-8 text-center text-13 text-danger">{{ t('login.errNoRealm') }}</p>
         </div>
       </div>
 
-      <p v-if="options.version" class="mt-6 flex items-center justify-center gap-2 text-14 text-text-3">
+      <p v-if="options.version" class="mt-6 flex items-center justify-center gap-2 text-11.5 text-text-3">
         <Box :size="16" />
         {{ t('app.name') }} v{{ options.version }}
       </p>

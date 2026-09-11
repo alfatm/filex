@@ -101,6 +101,8 @@ export function hitFolderLabel(hit: SearchHit, storages: Storage[]): string {
 }
 
 export const useSearchStore = defineStore('search', () => {
+  // Only the newest request may publish; a slower one that resolves later must not overwrite it.
+  let seq = 0;
   const open = ref(false);
   const query = reactive<SearchQuery>(emptyQuery());
   const hits = ref<SearchHit[]>([]);
@@ -123,6 +125,20 @@ export const useSearchStore = defineStore('search', () => {
   }
 
   /**
+   * Drops the results without running anything: an empty query has nothing to ask the server, and the previous
+   * answer must not stay on screen behind it. Bumping `seq` disowns a run still in flight, which would otherwise
+   * publish its hits into the cleared page.
+   */
+  function clearResults() {
+    seq += 1;
+    hits.value = [];
+    total.value = 0;
+    capped.value = false;
+    failed.value = false;
+    loading.value = false;
+  }
+
+  /**
    * Opens the modal; `text` prefills the query field (from the topbar box) and `folderPath` the
    * current-folder scope (from the files route). Both are set before `open` flips so the modal's
    * first run sees the final form.
@@ -137,8 +153,6 @@ export const useSearchStore = defineStore('search', () => {
     open.value = false;
   }
 
-  // Only the newest request may publish; a slower one that resolves later must not overwrite it.
-  let seq = 0;
   async function run() {
     const id = ++seq;
     loading.value = true;
@@ -163,5 +177,5 @@ export const useSearchStore = defineStore('search', () => {
     }
   }
 
-  return { open, query, hits, total, capped, loading, failed, assign, reset, openModal, close, run };
+  return { open, query, hits, total, capped, loading, failed, assign, reset, clearResults, openModal, close, run };
 });

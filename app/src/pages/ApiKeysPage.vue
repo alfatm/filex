@@ -17,9 +17,9 @@ const config = useCoreConfig();
 </script>
 
 <template>
-  <main class="min-w-0 flex-1 overflow-y-auto pb-8 pl-[29px] pr-8 pt-[18px]">
-    <h1 class="pl-[11px] text-22 font-semibold leading-none">{{ t('nav.apiKeys') }}</h1>
-    <div class="mt-[22px] pl-[11px]">
+  <main class="min-w-0 flex-1 overflow-y-auto pb-6 pl-4 pr-6 pt-3">
+    <h1 class="pl-[11px] text-18 font-semibold leading-none">{{ t('nav.apiKeys') }}</h1>
+    <div class="mt-3 pl-2">
       <TokensPanel :config="config" full />
     </div>
   </main>

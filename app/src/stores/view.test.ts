@@ -43,8 +43,9 @@ describe('view store persistence', () => {
       sortKey: 'modified',
       sortDir: 'asc',
       sidebarCollapsed: false,
+      sidebarWidth: 192,
       assistantWidth: 432,
-      detailsWidth: 364,
+      detailsWidth: 256,
       assistantOpen: false,
     });
   });
@@ -93,12 +94,26 @@ describe('view store persistence', () => {
     setActivePinia(createPinia());
     localStorage.setItem(KEY, JSON.stringify({ detailsWidth: null }));
     const view = useViewStore();
-    expect(view.detailsWidth).toBe(364);
+    expect(view.detailsWidth).toBe(256);
     view.setDetailsWidth(100);
-    expect(view.detailsWidth).toBe(320);
+    expect(view.detailsWidth).toBe(230);
     view.setDetailsWidth(400.6);
     await nextTick();
     expect(JSON.parse(backing.get(KEY) ?? '{}').detailsWidth).toBe(401);
+  });
+
+  it('clamps the sidebar width on load and on set, and persists it', async () => {
+    localStorage.setItem(KEY, JSON.stringify({ sidebarWidth: 9000 }));
+    expect(useViewStore().sidebarWidth).toBe(400);
+    setActivePinia(createPinia());
+    localStorage.setItem(KEY, JSON.stringify({ sidebarWidth: 'wide' }));
+    const view = useViewStore();
+    expect(view.sidebarWidth).toBe(192);
+    view.setSidebarWidth(100);
+    expect(view.sidebarWidth).toBe(160);
+    view.setSidebarWidth(250.6);
+    await nextTick();
+    expect(JSON.parse(backing.get(KEY) ?? '{}').sidebarWidth).toBe(251);
   });
 
   it('toggles the two right panels independently', () => {

@@ -1,8 +1,8 @@
 import type { ListingFilter } from '@/data/types';
 
-/** Filter chips above the listings (spec §3): pill widths at the reference size, before a value is chosen. */
+/** Filter chips above the listings (spec §3): chip widths at the reference size, before a value is chosen. */
 export type FilterId = 'type' | 'people' | 'modified' | 'size';
-export const FILTER_WIDTHS: Record<FilterId, number> = { type: 94, people: 106, modified: 120, size: 92 };
+export const FILTER_WIDTHS: Record<FilterId, number> = { type: 76, people: 86, modified: 96, size: 74 };
 
 export function emptyFilter(): ListingFilter {
   return { fileType: 'any', modified: 'any', size: 'any', personId: null, name: '' };

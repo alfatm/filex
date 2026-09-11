@@ -47,7 +47,7 @@ const storageId = ref(source);
 const storageOptions = computed(() =>
   files.storages.map((s) => ({
     value: s.id,
-    label: s.id === files.homeStorageId ? t('storage.home', { name: s.name }) : s.name,
+    label: s.name,
     disabled: copying.value && !(sourceDrives.size === 1 && sourceDrives.has(s.id)),
   })),
 );
@@ -254,7 +254,7 @@ async function submit() {
       <Select v-model="storageId" :options="storageOptions" :icon="HardDrive" :width="200" :label="t('modal.destination.storage')" />
       <Input v-model="filter" type="search" :icon="Search" class="flex-1" :placeholder="t('modal.destination.filter')" :label="t('modal.destination.filter')" />
     </div>
-    <p v-if="copying && storageOptions.length > 1" class="mt-2 text-13 text-text-3">{{ t('modal.destination.crossDrive') }}</p>
+    <p v-if="copying && storageOptions.length > 1" class="mt-2 text-11 text-text-3">{{ t('modal.destination.crossDrive') }}</p>
     <ul role="listbox" :aria-label="t('modal.destination.folder')" class="mt-3 max-h-[320px] overflow-y-auto rounded-md border border-border py-1">
       <!--
         The chevron is a control now, not decoration: the tree is loaded a level at a time, so opening a folder is
@@ -286,18 +286,18 @@ async function submit() {
           role="option"
           :aria-selected="targetId === row.node.id"
           :disabled="row.disabled"
-          class="flex h-10 min-w-0 flex-1 items-center pl-1 pr-3 text-left text-15 leading-none disabled:text-text-3"
+          class="flex h-10 min-w-0 flex-1 items-center pl-1 pr-3 text-left text-13 leading-none disabled:text-text-3"
           @click="targetId = row.node.id"
         >
           <FolderIcon :width="24" :height="20" :shared="row.node.shared" class="mr-3 shrink-0" />
           <span class="truncate">{{ row.node.name }}</span>
-          <span v-if="row.location" class="ml-3 truncate text-13 text-text-3">{{ row.location }}</span>
+          <span v-if="row.location" class="ml-3 truncate text-11 text-text-3">{{ row.location }}</span>
         </button>
       </li>
-      <li v-if="searching" class="px-3 py-6 text-center text-15 text-text-3">{{ t('modal.destination.searching') }}</li>
-      <li v-else-if="!rows.length && !error" class="px-3 py-6 text-center text-15 text-text-3">{{ t('modal.destination.noMatch') }}</li>
+      <li v-if="searching" class="px-3 py-6 text-center text-13 text-text-3">{{ t('modal.destination.searching') }}</li>
+      <li v-else-if="!rows.length && !error" class="px-3 py-6 text-center text-13 text-text-3">{{ t('modal.destination.noMatch') }}</li>
     </ul>
-    <p v-if="error" class="mt-2 text-13 leading-none text-danger" role="alert">{{ error }}</p>
+    <p v-if="error" class="mt-2 text-11 leading-none text-danger" role="alert">{{ error }}</p>
     <template #footer>
       <Button variant="outline" @click="emit('close')">{{ t('modal.cancel') }}</Button>
       <Button :disabled="!target" class="disabled:opacity-50" @click="submit">{{ t(copying ? 'modal.destination.copyConfirm' : 'modal.destination.moveConfirm') }}</Button>

@@ -69,7 +69,7 @@ async function submit() {
 
 <template>
   <Modal :title="t('modal.tags.title')" :close-label="t('modal.close')" :initial-focus="input?.el" @close="emit('close')">
-    <p class="text-14 leading-tight text-text-3">{{ t('modal.tags.hint') }}</p>
+    <p class="text-11.5 leading-tight text-text-3">{{ t('modal.tags.hint') }}</p>
     <Input
       ref="input"
       v-model="draft"
@@ -80,7 +80,7 @@ async function submit() {
       @enter="add"
     />
     <ul v-if="tags.length" class="mt-3 flex flex-wrap gap-2" :aria-label="t('modal.tags.title')">
-      <li v-for="tag in tags" :key="tag" class="flex h-7 items-center gap-1 rounded-full bg-primary-soft pl-3 pr-2 text-14 leading-none text-primary">
+      <li v-for="tag in tags" :key="tag" class="flex h-7 items-center gap-1 rounded-full bg-primary-soft pl-3 pr-2 text-11.5 leading-none text-primary">
         <span>{{ tag }}</span>
         <button
           type="button"
@@ -92,8 +92,8 @@ async function submit() {
         </button>
       </li>
     </ul>
-    <p v-else class="mt-3 text-14 leading-none text-text-3">{{ t('modal.tags.empty') }}</p>
-    <p v-if="error" class="mt-3 text-13 leading-none text-danger" role="alert">{{ error }}</p>
+    <p v-else class="mt-3 text-11.5 leading-none text-text-3">{{ t('modal.tags.empty') }}</p>
+    <p v-if="error" class="mt-3 text-11 leading-none text-danger" role="alert">{{ error }}</p>
 
     <template #footer>
       <Button variant="outline" @click="emit('close')">{{ t('modal.cancel') }}</Button>

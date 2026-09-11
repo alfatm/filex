@@ -119,7 +119,7 @@ async function openSubfolders(event: MouseEvent) {
       v-if="editing"
       ref="box"
       v-model="draft"
-      :height="40"
+      :height="34"
       class="min-w-0 flex-1"
       :label="t('files.breadcrumbPath')"
       :placeholder="t('files.breadcrumbPath')"
@@ -129,25 +129,25 @@ async function openSubfolders(event: MouseEvent) {
     />
 
     <template v-else>
-      <IconButton :label="t('files.breadcrumbHome')" class="text-text-2" @click="go([])"><Home :size="20" /></IconButton>
+      <IconButton :label="t('files.breadcrumbHome')" :size="28" class="text-text-2" @click="go([])"><Home :size="16" /></IconButton>
 
       <template v-for="crumb in shown" :key="crumb === FOLD ? FOLD : crumb.node.id">
-        <ChevronRight :size="16" class="shrink-0 text-text-3" />
+        <ChevronRight :size="14" class="shrink-0 text-text-3" />
         <IconButton
           v-if="crumb === FOLD"
           :label="t('files.breadcrumbMore')"
-          :size="28"
-          class="mx-1 text-text-2"
+          :size="24"
+          class="mx-0.5 text-text-2"
           aria-haspopup="menu"
           @click="openFolded"
         >
-          <MoreHorizontal :size="18" />
+          <MoreHorizontal :size="16" />
         </IconButton>
         <!-- The open folder is the page's heading AND a button: a heading around the button, so it stays both. -->
         <component :is="crumb.current ? 'h1' : 'span'" v-else class="flex min-w-0" :class="!crumb.current && 'shrink-0'">
           <button
             type="button"
-            class="min-w-0 truncate-safe rounded px-2 py-1 text-18 font-semibold leading-none hover:bg-bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+            class="min-w-0 truncate-safe rounded px-1.5 py-1 text-13 font-semibold leading-none hover:bg-bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
             :class="[
               crumb.current ? 'text-text' : 'text-text-2 hover:text-text',
               drag.overId === crumb.node.id && 'bg-primary-soft text-primary ring-2 ring-primary',
@@ -162,8 +162,8 @@ async function openSubfolders(event: MouseEvent) {
         </component>
       </template>
 
-      <IconButton :label="t('files.subfolders')" :size="24" class="shrink-0 text-text-3" aria-haspopup="menu" @click="openSubfolders">
-        <ChevronRight :size="16" />
+      <IconButton :label="t('files.subfolders')" :size="22" class="shrink-0 text-text-3" aria-haspopup="menu" @click="openSubfolders">
+        <ChevronRight :size="14" />
       </IconButton>
     </template>
 

@@ -15,7 +15,7 @@ const operations = useOperationsStore();
     class="w-[360px] overflow-hidden rounded-lg border border-border bg-bg shadow-menu"
   >
     <header class="flex h-12 items-center border-b border-border pl-4 pr-1">
-      <span class="flex-1 text-15 font-medium leading-none" aria-live="polite">
+      <span class="flex-1 text-13 font-medium leading-none" aria-live="polite">
         <!-- A failure outranks "in progress": the row that did not work is why the tray is still on screen. -->
         <template v-if="operations.failedCount">{{ t('op.failed', { n: operations.failedCount }, operations.failedCount) }}</template>
         <template v-else>{{ t('op.title') }}</template>
@@ -30,11 +30,11 @@ const operations = useOperationsStore();
           <AlertCircle v-else :size="16" class="text-danger" />
         </span>
         <div class="min-w-0 flex-1">
-          <p class="truncate-safe text-15 leading-tight">{{ item.label }}</p>
+          <p class="truncate-safe text-13 leading-tight">{{ item.label }}</p>
           <!-- Why it is still here: the server's own words for a failure, a plain sentence for work that outlived
                the wait. Neither is a toast: both are things the user may need to read twice. -->
-          <p v-if="item.state === 'failed'" class="mt-1 text-13 leading-tight text-danger">{{ item.error }}</p>
-          <p v-else-if="item.state === 'pending'" class="mt-1 text-13 leading-tight text-text-3">{{ t('op.pending') }}</p>
+          <p v-if="item.state === 'failed'" class="mt-1 text-11 leading-tight text-danger">{{ item.error }}</p>
+          <p v-else-if="item.state === 'pending'" class="mt-1 text-11 leading-tight text-text-3">{{ t('op.pending') }}</p>
         </div>
         <IconButton
           v-if="item.state !== 'running'"

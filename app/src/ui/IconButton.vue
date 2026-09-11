@@ -4,11 +4,12 @@ withDefaults(
     label: string;
     variant?: 'plain' | 'outline';
     active?: boolean;
+    /** Hit area in px. The glyph inside is 16-18; this is the box that takes the click, and stays ≥ 28. */
     size?: number;
     /** Inert control ("Coming soon"): `aria-disabled` plus this tooltip, keeping the reference look (no dimming). */
     disabledHint?: string;
   }>(),
-  { variant: 'plain', active: false, size: 40, disabledHint: undefined },
+  { variant: 'plain', active: false, size: 34, disabledHint: undefined },
 );
 </script>
 

@@ -2,6 +2,7 @@ packages:
   - "packages/*"
   - "web"
   - "app"
+  - "backend"
   - "desktop"
   - "e2e"
   - "docs-site"

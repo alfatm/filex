@@ -31,7 +31,7 @@ function answer(choice: ConflictAnswer) {
     :close-label="t('upload.skip')"
     @close="answer('skip')"
   >
-    <p class="text-15 leading-[22px] text-text-2">
+    <p class="text-13 leading-[22px] text-text-2">
       {{ busy ? t('upload.busyBody', { name: item.name, folder }) : t('upload.conflictBody', { name: item.name, folder }) }}
     </p>
     <Checkbox v-if="offerAll" v-model="applyToAll" class="mt-4" :label="t('upload.applyAll')" show-label />

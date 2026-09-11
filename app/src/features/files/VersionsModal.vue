@@ -60,7 +60,7 @@ async function restore(version: Version) {
 
 <template>
   <Modal :title="t('modal.versions.title')" :close-label="t('modal.close')" :width="560" @close="emit('close')">
-    <p class="text-14 leading-tight text-text-3">{{ t('modal.versions.hint', { name: node.name }) }}</p>
+    <p class="text-11.5 leading-tight text-text-3">{{ t('modal.versions.hint', { name: node.name }) }}</p>
 
     <ul v-if="versions.length" class="mt-4 divide-y divide-border-soft" :aria-label="t('modal.versions.title')">
       <li v-for="version in versions" :key="version.id" class="flex h-[58px] items-center">
@@ -68,8 +68,8 @@ async function restore(version: Version) {
           <History :size="18" />
         </span>
         <div class="ml-3 min-w-0 flex-1">
-          <p class="truncate-safe text-15 leading-none">{{ formatDateTime(version.at) }}</p>
-          <p class="mt-1.5 truncate-safe text-13 leading-none text-text-3">
+          <p class="truncate-safe text-13 leading-none">{{ formatDateTime(version.at) }}</p>
+          <p class="mt-1.5 truncate-safe text-11 leading-none text-text-3">
             {{ version.authorName ? t('modal.versions.by', { name: version.authorName, size: formatSize(version.size) }) : formatSize(version.size) }}
           </p>
         </div>
@@ -78,8 +78,8 @@ async function restore(version: Version) {
         </Button>
       </li>
     </ul>
-    <p v-else-if="!error" class="mt-4 text-15 leading-none text-text-3">{{ t('modal.versions.empty') }}</p>
-    <p v-if="error" class="mt-4 text-13 leading-none text-danger" role="alert">{{ error }}</p>
+    <p v-else-if="!error" class="mt-4 text-13 leading-none text-text-3">{{ t('modal.versions.empty') }}</p>
+    <p v-if="error" class="mt-4 text-11 leading-none text-danger" role="alert">{{ error }}</p>
 
     <template #footer>
       <Button variant="outline" @click="emit('close')">{{ t('modal.done') }}</Button>

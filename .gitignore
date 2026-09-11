@@ -71,6 +71,7 @@ config.local.yaml
 *.db-wal
 /data/
 /storage-data/
+/backend/.dev-data/
 
 # --- OS ---
 .DS_Store

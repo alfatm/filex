@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { nextTick } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
@@ -123,6 +123,49 @@ describe('TopBar theme button', () => {
 
     await button().trigger('click');
     expect(settings.settings.theme).toBe('light');
+    wrapper.unmount();
+  });
+});
+
+describe('TopBar search box', () => {
+  // The box used to be a local ref only: a shared `/search?q=…` link opened with an empty field, and the modal's
+  // own submit did not show up in it either.
+  it('shows the query the results route carries', async () => {
+    const wrapper = await mountBar();
+    await wrapper.vm.$router.push({ name: 'search', query: { q: 'foo' } });
+    await nextTick();
+    expect(wrapper.get('input').element.value).toBe('foo');
+    wrapper.unmount();
+  });
+
+  // The native cancel button (the X in a `type="search"` box) fires `search` and empties the input, nothing else.
+  // On the results page that left the hits and chips of a query nobody was asking for any more.
+  it('drops the query from the URL when the box is cleared', async () => {
+    const wrapper = await mountBar();
+    const router = wrapper.vm.$router;
+    await router.push({ name: 'search', query: { q: 'foo' } });
+    await nextTick();
+
+    const box = wrapper.get('input');
+    await box.setValue('');
+    await box.trigger('search');
+    await flushPromises();
+
+    expect(router.currentRoute.value.name).toBe('search');
+    expect(router.currentRoute.value.query).toEqual({});
+    wrapper.unmount();
+  });
+
+  // Elsewhere the box is just a box: clearing it must not throw the person onto an empty results page.
+  it('leaves other routes alone', async () => {
+    const wrapper = await mountBar();
+    const router = wrapper.vm.$router;
+    const box = wrapper.get('input');
+    await box.setValue('foo');
+    await box.setValue('');
+    await box.trigger('search');
+    await flushPromises();
+    expect(router.currentRoute.value.name).toBe('files');
     wrapper.unmount();
   });
 });

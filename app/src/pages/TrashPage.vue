@@ -52,7 +52,7 @@ const retentionDays = computed(() => {
     <template #banner>
       <div class="mr-[9px] mt-4 flex h-14 items-center rounded-lg border border-border bg-bg-muted pl-4 pr-2">
         <Info :size="20" class="shrink-0 text-text-2" />
-        <p class="ml-3 flex-1 text-15 leading-none text-text-2">{{ t('trash.banner', { days: retentionDays }) }}</p>
+        <p class="ml-3 flex-1 text-13 leading-none text-text-2">{{ t('trash.banner', { days: retentionDays }) }}</p>
         <!-- Emptying the trash is admin-only in filex today; the snapshot decides whether the button can act. -->
         <Button
           variant="outline"

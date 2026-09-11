@@ -46,7 +46,7 @@ const mismatch = ref<number | null>(null);
     class="w-[360px] overflow-hidden rounded-lg border border-border bg-bg shadow-menu"
   >
     <header class="flex h-12 items-center border-b border-border pl-4 pr-1">
-      <span class="flex-1 text-15 font-medium leading-none" aria-live="polite">
+      <span class="flex-1 text-13 font-medium leading-none" aria-live="polite">
         <!-- A failure outranks the count: "3 of 3" over a row that never arrived would be a lie. -->
         <template v-if="uploads.failedCount">{{ t('upload.failed', uploads.failedCount) }}</template>
         <template v-else-if="uploads.interruptedCount">{{ t('upload.interrupted', uploads.interruptedCount) }}</template>
@@ -59,12 +59,12 @@ const mismatch = ref<number | null>(null);
       <li v-for="item in uploads.items" :key="item.id" class="flex min-h-12 items-center px-4 py-1">
         <div class="min-w-0 flex-1">
           <div class="flex items-center">
-            <span class="min-w-0 flex-1 truncate-safe text-15 leading-none">{{ item.name }}</span>
-            <span class="ml-3 shrink-0 text-13 leading-none text-text-3">{{ formatSize(item.size) }}</span>
+            <span class="min-w-0 flex-1 truncate-safe text-13 leading-none">{{ item.name }}</span>
+            <span class="ml-3 shrink-0 text-11 leading-none text-text-3">{{ formatSize(item.size) }}</span>
           </div>
           <ProgressBar class="mt-2" :value="item.progress" :max="100" :label="item.name" />
           <!-- An interrupted transfer is the only row with something to offer, so it says what and how far. -->
-          <p v-if="item.state === 'interrupted'" class="mt-1 text-13 leading-none text-text-3">
+          <p v-if="item.state === 'interrupted'" class="mt-1 text-11 leading-none text-text-3">
             {{ t('upload.stoppedAt', { percent: Math.floor(item.progress) }) }}
             <button type="button" class="ml-2 text-primary hover:underline" @click="askForFile(item.id)">{{ t('upload.resume') }}</button>
             <button type="button" class="ml-2 text-text-3 hover:underline" @click="uploads.discard(item.id)">{{ t('upload.discard') }}</button>
@@ -73,12 +73,12 @@ const mismatch = ref<number | null>(null);
                carry on meanwhile: a row waiting for an answer holds no slot. -->
           <!-- A row the server refused for a quota reason says WHY in its own words; the generic states below are
                for rows that have nothing more specific to report. -->
-          <p v-if="item.error" class="mt-1 text-13 leading-tight" :class="item.state === 'failed' ? 'text-danger' : 'text-text-3'">{{ item.error }}</p>
-          <p v-else-if="item.state === 'conflict'" class="mt-1 text-13 leading-none text-text-3">{{ t('upload.waitingAnswer') }}</p>
-          <p v-else-if="item.state === 'skipped'" class="mt-1 text-13 leading-none text-text-3">{{ t('upload.skipped') }}</p>
-          <p v-else-if="item.state === 'queued'" class="mt-1 text-13 leading-none text-text-3">{{ t('upload.waiting') }}</p>
-          <p v-if="mismatch === item.id" class="mt-1 text-13 leading-none text-danger">{{ t('upload.wrongFile') }}</p>
-          <p v-else-if="item.state === 'cancelled'" class="mt-1 text-13 leading-none text-text-3">{{ t('upload.cancelled') }}</p>
+          <p v-if="item.error" class="mt-1 text-11 leading-tight" :class="item.state === 'failed' ? 'text-danger' : 'text-text-3'">{{ item.error }}</p>
+          <p v-else-if="item.state === 'conflict'" class="mt-1 text-11 leading-none text-text-3">{{ t('upload.waitingAnswer') }}</p>
+          <p v-else-if="item.state === 'skipped'" class="mt-1 text-11 leading-none text-text-3">{{ t('upload.skipped') }}</p>
+          <p v-else-if="item.state === 'queued'" class="mt-1 text-11 leading-none text-text-3">{{ t('upload.waiting') }}</p>
+          <p v-if="mismatch === item.id" class="mt-1 text-11 leading-none text-danger">{{ t('upload.wrongFile') }}</p>
+          <p v-else-if="item.state === 'cancelled'" class="mt-1 text-11 leading-none text-text-3">{{ t('upload.cancelled') }}</p>
         </div>
         <!-- Stopping one transfer leaves the others alone, so the control is per row. -->
         <IconButton

@@ -22,7 +22,7 @@ function onContextMenu(event: MouseEvent) {
 <template>
   <!-- Keyboard: focusing a card moves the page cursor to it, so Enter/Space/arrows go through the page handler. -->
   <div
-    class="relative flex h-[84px] w-[236px] cursor-pointer select-none items-center rounded-lg border bg-bg pl-5 pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring focus-visible:ring-offset-2"
+    class="relative flex h-[56px] w-full cursor-pointer select-none items-center rounded-lg border bg-bg pl-3 pr-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring focus-visible:ring-offset-2"
     :class="[
       selected
         ? 'border-primary-ring outline outline-1 outline-primary-ring bg-primary-tint'
@@ -45,14 +45,14 @@ function onContextMenu(event: MouseEvent) {
     @drop="onDrop(node, $event)"
   >
     <FolderIcon :shared="node.shared" />
-    <div class="ml-6 min-w-0 flex-1">
-      <p class="truncate-safe text-16 font-medium leading-none">{{ node.name }}</p>
-      <p class="mt-1 text-14 leading-none text-text-3">{{ node.itemCount === undefined ? t('type.folder') : t('files.items', node.itemCount) }}</p>
+    <div class="ml-2 min-w-0 flex-1">
+      <p :title="node.name" class="truncate-safe text-12.5 font-medium leading-none">{{ node.name }}</p>
+      <p class="mt-1 text-11 leading-none text-text-3">{{ node.itemCount === undefined ? t('type.folder') : t('files.items', node.itemCount) }}</p>
     </div>
-    <IconButton :label="t('files.more')" :size="32" class="text-text-3" data-menu-button @click.stop="itemMenu.openFor(node, $event.currentTarget as HTMLElement)" @dblclick.stop>
-      <MoreVertical :size="20" />
+    <IconButton :label="t('files.more')" :size="28" class="text-text-3" data-menu-button @click.stop="itemMenu.openFor(node, $event.currentTarget as HTMLElement)" @dblclick.stop>
+      <MoreVertical :size="16" />
     </IconButton>
     <!-- Last in DOM so the card's accessible name still starts with the folder name. -->
-    <Star v-if="node.starred" :size="14" fill="currentColor" class="absolute right-2.5 top-2 text-folder" role="img" :aria-label="t('panel.starred')" />
+    <Star v-if="node.starred" :size="12" fill="currentColor" class="absolute right-1.5 top-1.5 text-folder" role="img" :aria-label="t('panel.starred')" />
   </div>
 </template>

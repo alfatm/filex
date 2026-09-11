@@ -2,7 +2,7 @@
 import { onBeforeUnmount } from 'vue';
 
 /** A `resizeLabel` renders a drag handle on the panel's outer edge; the panel is always on the right, so dragging left widens it. */
-const props = withDefaults(defineProps<{ width?: number; resizeLabel?: string }>(), { width: 320, resizeLabel: undefined });
+const props = withDefaults(defineProps<{ width?: number; resizeLabel?: string }>(), { width: 256, resizeLabel: undefined });
 const emit = defineEmits<{ resize: [width: number] }>();
 
 const KEYBOARD_STEP_PX = 16;
@@ -45,7 +45,7 @@ onBeforeUnmount(() => stopDrag?.());
 
 <template>
   <aside
-    class="relative flex h-full shrink-0 flex-col overflow-y-auto border-l border-border bg-bg px-[22px] py-5"
+    class="relative flex h-full shrink-0 flex-col overflow-y-auto border-l border-border bg-bg px-3 py-3"
     :style="{ width: `${width}px` }"
   >
     <div

@@ -17,8 +17,8 @@ const router = useRouter();
 </script>
 
 <template>
-  <main class="min-w-0 flex-1 overflow-y-auto pb-8 pl-[29px] pr-3 pt-[18px]">
-    <EmptyState class="mt-24" :icon="FolderOpen" :title="t('error.noSuchPage.title')" :hint="t('error.noSuchPage.hint')">
+  <main class="min-w-0 flex-1 overflow-y-auto pb-6 pl-4 pr-3 pt-3">
+    <EmptyState class="mt-16" :icon="FolderOpen" :title="t('error.noSuchPage.title')" :hint="t('error.noSuchPage.hint')">
       <Button variant="outline" @click="router.push({ name: 'home' })">{{ t('nav.home') }}</Button>
     </EmptyState>
   </main>

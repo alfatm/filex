@@ -80,7 +80,7 @@ watch(
 
 <template>
   <main
-    class="relative min-w-0 flex-1 overflow-y-auto pb-8 pl-[29px] pr-3 pt-[18px]"
+    class="relative min-w-0 flex-1 overflow-y-auto pb-6 pl-4 pr-3 pt-3"
     @click="onMainClick"
     @contextmenu="onMainContextMenu"
     @dragover="onPageDragOver"
@@ -90,24 +90,24 @@ watch(
     <!-- Drop hint for files coming from the OS; a folder card under the pointer takes the drop instead. -->
     <div
       v-if="drag.overId === LISTING_TARGET"
-      class="pointer-events-none absolute inset-2 z-10 flex items-start justify-center rounded-xl border-2 border-dashed border-primary pt-24"
+      class="pointer-events-none absolute inset-2 z-10 flex items-start justify-center rounded-xl border-2 border-dashed border-primary pt-20"
     >
       <!-- Solid pill: the label has to stay readable over whatever thumbnails sit under the overlay. -->
-      <p class="flex items-center gap-2 rounded-full bg-bg px-5 py-3 text-17 font-medium leading-none text-primary shadow-menu">
-        <Upload :size="20" />
+      <p class="flex items-center gap-2 rounded-full bg-bg px-4 py-2.5 text-13 font-medium leading-none text-primary shadow-menu">
+        <Upload :size="16" />
         {{ t('files.dropHere', { folder: files.folder?.name ?? '' }) }}
       </p>
     </div>
-    <div class="flex h-[38px] items-center">
+    <div class="flex h-control-md items-center">
       <Breadcrumbs ref="breadcrumbs" />
 
       <div class="ml-auto flex items-center">
-        <IconButton :label="t('files.breadcrumbPathEdit')" variant="outline" class="mx-[14px] !w-11" @click="breadcrumbs?.edit()">
-          <PencilLine :size="20" />
+        <IconButton :label="t('files.breadcrumbPathEdit')" variant="outline" class="mx-2 !w-control-lg" @click="breadcrumbs?.edit()">
+          <PencilLine :size="16" />
         </IconButton>
         <div
           role="radiogroup"
-          class="flex h-10 overflow-hidden rounded-md border border-border"
+          class="flex h-control-md overflow-hidden rounded-md border border-border"
           @keydown.left.prevent="view.mode = view.mode === 'list' ? 'grid' : 'list'"
           @keydown.right.prevent="view.mode = view.mode === 'list' ? 'grid' : 'list'"
         >
@@ -118,30 +118,30 @@ watch(
             role="radio"
             :aria-checked="view.mode === mode"
             :aria-label="t(mode === 'list' ? 'files.listView' : 'files.gridView')"
-            class="flex w-12 items-center justify-center"
+            class="flex w-10 items-center justify-center"
             :class="view.mode === mode ? 'bg-primary-soft text-primary' : 'text-text-2 hover:bg-hover-row'"
             @click="view.mode = mode"
           >
-            <List v-if="mode === 'list'" :size="20" />
-            <LayoutGrid v-else :size="20" />
+            <List v-if="mode === 'list'" :size="16" />
+            <LayoutGrid v-else :size="16" />
           </button>
         </div>
         <IconButton
           :label="t('files.details')"
           variant="outline"
           :active="view.detailsOpen"
-          class="ml-[14px] !w-11"
+          class="ml-2 !w-control-lg"
           @click="view.togglePanel('details')"
         >
-          <Info :size="20" />
+          <Info :size="16" />
         </IconButton>
       </div>
     </div>
 
     <!-- Multi-selection only (single selection keeps the filters); centred on the 38px filter row it replaces, so nothing below moves. -->
-    <SelectionBar v-if="files.selected.length >= 2" class="-mb-[5px] mt-[7px]" :class="view.mode === 'list' && 'mr-[9px]'" />
-    <div v-else class="mt-3 flex h-[38px] items-center gap-[10px]">
-      <div role="group" :aria-label="t('filter.title')" class="flex items-center gap-[10px]">
+    <SelectionBar v-if="files.selected.length >= 2" class="mt-2" :class="view.mode === 'list' && 'mr-[9px]'" />
+    <div v-else class="mt-2 flex h-control-md items-center gap-2">
+      <div role="group" :aria-label="t('filter.title')" class="flex items-center gap-2">
         <FilterChip v-for="id in FILTERS" :key="id" :id="id" />
       </div>
       <!-- Narrows the open folder by name — in memory for a small folder, on the server for a large one (see the
@@ -150,31 +150,31 @@ watch(
         :model-value="files.filter.name"
         type="search"
         :icon="Folder"
-        :height="38"
-        :width="265"
-        class="!rounded-full"
+        :height="28"
+        :width="210"
+        class="!rounded"
         :placeholder="t('filter.name')"
         :label="t('filter.name')"
         @update:model-value="files.setName(String($event))"
       />
-      <SortControl v-if="view.mode === 'list'" variant="pill" class="ml-auto mr-[10px]" />
+      <SortControl v-if="view.mode === 'list'" variant="pill" class="ml-auto mr-2" />
       <template v-else>
         <SortControl class="ml-auto" />
         <IconButton
           :label="t('files.listingActions')"
-          :size="32"
+          :size="28"
           class="text-text-2"
           aria-haspopup="menu"
           @click="itemMenu.openBackgroundFor($event.currentTarget as HTMLElement)"
         >
-          <MoreVertical :size="20" />
+          <MoreVertical :size="16" />
         </IconButton>
       </template>
     </div>
 
-    <ListingSkeleton v-if="files.loading && !files.ordered.length" class="mr-[9px] mt-[22px]" :mode="view.mode" />
+    <ListingSkeleton v-if="files.loading && !files.ordered.length" class="mr-[9px] mt-3" :mode="view.mode" />
 
-    <div v-else-if="view.mode === 'list' && files.ordered.length" class="mr-[9px] mt-[22px]">
+    <div v-else-if="view.mode === 'list' && files.ordered.length" class="mr-[9px] mt-3">
       <FileTable tabindex="0" :aria-activedescendant="activeDescendant" @keydown="onKeydown" @open="openNode" />
     </div>
 
@@ -189,8 +189,8 @@ watch(
       @keydown="onKeydown"
     >
       <template v-if="files.folders.length">
-        <h2 class="mt-[44px] text-17 font-semibold leading-[26px]">{{ t('files.folders') }}</h2>
-        <div role="group" :aria-label="t('files.folders')" class="mt-1 grid gap-[14px]" style="grid-template-columns: repeat(auto-fill, 236px)">
+        <h2 class="mt-5 text-13 font-semibold leading-none">{{ t('files.folders') }}</h2>
+        <div role="group" :aria-label="t('files.folders')" class="mt-2 grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(176px, 1fr))">
           <FolderCard
             v-for="node in files.folders"
             :key="node.id"
@@ -205,8 +205,8 @@ watch(
       </template>
 
       <template v-if="files.files.length">
-        <h2 class="mt-[50px] text-17 font-semibold leading-[26px]">{{ t('files.files') }}</h2>
-        <div role="group" :aria-label="t('files.files')" class="mt-1 grid gap-[14px]" style="grid-template-columns: repeat(auto-fill, 236px)">
+        <h2 class="mt-5 text-13 font-semibold leading-none">{{ t('files.files') }}</h2>
+        <div role="group" :aria-label="t('files.files')" class="mt-2 grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(176px, 1fr))">
           <FileCard
             v-for="node in files.files"
             :key="node.id"
@@ -222,14 +222,14 @@ watch(
     </div>
 
     <!-- A load that failed keeps the page usable: say what happened and offer to run it again. -->
-    <EmptyState v-else-if="files.error" class="mt-24" :icon="AlertTriangle" :title="t(`error.${files.error}.title`)" :hint="t(`error.${files.error}.hint`)">
+    <EmptyState v-else-if="files.error" class="mt-16" :icon="AlertTriangle" :title="t(`error.${files.error}.title`)" :hint="t(`error.${files.error}.hint`)">
       <Button variant="outline" @click="files.retry()">{{ t('error.retry') }}</Button>
     </EmptyState>
 
     <!-- A folder can be empty, or emptied by the chips; the second case offers the way out. -->
     <EmptyState
       v-else-if="!files.ordered.length"
-      class="mt-24"
+      class="mt-16"
       :icon="files.filtered ? Filter : FolderOpen"
       :title="files.filtered ? t('empty.filtered.title') : t('files.emptyState')"
       :hint="files.filtered ? t('empty.filtered.hint') : t('files.emptyHint')"
