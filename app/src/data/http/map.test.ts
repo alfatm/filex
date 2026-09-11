@@ -4,7 +4,6 @@ import {
   fromFileNode,
   fromModelNode,
   fromTrashEntry,
-  SMALL_IMAGE_BYTES,
   toQuota,
   toStorage,
   type WireFileNode,
@@ -75,13 +74,16 @@ describe('listing rows → app model', () => {
     );
   });
 
-  it('lets a small image be its own tile, and a large one wait for the server', () => {
+  it('leaves the small-image rule to the server: no thumb_url, no tile, whatever the size', () => {
+    // A file the server serves as its own bytes still arrives WITH a thumb_url — the row is `ready`, only its bytes
+    // come from the file instead of the cache. So size tells this mapper nothing, and it no longer looks at it: a
+    // 400 KB 8K WebP is small by bytes and ruinous to decode, which is a call only the server can make.
     const photo = (size: number) => listed({ path: 'main://Docs/photo.webp', basename: 'photo.webp', extension: 'webp', size });
-    expect(fromFileNode(photo(SMALL_IMAGE_BYTES - 1)).thumbUrl).toBe('/api/files/manager?q=preview&path=main%3A%2F%2FDocs%2Fphoto.webp');
-    expect(fromFileNode(photo(SMALL_IMAGE_BYTES)).thumbUrl).toBeUndefined();
-    expect(fromFileNode(photo(0)).thumbUrl).toBeUndefined();
-    // A small file that is not an image has no tile of its own.
-    expect(fromFileNode(listed({ size: 10 })).thumbUrl).toBeUndefined();
+    expect(fromFileNode(photo(1024)).thumbUrl).toBeUndefined();
+    expect(fromFileNode(photo(1024 * 1024)).thumbUrl).toBeUndefined();
+    expect(fromFileNode({ ...photo(1024), thumb_url: '/api/files/thumb/42' }).thumbUrl).toBe(
+      `/api/files/thumb/42?v=${Date.parse('2026-07-01T10:00:00Z')}`,
+    );
   });
 
   it('leaves starred off: it is per-user metadata a listing row does not carry', () => {
@@ -146,10 +148,8 @@ describe('metadata rows → app model', () => {
     expect(fromModelNode(photo({ type: 'dir', thumb: { state: 'ready' } }), 'main').thumbUrl).toBeUndefined();
     // The server's extension card for a markdown file is not a picture of it; the app's document art shows instead.
     expect(fromModelNode(model({ thumb: { state: 'ready' } }), 'main').thumbUrl).toBeUndefined();
-    // A small image is its own tile here too, whatever the pipeline said about it.
-    expect(fromModelNode(model({ name: 'photo.jpg', path: '/Docs/photo.jpg', size: 1024, thumb: { state: 'skipped' } }), 'main').thumbUrl).toBe(
-      '/api/files/manager?q=preview&path=main%3A%2F%2FDocs%2Fphoto.jpg',
-    );
+    // A row the pipeline did not make ready has no tile here either, however small the file is.
+    expect(fromModelNode(photo({ size: 1024, thumb: { state: 'skipped' } }), 'main').thumbUrl).toBeUndefined();
   });
 
   it('dates a Recent row by the open the endpoint reports, leaving the mtime where it was', () => {

@@ -1218,7 +1218,7 @@ describe('HttpRepository', () => {
       ['/manager/trash', { entries: [] }],
     ];
     const repo = new HttpRepository();
-    const filter = { fileType: 'documents', modified: 'any', size: 'large', personId: '7', name: '', tags: [] as string[], around: null } as const;
+    const filter = { fileType: 'documents', modified: 'any', size: 'large', personId: '7', name: '', mime: '', tags: [] as string[], around: null } as const;
 
     await repo.listStarred(filter);
     calls.length = 0; // Recent marks its rows starred, which asks star/list again — without the chips, and rightly so.
@@ -1289,7 +1289,7 @@ describe('HttpRepository', () => {
   it('turns the Modified chip into a moment, not a number of days', async () => {
     vi.setSystemTime(Date.parse('2026-09-09T00:00:00Z'));
     routes = [['/star/list', { nodes: [] }]];
-    await new HttpRepository().listStarred({ fileType: 'any', modified: 'week', size: 'any', personId: null, name: '', tags: [], around: null });
+    await new HttpRepository().listStarred({ fileType: 'any', modified: 'week', size: 'any', personId: null, name: '', mime: '', tags: [], around: null });
 
     const query = new URLSearchParams(calls[0].url.split('?')[1]);
     expect(query.get('modified_after')).toBe(String(Date.parse('2026-09-02T00:00:00Z')));
@@ -1533,7 +1533,7 @@ describe('HttpRepository', () => {
   // with the facets in the query is the filtered set, exactly.
   it('sends the chips to shared-with-me and asks for its full page', async () => {
     routes = [['/shared-with-me', { files: [] }]];
-    await new HttpRepository().listShared({ fileType: 'documents', modified: 'any', size: 'any', personId: null, name: 'plan', tags: [], around: null });
+    await new HttpRepository().listShared({ fileType: 'documents', modified: 'any', size: 'any', personId: null, name: 'plan', mime: '', tags: [], around: null });
     const query = new URLSearchParams(calls[0].url.split('?')[1]);
     expect(query.get('limit')).toBe('500');
     expect(query.get('ext')).toBe('md,pdf');
@@ -1547,7 +1547,7 @@ describe('HttpRepository', () => {
       ['/star/list', { nodes: [] }],
       ['q=index', { ...index(row({ id: 3, path: 'main://Docs/notes.md', basename: 'notes.md', type: 'file', size: 5 * 1024 * 1024 })), total: 1500 }],
     ];
-    const listing = await new HttpRepository().listFolder('main://Docs', { fileType: 'documents', modified: 'any', size: 'medium', personId: null, name: 'Notes', tags: [], around: null });
+    const listing = await new HttpRepository().listFolder('main://Docs', { fileType: 'documents', modified: 'any', size: 'medium', personId: null, name: 'Notes', mime: '', tags: [], around: null });
     const query = new URLSearchParams(calls[0].url.split('?')[1]);
     expect(query.get('q')).toBe('index');
     expect(query.get('ext')).toBe('md,pdf');

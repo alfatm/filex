@@ -210,8 +210,15 @@ export const useUploadStore = defineStore('uploads', () => {
 
     const entries = all.map<Entry>((file) => {
       const parentId = chain.get(folderPath(file)) ?? root;
-      const item: UploadItem = { id: ++seq, name: file.name, size: file.size, progress: 0, state: 'queued', parentId };
-      items.value.push(item);
+      const row: UploadItem = { id: ++seq, name: file.name, size: file.size, progress: 0, state: 'queued', parentId };
+      items.value.push(row);
+      // ⚠ The batch has to hold the row the STORE hands out, not the object that was pushed. `items` is a `ref`,
+      // so a push stores the raw object and every read of the array goes through a proxy; writing to the raw one
+      // fires no set trap, so nothing that depends on it recomputes. That is how a refused upload stalled: `ask`
+      // set `state = 'conflict'` on the raw row, `pendingConflict` never noticed, and the transfer sat in the tray
+      // with no question on screen and no way to answer it. (`run` already worked around this by looking the row
+      // up again through `items.value` for every progress tick.)
+      const item = items.value[items.value.length - 1];
       return { item, file, parentId };
     });
     // Detached on purpose: `start` answers as soon as the folders exist, and the batch runs on behind it.

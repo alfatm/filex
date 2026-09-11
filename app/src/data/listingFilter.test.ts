@@ -18,6 +18,22 @@ describe('matchesFilter — the name box', () => {
   });
 });
 
+describe('matchesFilter — the MIME type the details panel sets', () => {
+  const typed = (mime?: string, kind: Node['kind'] = 'file'): Node => ({ ...node('a.png', kind), mime });
+  const filter = { ...emptyFilter(), mime: 'image/png' };
+
+  it('keeps the files of exactly that type, whatever case the row spells it in', () => {
+    expect(matchesFilter(typed('image/png'), filter)).toBe(true);
+    expect(matchesFilter(typed('IMAGE/PNG'), filter)).toBe(true);
+    expect(matchesFilter(typed('image/jpeg'), filter)).toBe(false);
+  });
+
+  it('drops what cannot answer: a row the server typed nothing for, and every folder', () => {
+    expect(matchesFilter(typed(undefined), filter)).toBe(false);
+    expect(matchesFilter(typed('image/png', 'folder'), filter)).toBe(false);
+  });
+});
+
 describe('matchesFilter — the date window the details panel sets', () => {
   const at = '2026-09-09T12:00:00Z';
   const dated = (patch: Partial<Node>): Node => ({ ...node('a.md'), ...patch });

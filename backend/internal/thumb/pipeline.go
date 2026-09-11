@@ -34,9 +34,10 @@ var ErrSkipped = errors.New("thumb: skipped")
 
 // SmallImageBytes is the size under which a browser-renderable image is not
 // re-encoded: the file itself IS its tile, so a 320px JPEG next to a 100 KB
-// original would cost a render and a cache file to save nothing. The client
-// applies the same number (SMALL_IMAGE_BYTES in app/src/data/http/map.ts); the
-// two must move together.
+// original would cost a render and a cache file to save nothing.
+//
+// ⚠ Bytes alone do NOT decide this — see fitsRawTile. Both limits must
+// pass, because a file can be tiny on disk and enormous to decode.
 const SmallImageBytes = 500 * 1024
 
 // OriginalKey marks a thumbnail row whose picture IS the file: a small browser
@@ -236,6 +237,11 @@ func (p *Pipeline) GenerateThumb(ctx context.Context, node *model.Node) error {
 	// the listing, so it goes to the image generator, whose gif.Decode hands
 	// back the first frame.
 	case isBrowserImage(mime) && node.Size > 0 && node.Size < SmallImageBytes:
+		// Small in bytes is not small to decode. See fitsRawTile.
+		if !p.fitsRawTile(ctx, drv, node) {
+			err = p.generateImage(ctx, node, drv)
+			break
+		}
 		if mime == "image/gif" && p.gifAnimated(ctx, drv, node) {
 			err = p.generateImage(ctx, node, drv)
 			break

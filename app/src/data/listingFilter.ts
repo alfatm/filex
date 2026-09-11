@@ -62,6 +62,8 @@ export function matchesFilter(node: Node, filter: ListingFilter, now = Date.now(
     const ms = Date.parse(at);
     if (ms < after || ms > before) return false;
   }
+  // The type the server recorded, in full: a row it recorded none for cannot answer the question either way.
+  if (filter.mime && (node.kind !== 'file' || (node.mime ?? '').toLowerCase() !== filter.mime)) return false;
   if (filter.personId && node.ownerId !== filter.personId) return false;
   const name = filter.name.trim().toLowerCase();
   if (name && !node.name.toLowerCase().includes(name)) return false;

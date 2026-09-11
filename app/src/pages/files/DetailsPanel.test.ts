@@ -21,6 +21,7 @@ const file: Node = {
   fileType: 'pdf',
   modifiedAt: '2026-09-09T12:00:00Z',
   createdAt: '2026-08-01T09:00:00Z',
+  mime: 'application/pdf',
   shared: false,
   starred: false,
 };
@@ -134,6 +135,24 @@ describe('the details panel as a way into the filter', () => {
       'AYouOwner',
       'BBoEditor',
     ]);
+  });
+
+  it('shows the recorded MIME type and narrows to exactly it', async () => {
+    const wrapper = await panel();
+    const files = useFilesStore();
+
+    expect(row(wrapper, 'Type (MIME)').text()).toContain('application/pdf');
+    await row(wrapper, 'Type (MIME)').find('button').trigger('click');
+    expect(files.filter.mime).toBe('application/pdf');
+  });
+
+  it('drops the MIME row on a node the server typed nothing for, rather than showing it empty', async () => {
+    const wrapper = mount(DetailsPanel, {
+      props: { node: { ...file, mime: undefined }, path: [folder], people: [], user: null },
+      global: { plugins: [i18n, router] },
+    });
+    await flushPromises();
+    expect(() => row(wrapper, 'Type (MIME)')).toThrow();
   });
 
   it('offers no filter for a property nothing can be asked about', async () => {

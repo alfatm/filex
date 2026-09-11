@@ -576,6 +576,7 @@ func thumbBackfillCmd() *cobra.Command {
 		limit         int
 		retryFailed   bool
 		retrySkipped  bool
+		retryOriginal bool
 		concurrency   int
 		progressEvery int
 	)
@@ -616,6 +617,7 @@ func thumbBackfillCmd() *cobra.Command {
 				Limit:         limit,
 				RetryFailed:   retryFailed,
 				RetrySkipped:  retrySkipped,
+				RetryOriginal: retryOriginal,
 				Concurrency:   concurrency,
 				ProgressEvery: progressEvery,
 				OnProgress: func(st server.BackfillStats) {
@@ -651,6 +653,7 @@ func thumbBackfillCmd() *cobra.Command {
 	c.Flags().IntVar(&limit, "limit", 0, "stop after N files (0 = unlimited)")
 	c.Flags().BoolVar(&retryFailed, "retry-failed", false, "re-run thumbnails currently in state=failed")
 	c.Flags().BoolVar(&retrySkipped, "retry-skipped", false, "re-run thumbnails currently in state=skipped (use after the pipeline gains coverage for previously-skipped kinds)")
+	c.Flags().BoolVar(&retryOriginal, "retry-original", false, "re-check files served as their own tile; renders one for anything too large to decode cheaply")
 	c.Flags().IntVar(&concurrency, "concurrency", 4, "worker pool size")
 	c.Flags().IntVar(&progressEvery, "progress-every", 25, "emit a progress line every N processed files (0 = silent)")
 	return c

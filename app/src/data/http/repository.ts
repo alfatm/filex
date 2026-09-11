@@ -357,6 +357,7 @@ function listingFacets(filter?: ListingFilter): Record<string, string | number |
   }
   // Comma-joined like `ext`, and AND like the server reads it: a row has to carry every tag listed.
   if (filter.tags.length) out.tag = filter.tags.join(',');
+  if (filter.mime) out.mime = filter.mime;
   const owner = Number(filter.personId);
   if (filter.personId && Number.isFinite(owner)) out.owner_id = owner;
   if (filter.name.trim()) out.name = filter.name.trim();

@@ -85,3 +85,43 @@ func scaleDown(src image.Image, maxW, maxH int) image.Image {
 	}
 	return dst
 }
+
+// maxRawTilePixels caps what a tile is allowed to make the browser decode.
+//
+// ⚠⚠ Bytes are a POOR proxy for decode cost, and SmallImageBytes alone was the
+// whole rule: a file under it is served byte for byte as its own tile. WebP and
+// AVIF fold an 8K frame into a few hundred KB, so a 7680x4320 photo sailed
+// under a 500 KB limit — and every tile then cost the browser a 33-megapixel
+// decode, over 100 MB of bitmap, to paint a 320px square. That was not a
+// rounding error: it was a stable half-second stall on the picture, blamed on
+// the network and on the server, neither of which was doing anything (the
+// endpoint answers in 2 ms).
+//
+// 4 megapixels is roughly where a re-encode starts paying for itself: below it
+// the decode is unnoticeable and the cache file would save nothing, above it
+// the 320px JPEG is cheaper than the original by orders of magnitude.
+const maxRawTilePixels = 2000 * 2000
+
+// fitsRawTile reports whether a node's own bytes are cheap enough to decode to
+// stand as its tile. Only the HEADER is read — DecodeConfig stops once it has
+// the dimensions — so this costs a few hundred bytes, not the file, and it runs
+// when the node is catalogued, not when a tile is served.
+//
+// Dimensions it cannot read answer true, which keeps the file's current
+// picture. The alternative is to send it to generateImage, whose full Decode
+// goes through the SAME format registry that just failed on the header — so a
+// format this cannot measure is one that would fail there too, leaving the row
+// `failed` and the file with no picture at all. A tile that is slow beats a
+// tile that is missing.
+func (p *Pipeline) fitsRawTile(ctx context.Context, drv storage.Driver, node *model.Node) bool {
+	rc, err := p.openSource(ctx, drv, node)
+	if err != nil {
+		return true
+	}
+	defer rc.Close()
+	cfg, _, err := image.DecodeConfig(rc)
+	if err != nil {
+		return true
+	}
+	return cfg.Width*cfg.Height <= maxRawTilePixels
+}

@@ -365,6 +365,31 @@ func TestListNodesByUserMeta_TagsNarrowInsideTheQuery(t *testing.T) {
 	assert.Equal(t, []string{"tasarim.md"}, names(andQ3))
 }
 
+// The MIME type is matched in full rather than by prefix: the details panel
+// offers the one type it shows, and "image/*" is a question nothing asked.
+func TestListNodesByUserMeta_MimeNarrowsInsideTheQuery(t *testing.T) {
+	ctx, store, user, mk := facetFixture(t)
+
+	for _, tc := range []struct{ name, mime string }{
+		{"kupa.png", "image/png"},
+		{"resim.jpg", "image/jpeg"},
+		{"rapor.md", "text/markdown"},
+	} {
+		mime := tc.mime
+		n := mk(tc.name, model.NodeTypeFile, func(n *model.Node) { n.Mime = mime })
+		require.NoError(t, store.SetUserNodeMeta(ctx, user, n.ID, "starred", "1"))
+	}
+
+	png, err := store.ListNodesByUserMeta(ctx, user, "starred", db.NodeFacets{Mimes: []string{"image/png"}, FilesOnly: true}, 50)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"kupa.png"}, names(png))
+
+	both, err := store.ListNodesByUserMeta(ctx, user, "starred",
+		db.NodeFacets{Mimes: []string{"image/png", "image/jpeg"}, FilesOnly: true}, 50)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"kupa.png", "resim.jpg"}, names(both), "two types are a wider question, not a contradictory one")
+}
+
 // The facets are also applied over a node row, on the paths that never run the
 // query. Tags are the one thing a row cannot answer for.
 func TestFacetsMatches_WindowsAndTags(t *testing.T) {
@@ -386,4 +411,11 @@ func TestFacetsMatches_WindowsAndTags(t *testing.T) {
 	assert.False(t, db.NodeFacets{CreatedAfter: &after}.Matches(driver))
 	assert.False(t, db.NodeFacets{Tags: []string{"design"}}.Matches(n),
 		"tags live in node_meta; a caller that can resolve them clears the facet first")
+
+	// The MIME type is a field of the row, so this predicate answers for it the
+	// way the SQL does — including for a row the server typed nothing for.
+	typed := &model.Node{Name: "kupa.png", Path: "/kupa.png", Type: model.NodeTypeFile, Mime: "IMAGE/PNG"}
+	assert.True(t, db.NodeFacets{Mimes: []string{"image/png"}}.Matches(typed))
+	assert.False(t, db.NodeFacets{Mimes: []string{"image/jpeg"}}.Matches(typed))
+	assert.False(t, db.NodeFacets{Mimes: []string{"image/png"}}.Matches(n), "no recorded type is not that type")
 }

@@ -10,14 +10,15 @@ import { useFilesStore } from '@/stores/files';
 import FloatingMenu, { anchorBelow, type FloatingMenuEntry } from '@/ui/FloatingMenu.vue';
 
 /**
- * The filters that have no chip of their own: the tags and the date window the details panel sets.
+ * The filters that have no chip of their own: the tags, the MIME type and the date window the details panel sets.
  *
  * They appear only once set — there is no "any tag" to offer from a cold start — but once they are on screen they
  * behave like the chips beside them: the body opens a menu that edits the value, and the `X` takes the filter off.
  * A chip whose only gesture removed it was a filter you could not adjust without going back to the panel.
  *
  * Each chip's menu is its own question. A tag's is the drive's whole vocabulary, so one tag can be swapped for
- * another; a date window's is which date it reads and how wide it is.
+ * another; a date window's is which date it reads and how wide it is. The MIME chip has none — the server publishes
+ * no list of the types a drive holds, and a menu of one entry is not a choice — so it only shows and removes.
  */
 const { t } = useI18n();
 const { formatDate } = useFormat();
@@ -105,6 +106,10 @@ function dropTag(tag: string) {
   void files.setFilter({ ...files.filter, tags: files.filter.tags.filter((item) => item !== tag) });
 }
 
+function dropMime() {
+  void files.setFilter({ ...files.filter, mime: '' });
+}
+
 function dropAround() {
   void files.setFilter({ ...files.filter, around: null });
 }
@@ -125,6 +130,16 @@ function dropAround() {
       <span class="truncate">{{ t('filter.around.short', { date: formatDate(around.at), span: t(`filter.around.spanShort.${around.span}`) }) }}</span>
     </button>
     <button type="button" :class="[CHIP, 'rounded-r border-y border-r pl-1 pr-2']" :aria-label="t('filter.remove')" @click="dropAround()">
+      <X :size="14" />
+    </button>
+  </div>
+
+  <!-- The MIME chip has no menu: there is no list of the drive's types to swap between, so the whole chip removes it. -->
+  <div v-if="files.filter.mime" class="inline-flex max-w-[200px] items-center">
+    <span :class="[CHIP, 'min-w-0 rounded-l border-y border-l pl-2.5 pr-1.5']" :title="t('filter.mimeTitle', { mime: files.filter.mime })">
+      <span class="truncate">{{ files.filter.mime }}</span>
+    </span>
+    <button type="button" :class="[CHIP, 'rounded-r border-y border-r pl-1 pr-2']" :aria-label="t('filter.remove')" @click="dropMime()">
       <X :size="14" />
     </button>
   </div>

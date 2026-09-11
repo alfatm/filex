@@ -344,7 +344,8 @@
       }
     },
     "tagTitle": "Tagged “{tag}” — click to remove",
-    "tagEdit": "Change this tag"
+    "tagEdit": "Change this tag",
+    "mimeTitle": "Only files of type {mime}"
   },
   "sort": {
     "name": "Name",
@@ -376,6 +377,7 @@
     "general": "General",
     "type": "Type",
     "location": "Location",
+    "mime": "Type (MIME)",
     "size": "Size",
     "modified": "Modified",
     "created": "Created",

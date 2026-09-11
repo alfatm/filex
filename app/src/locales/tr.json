@@ -344,7 +344,8 @@
       }
     },
     "tagTitle": "“{tag}” etiketi — kaldırmak için tıklayın",
-    "tagEdit": "Bu etiketi değiştir"
+    "tagEdit": "Bu etiketi değiştir",
+    "mimeTitle": "Yalnızca {mime} türündeki dosyalar"
   },
   "sort": {
     "name": "Ad",
@@ -376,6 +377,7 @@
     "general": "Genel",
     "type": "Tür",
     "location": "Konum",
+    "mime": "Tür (MIME)",
     "size": "Boyut",
     "modified": "Değiştirilme",
     "created": "Oluşturulma",

@@ -116,6 +116,12 @@ const rows = computed<{ key: string; value: string; filter?: () => void }[]>(() 
     { key: 'type', value: typeLabel.value, ...(group ? { filter: () => void apply({ fileType: group }) } : {}) },
     // The location is not a filter but an address: clicking it opens the folder the node sits in.
     { key: 'location', value: location.value, ...(props.path.length ? { filter: () => void openLocation() } : {}) },
+    // The MIME type as the server recorded it, and "the other files of exactly this type" when clicked. Shown only
+    // where there is one: a row the server typed nothing for is the Created case again, and an empty line would
+    // read as a claim about the file rather than about what is known of it.
+    ...(node.kind === 'file' && node.mime
+      ? [{ key: 'mime', value: node.mime, filter: () => void apply({ mime: node.mime!.toLowerCase() }) }]
+      : []),
     {
       key: 'size',
       value: node.kind === 'folder' ? '—' : formatSize(node.size),

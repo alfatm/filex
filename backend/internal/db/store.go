@@ -808,7 +808,12 @@ type NodeFacets struct {
 	// filter in the toolbar that widens as you add to it. Tags live in
 	// node_meta as `tag:<value>` rows, so this is the one facet no node row can
 	// answer by itself — see Matches.
-	Tags    []string
+	Tags []string
+	// Mimes keeps the nodes whose recorded MIME type is one of them, compared
+	// lower-case and in full ("image/png", not "image/*"): the details panel
+	// offers the type it is showing, and a prefix match would answer a question
+	// nothing on screen asked. Empty means any type.
+	Mimes   []string
 	SizeMin *int64
 	SizeMax *int64
 	OwnerID *int64
@@ -832,7 +837,7 @@ type NodeFacets struct {
 func (f NodeFacets) Any() bool {
 	return f.PathPrefix != "" || len(f.Exts) > 0 || f.NameContains != "" || f.ModifiedAfter != nil ||
 		f.ModifiedBefore != nil || f.CreatedAfter != nil || f.CreatedBefore != nil || len(f.Tags) > 0 ||
-		f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.FilesOnly ||
+		len(f.Mimes) > 0 || f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.FilesOnly ||
 		f.DirsOnly || f.SharedOnly
 }
 
@@ -875,6 +880,13 @@ func (f NodeFacets) Where(alias, modified string, bind func(any) string) []strin
 		// The wildcards are part of the BOUND pattern rather than spelled around
 		// the placeholder: `||` and CONCAT are two spellings for three engines.
 		where = append(where, "LOWER("+alias+"name) LIKE "+bind("%"+likeEscape(strings.ToLower(f.NameContains))+"%")+likeEscapeClause)
+	}
+	if len(f.Mimes) > 0 {
+		ors := make([]string, 0, len(f.Mimes))
+		for _, mime := range f.Mimes {
+			ors = append(ors, "LOWER("+alias+"mime) = "+bind(mime))
+		}
+		where = append(where, "("+strings.Join(ors, " OR ")+")")
 	}
 	if f.ModifiedAfter != nil {
 		where = append(where, alias+modified+" >= "+bind(*f.ModifiedAfter))
@@ -950,7 +962,7 @@ func (f NodeFacets) Where(alias, modified string, bind func(any) string) []strin
 // alone, and uses this to tell "cannot be judged" from "judged and rejected".
 func (f NodeFacets) NeedsNodeRow() bool {
 	return f.ModifiedAfter != nil || f.ModifiedBefore != nil || f.CreatedAfter != nil || f.CreatedBefore != nil ||
-		len(f.Tags) > 0 || f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.SharedOnly ||
+		len(f.Tags) > 0 || len(f.Mimes) > 0 || f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.SharedOnly ||
 		(f.PathPrefix != "" && f.PathPrefix != "/")
 }
 
@@ -1009,6 +1021,19 @@ func (f NodeFacets) Matches(n *model.Node) bool {
 	}
 	if f.NameContains != "" && !strings.Contains(strings.ToLower(n.Name), strings.ToLower(f.NameContains)) {
 		return false
+	}
+	if len(f.Mimes) > 0 {
+		mime := strings.ToLower(n.Mime)
+		hit := false
+		for _, want := range f.Mimes {
+			if mime == want {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			return false
+		}
 	}
 	if f.ModifiedAfter != nil && (n.BackendMtime == nil || n.BackendMtime.Before(*f.ModifiedAfter)) {
 		return false

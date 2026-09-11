@@ -420,6 +420,7 @@ export const useFilesStore = defineStore('files', () => {
       next.modified === previous.modified &&
       next.size === previous.size &&
       next.personId === previous.personId &&
+      next.mime === previous.mime &&
       next.around === previous.around &&
       next.tags.length === previous.tags.length &&
       next.tags.every((tag, i) => tag === previous.tags[i]);

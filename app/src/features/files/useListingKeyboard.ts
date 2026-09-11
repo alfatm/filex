@@ -1,4 +1,4 @@
-import { computed, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useFilesStore } from '@/stores/files';
 import { useToastStore } from '@/stores/toast';
@@ -67,6 +67,20 @@ export function useListingKeyboard() {
     });
     if (consumed) event.preventDefault();
   }
+
+  /**
+   * Escape abandons a pending cut. On the document rather than in the listing's own handler: after `Cut` from a
+   * row's ⋮ menu the focus is back on that button, and the handler above deliberately leaves buttons their native
+   * keys — so the greyed rows had no key that could put them out. A dialog or a menu owns Escape while it is open.
+   */
+  function onDocumentEscape(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || event.defaultPrevented) return;
+    if (document.querySelector('[role="dialog"], [role="menu"]')) return;
+    clipboard.clear();
+  }
+
+  onMounted(() => document.addEventListener('keydown', onDocumentEscape));
+  onBeforeUnmount(() => document.removeEventListener('keydown', onDocumentEscape));
 
   const activeDescendant = computed(() => (files.focusedId ? `node-${files.focusedId}` : undefined));
 

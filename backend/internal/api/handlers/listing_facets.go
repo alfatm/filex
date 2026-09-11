@@ -65,6 +65,17 @@ func listingFacets(r *http.Request) db.NodeFacets {
 			}
 		}
 	}
+	// `mime=image/png&mime=image/jpeg`, or one comma-separated value — the two
+	// spellings `ext` and `tag` take, and OR between them: the details panel
+	// offers the one type it is showing, and a second is a wider question, not
+	// a contradictory one.
+	for _, raw := range q["mime"] {
+		for _, mime := range strings.Split(raw, ",") {
+			if mime = strings.ToLower(strings.TrimSpace(mime)); mime != "" {
+				f.Mimes = append(f.Mimes, mime)
+			}
+		}
+	}
 	if v := facetInt(q.Get("size_min")); v > 0 {
 		f.SizeMin = &v
 	}
@@ -79,10 +90,10 @@ func listingFacets(r *http.Request) db.NodeFacets {
 	// `name` is a case-insensitive substring of the file name — the toolbar's
 	// quick filter, not the search box: it does not read contents or paths.
 	f.NameContains = strings.TrimSpace(q.Get("name"))
-	// A filter on extension or size is a filter for files: a folder has no
-	// extension and its size is a rollup of its subtree. A date or an owner
-	// keeps folders.
-	f.FilesOnly = len(f.Exts) > 0 || f.SizeMin != nil || f.SizeMax != nil
+	// A filter on extension, MIME type or size is a filter for files: a folder
+	// has neither of the first two and its size is a rollup of its subtree. A
+	// date or an owner keeps folders.
+	f.FilesOnly = len(f.Exts) > 0 || len(f.Mimes) > 0 || f.SizeMin != nil || f.SizeMax != nil
 	return f
 }
 

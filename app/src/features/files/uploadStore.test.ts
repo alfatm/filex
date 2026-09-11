@@ -1,4 +1,5 @@
 import { flushPromises } from '@vue/test-utils';
+import { watchEffect } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { repository } from '@/data';
@@ -99,6 +100,29 @@ describe('upload conflicts, decided by the server', () => {
     expect(upload.mock.calls[1][2]).toMatchObject({ ifExists: 'replace' });
     expect(uploads.items[0].state).toBe('done');
     expect(uploads.pendingConflict).toBeNull();
+  });
+
+  /**
+   * The regression guard for a stall the tests above could not see. Every one of them reads `pendingConflict` for
+   * the first time AFTER the refusal has landed, so the computed is evaluated fresh and the answer is right even
+   * when nothing invalidated it. The tray does the opposite: it renders while the row is still queued, and the
+   * batch then has to make that rendering change. It did not — the batch mutated the raw row that was pushed into
+   * `items`, behind the store's proxy — so the question never reached the screen and the upload sat in the tray
+   * forever with a progress bar and no way to answer it.
+   */
+  it('puts the question on screen for a tray that was already watching', async () => {
+    rule('ask');
+    stubUploads(() => exists('begin'));
+    const uploads = useUploadStore();
+    const seen: (number | null)[] = [];
+    const stop = watchEffect(() => seen.push(uploads.pendingConflict?.id ?? null));
+    expect(seen).toEqual([null]);
+
+    await uploads.start([file('a.txt')], FOLDER);
+    await flushPromises();
+    stop();
+
+    expect(seen.at(-1)).toBe(uploads.items[0].id);
   });
 
   it('finishes the staged session after a refusal at commit — no second upload', async () => {

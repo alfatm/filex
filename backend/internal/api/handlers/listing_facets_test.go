@@ -95,6 +95,16 @@ func TestListingFacets_DateWindowHasBothEdges(t *testing.T) {
 		"a garbled bound reads as no bound, the way an omitted one does")
 }
 
+func TestListingFacets_MimeBothSpellings(t *testing.T) {
+	repeated := listingFacets(httptest.NewRequest("GET", "/manager/star/list?mime=Image/PNG&mime=image/jpeg", nil))
+	commas := listingFacets(httptest.NewRequest("GET", "/manager/star/list?mime=image/png,%20image/jpeg", nil))
+	assert.Equal(t, []string{"image/png", "image/jpeg"}, repeated.Mimes, "lower-cased, the shape the column stores")
+	assert.Equal(t, repeated.Mimes, commas.Mimes)
+	assert.True(t, repeated.FilesOnly, "a folder has no MIME type")
+	assert.True(t, repeated.Any())
+	assert.Empty(t, listingFacets(httptest.NewRequest("GET", "/manager/star/list?mime=%20,", nil)).Mimes, "blank is unset")
+}
+
 func TestListingFacets_TagsBothSpellings(t *testing.T) {
 	repeated := listingFacets(httptest.NewRequest("GET", "/manager/star/list?tag=Design&tag=q3", nil))
 	commas := listingFacets(httptest.NewRequest("GET", "/manager/star/list?tag=design,%20q3", nil))

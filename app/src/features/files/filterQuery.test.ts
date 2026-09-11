@@ -44,6 +44,12 @@ describe('the filter as an address', () => {
     });
   });
 
+  it('carries the MIME type, folded the way the server stores it', () => {
+    expect(toFilterQuery({ ...emptyFilter(), mime: 'image/png' })).toEqual({ mime: 'image/png' });
+    expect(fromFilterQuery({ mime: ' Image/PNG ' }).mime).toBe('image/png');
+    expect(fromFilterQuery({}).mime).toBe('');
+  });
+
   it('folds the tags the way the server stores them, and drops the duplicates', () => {
     expect(fromFilterQuery({ tags: ['Design', ' design ', 'Q3', ''] }).tags).toEqual(['design', 'q3']);
     expect(fromFilterQuery({ tags: 'design' }).tags).toEqual(['design']);

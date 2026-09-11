@@ -21,6 +21,7 @@ export function toFilterQuery(filter: ListingFilter): Record<string, string | st
   if (filter.modified !== neutral.modified) out.modified = filter.modified;
   if (filter.size !== neutral.size) out.size = filter.size;
   if (filter.personId) out.owner = filter.personId;
+  if (filter.mime) out.mime = filter.mime;
   // `tags`, the spelling the advanced search has always used: one vocabulary for one question, whichever screen
   // asks it. The window travels as the three parts `dateWindow` defines.
   if (filter.tags.length) out.tags = [...filter.tags];
@@ -36,6 +37,7 @@ export function fromFilterQuery(raw: LocationQuery): ListingFilter {
     modified: pick(first(raw.modified), MODIFIED_PRESETS, neutral.modified),
     size: pick(first(raw.size), SIZE_PRESETS.filter((size) => size !== 'custom'), neutral.size),
     personId: first(raw.owner) || null,
+    mime: (first(raw.mime) ?? '').trim().toLowerCase(),
     tags: [...new Set(all(raw.tags).map((tag) => tag.trim().toLowerCase()).filter(Boolean))],
     around: fromWindowQuery(raw),
   };

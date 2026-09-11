@@ -20,6 +20,8 @@ export interface Node {
   ownerId: string;
   ownerName?: string;
   itemCount?: number;
+  /** The MIME type the server recorded for the file; absent where it recorded none, and on folders. */
+  mime?: string;
   fileType?: FileType;
   thumbnail?: ThumbnailKind;
   /** URL the server serves the file's own bytes from: the preview modal and downloads read it. */
@@ -458,6 +460,8 @@ export interface ListingFilter {
   personId: string | null;
   /** Case-insensitive substring of the name; "" means any name. Keeps folders, like Modified and People do. */
   name: string;
+  /** The exact MIME type a file has to carry, lower-cased; "" means any. Narrows to files, like Type and Size. */
+  mime: string;
   /** Every tag listed has to be on the node (AND); empty means any. Lower-cased, as the server stores them. */
   tags: string[];
   /** "Written around the same time as that one" — see `DateWindow`; null means any date. */

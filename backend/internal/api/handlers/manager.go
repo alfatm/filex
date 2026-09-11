@@ -871,7 +871,7 @@ func keepDriverObjects(dir string, objs []storage.Object, f db.NodeFacets) []sto
 		if rel == "" {
 			rel = path.Join(dir, o.Name)
 		}
-		n := &model.Node{Name: o.Name, Path: "/" + strings.Trim(rel, "/"), Type: model.NodeTypeFile, Size: o.Size}
+		n := &model.Node{Name: o.Name, Path: "/" + strings.Trim(rel, "/"), Type: model.NodeTypeFile, Size: o.Size, Mime: o.Mime}
 		if o.Kind == storage.KindDirectory {
 			n.Type = model.NodeTypeDirectory
 		}
