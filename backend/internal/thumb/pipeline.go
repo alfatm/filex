@@ -5,9 +5,11 @@
 // / pdf / office). Each generator writes an output JPEG/PNG to the
 // configured cache storage and updates the thumbnails table.
 //
-// Generators that require external binaries (ffmpeg, gs, libreoffice)
-// detect availability up-front via the capability package and gracefully
-// skip when not present.
+// Generators that require external binaries (ffmpeg, gs) detect availability
+// up-front via the capability package and gracefully skip when not present.
+// Office documents are the exception: their converter is normally a separate
+// HTTP service (see AttachOfficeConverter), resolved per call because an admin
+// can point filex at one without a restart.
 package thumb
 
 import (
@@ -47,6 +49,13 @@ type Pipeline struct {
 	body *filebody.Resolver
 
 	caps Capabilities
+	// officeConverter answers the CURRENT office-service URL, empty when none
+	// is configured. A function and not a string because the URL lives in
+	// `external_services`, which an admin can edit while the server runs: a
+	// value captured at boot would make "configure the office service" a
+	// setting that needs a restart, which is the bug internal/external exists
+	// to have removed.
+	officeConverter func(context.Context) string
 	// disabled is FILEX_THUMBS_ENABLED=false, and it is stored NEGATED on
 	// purpose: the zero value has to mean "generate", or a caller that
 	// constructs a pipeline without knowing about the switch (an embedder, a
@@ -62,6 +71,30 @@ func (p *Pipeline) Disable() { p.disabled = true }
 // Enabled reports whether generation is on. Used by the surfaces that would
 // otherwise promise work the pipeline will not do (the admin reset endpoints).
 func (p *Pipeline) Enabled() bool { return p != nil && !p.disabled }
+
+// AttachOfficeConverter wires the lookup for the remote office→PDF service.
+// Optional: with no converter attached, office thumbnails need a local
+// libreoffice, exactly as before.
+func (p *Pipeline) AttachOfficeConverter(fn func(context.Context) string) { p.officeConverter = fn }
+
+// officeUnavailableReason is the `skipped` reason written when a document
+// arrives with nothing to convert it. It names both ways out, because the row
+// it lands on is the only place an operator sees the problem.
+const officeUnavailableReason = "no office converter (set FILEX_LIBREOFFICE_URL, or install libreoffice locally)"
+
+// officeConvertURL is the configured office service, or empty when none is.
+func (p *Pipeline) officeConvertURL(ctx context.Context) string {
+	if p.officeConverter == nil {
+		return ""
+	}
+	return strings.TrimSpace(p.officeConverter(ctx))
+}
+
+// officeReady reports whether office documents can be converted at all —
+// either remotely or by a local binary.
+func (p *Pipeline) officeReady(ctx context.Context) bool {
+	return p.caps.Office || p.officeConvertURL(ctx) != ""
+}
 
 // AttachBody wires the byte-source resolver, so a file that is still being
 // transferred gets its thumbnail from the staged bytes instead of failing
@@ -86,7 +119,7 @@ type Capabilities struct {
 	Video  bool // ffmpeg present in PATH
 	Audio  bool // ffmpeg present (same binary handles audio waveform)
 	PDF    bool // ghostscript or pdftoppm present
-	Office bool // libreoffice/soffice present
+	Office bool // libreoffice/soffice present locally (a remote service is wired separately)
 	SVG    bool // rsvg-convert present (vector→raster)
 }
 
@@ -185,7 +218,7 @@ func (p *Pipeline) GenerateThumb(ctx context.Context, node *model.Node) error {
 		err = p.generateAudio(ctx, node, drv)
 	case mime == "application/pdf" && p.caps.PDF:
 		err = p.generatePDF(ctx, node, drv)
-	case isOfficeMime(mime) && p.caps.Office:
+	case isOfficeMime(mime) && p.officeReady(ctx):
 		err = p.generateOffice(ctx, node, drv)
 	// ⚠⚠ A kind filex CAN render, whose tool is not installed, skips — it does
 	// NOT fall through to the placeholder card below. The card was worse than
@@ -205,7 +238,7 @@ func (p *Pipeline) GenerateThumb(ctx context.Context, node *model.Node) error {
 		_ = p.store.SetThumbnailState(ctx, node.ID, "skipped", "no PDF renderer (gs / pdftoppm) in PATH")
 		return ErrSkipped
 	case isOfficeMime(mime):
-		_ = p.store.SetThumbnailState(ctx, node.ID, "skipped", "libreoffice not in PATH")
+		_ = p.store.SetThumbnailState(ctx, node.ID, "skipped", officeUnavailableReason)
 		return ErrSkipped
 	default:
 		// Kinds filex has NO generator for (3D models, archives, code,

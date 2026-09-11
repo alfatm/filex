@@ -456,7 +456,11 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 		pipelineCaps.Video = cap.Thumbs.Video
 		pipelineCaps.Audio = cap.Thumbs.Audio
 		pipelineCaps.PDF = cap.Thumbs.PDF
-		pipelineCaps.Office = cap.Thumbs.Office
+		// NOT cap.Thumbs.Office: that one is also true for a configured remote
+		// service, and this field means "a local binary is installed". The
+		// remote converter reaches the pipeline through
+		// AttachOfficeConverter below, live rather than at boot.
+		pipelineCaps.Office = cfg.Thumbs.Enabled && thumb.OfficeBinAvailable()
 		pipelineCaps.SVG = cap.Thumbs.SVG
 	}
 	pipeline := thumb.New(store, cfg.Thumbs.CacheDir, pipelineCaps)
@@ -513,10 +517,18 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 		storages: map[int64]storage.Driver{},
 	}
 
-	// External services (OnlyOffice, drawio, converter) resolve from the
+	// External services (OnlyOffice, drawio, converters) resolve from the
 	// `external_services` table on every use, so what the admin UI saves is
 	// what the running process does.
 	extResolver := external.New(store)
+
+	// Office thumbnails go through the same table: the converter is a separate
+	// service (LibreOffice is ~730 MB of packages and a fork per document, so
+	// it does not belong in the filex image), and it can be pointed at a new
+	// URL without a restart like every other external service.
+	pipeline.AttachOfficeConverter(func(ctx context.Context) string {
+		return extResolver.URL(ctx, external.LibreOffice)
+	})
 
 	// OnlyOffice integration.
 	//
@@ -1273,6 +1285,7 @@ func seedExternalDefaults(ctx context.Context, store db.Store, cfg config.Config
 		{name: "onlyoffice", url: cfg.ExternalServices.OnlyOffice.URL, secret: cfg.ExternalServices.OnlyOffice.JWTSecret},
 		{name: "drawio", url: cfg.ExternalServices.Drawio.URL, secret: ""},
 		{name: "convert", url: cfg.ExternalServices.Convert.URL, secret: ""},
+		{name: "libreoffice", url: cfg.ExternalServices.LibreOffice.URL, secret: ""},
 	}
 	for _, d := range defaults {
 		cur, _ := store.GetExternalService(ctx, d.name)

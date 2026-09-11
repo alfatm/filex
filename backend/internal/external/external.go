@@ -1,5 +1,5 @@
 // Package external is the one place the runtime asks "how is OnlyOffice /
-// drawio / the converter configured right now?".
+// drawio / the converters configured right now?".
 //
 // # Why this exists
 //
@@ -16,8 +16,9 @@
 // a capability payload that said "configured", and a 503
 // `{"error":"onlyoffice not configured"}` the moment they opened a document
 // (issue #17). Thumbnails kept working throughout, because the thumbnailer
-// shells out to local binaries and never consults external services at all —
-// that asymmetry is what named the bug.
+// shelled out to local binaries and never consulted external services at all —
+// that asymmetry is what named the bug. It is gone: office thumbnails now
+// resolve their converter (`libreoffice`) from here, per call, for the same reason.
 //
 // # The rule
 //
@@ -43,6 +44,12 @@ const (
 	OnlyOffice = "onlyoffice"
 	Drawio     = "drawio"
 	Convert    = "convert"
+	// LibreOffice is the server-side office→PDF converter for thumbnails. It
+	// is named for the ENGINE and not for the wrapper in front of it: every
+	// candidate implementation (Gotenberg, unoserver, Collabora) drives the
+	// same LibreOffice, so the name survives swapping one for another — and it
+	// is the name the thumbnailer already looked for in $PATH.
+	LibreOffice = "libreoffice"
 )
 
 // Settings is one service's live configuration.

@@ -274,6 +274,15 @@ func (s *Service) refresh(ctx context.Context) (*model.Capabilities, error) {
 				st.State = "disabled"
 			}
 			caps.External[es.Name] = st
+			// The office→PDF service is the one external service a THUMB
+			// kind depends on, so `thumbs.office` has to answer for both
+			// converters. Configured is enough, deliberately: a service that
+			// is momentarily unreachable leaves rows `failed`, which a
+			// backfill retries, whereas advertising office=false would write
+			// them `skipped` — the state nothing re-runs.
+			if es.Name == "libreoffice" && es.Enabled && es.URL != "" && !thumbsDisabled {
+				caps.Thumbs.Office = true
+			}
 		}
 	}
 
@@ -356,8 +365,9 @@ func missingSecret(name, secret string) bool {
 // while the service itself is healthy. Services without an entry (drawio)
 // keep the raw-URL probe.
 var externalHealthPaths = map[string]string{
-	"onlyoffice": "/healthcheck",
-	"convert":    "/healthz",
+	"onlyoffice":  "/healthcheck",
+	"convert":     "/healthz",
+	"libreoffice": "/health",
 }
 
 // externalProbeURL returns the URL to probe for the named service — the

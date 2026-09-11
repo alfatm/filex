@@ -9,6 +9,10 @@
 # (internal/capability) and reports what it found on /api/files/capabilities, so
 # a missing one is a disabled feature with a reason, not a crash.
 #
+# Office documents are the exception in BOTH targets: their converter is a
+# separate service (FILEX_LIBREOFFICE_URL), because bundling LibreOffice costs
+# more than everything else in this file combined.
+#
 # Run:
 #   docker run -p 5212:5212 -v $(pwd)/data:/data filex:full
 #
@@ -146,14 +150,17 @@ CMD ["serve"]
 #   imagemagick            — probed as `magick`/`convert` (capability/service.go).
 #   ghostscript + poppler  — PDF -> JPEG (page 1). gs preferred, pdftoppm as
 #                            fallback (thumb/pdf.go).
-#   libreoffice            — headless `soffice --convert-to pdf` for office docs
-#                            (thumb/office.go). Pulls writer/calc/impress/draw.
-#   openjdk17-jre-headless — LibreOffice's xlsx/docx pipeline calls javaldx for
-#                            chart/formula rendering; without a JRE soffice
-#                            exits 1 and the file lands as state=failed.
 #   rsvg-convert           — SVG rasterisation.
-#   fonts                  — without them libreoffice and Ghostscript render
-#                            non-ASCII as boxes.
+#   fonts                  — without them Ghostscript renders the non-ASCII text
+#                            of a PDF that embeds no font as boxes.
+#
+# ⚠ LibreOffice is NOT here, and adding it back is a mistake that costs ~730 MB
+# (libreoffice 558 MB + the openjdk17 JRE its xlsx/docx pipeline needs, 172 MB —
+# measured on alpine:3.20). Office thumbnails go through a conversion SERVICE
+# instead: set FILEX_LIBREOFFICE_URL at a Gotenberg-compatible endpoint, or
+# turn on the `libreoffice` profile in docker-compose.yml. The local `soffice` path in
+# thumb/office.go is kept only for hosts that already have it installed.
+#
 # This layer is most of the image size; keep it out of the slim target.
 FROM runtime AS runtime-full
 RUN apk --no-cache add \
@@ -161,8 +168,6 @@ RUN apk --no-cache add \
         imagemagick \
         ghostscript \
         poppler-utils \
-        libreoffice \
-        openjdk17-jre-headless \
         rsvg-convert \
         ttf-liberation \
         ttf-dejavu \

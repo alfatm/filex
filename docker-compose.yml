@@ -5,12 +5,15 @@
 #
 #   docker compose up                                     # filex only
 #   docker compose --profile onlyoffice up                # + OnlyOffice editor
+#   docker compose --profile libreoffice up             # + office thumbnails
 #   docker compose --profile postgres --profile minio up  # + Postgres and S3
 #
 # Thumbnails are not a profile — one service cannot be two images. The programs
 # the thumbnailer shells out to live in the `full` image, so set BOTH in `.env`:
 #   FILEX_IMAGE=ghcr.io/brf-tech/filex:full
 #   FILEX_THUMBS_ENABLED=true
+# Office documents are the one kind that does NOT come with `full`: their
+# converter is the `libreoffice` profile below, reached over HTTP.
 #
 # Building from source instead of pulling:
 #
@@ -94,6 +97,16 @@ services:
       FILEX_ONLYOFFICE_JWT: ${FILEX_ONLYOFFICE_JWT:-}
       FILEX_DRAWIO_URL: ${FILEX_DRAWIO_URL:-}
 
+      # Office→PDF conversion for thumbnails of doc/docx/xls/xlsx/ppt/pptx/odf.
+      # Server-side only — unlike OnlyOffice this URL is never handed to a
+      # browser, so the in-network address is the right value:
+      #   COMPOSE_PROFILES=libreoffice
+      #   FILEX_LIBREOFFICE_URL=http://libreoffice:3000
+      # Left EMPTY on purpose when the profile is off: filex would otherwise
+      # mark every office document `failed` against a service that isn't there,
+      # instead of `skipped` with a reason.
+      FILEX_LIBREOFFICE_URL: ${FILEX_LIBREOFFICE_URL:-}
+
       # --- Thumbs ---
       FILEX_THUMBS_ENABLED: ${FILEX_THUMBS_ENABLED:-false}
     healthcheck:
@@ -132,6 +145,40 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    networks:
+      - filex-net
+
+  # ---------------------------------------------------------------------
+  # Office conversion service (profile: libreoffice)
+  # Thumbnails for office documents. This is where LibreOffice lives now —
+  # it is ~730 MB with the JRE it needs, which is why it is not in the filex
+  # image. Gotenberg wraps it in an HTTP API (POST /forms/libreoffice/convert).
+  #
+  # Not published on a host port: only filex talks to it, over filex-net.
+  # There is no healthcheck here because the image carries no HTTP client to
+  # run one with; filex probes /health itself, and Settings → External
+  # services → libreoffice has a Test button.
+  # ---------------------------------------------------------------------
+  # Named for the ENGINE, not for the image in front of it: filex depends on
+  # this name (the external_services row, FILEX_LIBREOFFICE_URL, the admin
+  # page), and every candidate implementation — Gotenberg here, unoserver,
+  # Collabora — drives the same LibreOffice. LIBREOFFICE_IMAGE swaps which one
+  # without touching a line of filex configuration.
+  libreoffice:
+    profiles: ["libreoffice"]
+    image: ${LIBREOFFICE_IMAGE:-gotenberg/gotenberg:8}
+    container_name: filex-libreoffice
+    restart: unless-stopped
+    # filex only ever posts to the LibreOffice route, so the Chromium ones
+    # (render any URL this container can reach, into a PDF) are switched off
+    # rather than left listening. The timeout matches officeConvertTimeout in
+    # backend/internal/thumb/office.go: a service that gave up at its own 30s
+    # default while filex waited two minutes would look like a hang.
+    command:
+      - gotenberg
+      - --api-port=3000
+      - --api-timeout=120s
+      - --chromium-disable-routes=true
     networks:
       - filex-net
 

@@ -336,7 +336,8 @@ labels them.
 | `FILEX_ONLYOFFICE_URL` | OnlyOffice Document Server URL (see [ONLYOFFICE.md](ONLYOFFICE.md)) |
 | `FILEX_ONLYOFFICE_JWT` | Shared JWT secret — must match the Document Server |
 | `FILEX_DRAWIO_URL` | Drawio embed URL (diagram editing) |
-| `FILEX_CONVERT_URL` | External universal converter URL |
+| `FILEX_CONVERT_URL` | External universal converter URL (in-browser, for the Convert action) |
+| `FILEX_LIBREOFFICE_URL` | Office→PDF conversion service for thumbnails, Gotenberg-compatible (server-side). See [thumbnails.md](thumbnails.md#the-office-conversion-service) |
 
 > **Mermaid needs no service.** Mermaid diagrams render entirely client‑side in
 > the browser via a bundled `mermaid` library — there is nothing to deploy and no

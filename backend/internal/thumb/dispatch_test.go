@@ -77,7 +77,7 @@ func TestGenerateThumb_MissingToolSkipsInsteadOfDrawingACard(t *testing.T) {
 		{"clip.mp4", "ffmpeg not in PATH"},
 		{"song.mp3", "ffmpeg not in PATH"},
 		{"report.pdf", "no PDF renderer (gs / pdftoppm) in PATH"},
-		{"sheet.xlsx", "libreoffice not in PATH"},
+		{"sheet.xlsx", "no office converter (set FILEX_LIBREOFFICE_URL, or install libreoffice locally)"},
 		{"vector.svg", "rsvg-convert not in PATH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

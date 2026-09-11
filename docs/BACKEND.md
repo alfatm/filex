@@ -132,7 +132,8 @@ build metadata and a set of flat aliases kept for older embeds)
   "external": {
     "onlyoffice": { "enabled": true, "url": "https://docs.example.com", "state": "ok" },
     "drawio":     { "enabled": false, "url": "", "state": "" },
-    "convert":    { "enabled": false, "url": "", "state": "" }
+    "convert":    { "enabled": false, "url": "", "state": "" },
+    "libreoffice": { "enabled": true, "url": "http://libreoffice:3000", "state": "ok" }
   },
   "onlyoffice_url": "https://docs.example.com",
   "drawio_url": "",

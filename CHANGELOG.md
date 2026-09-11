@@ -279,6 +279,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **LibreOffice is out of the image; office thumbnails come from a service.**
+  It was the single most expensive thing filex shipped — 558 MB, plus the 172 MB
+  OpenJDK 17 JRE its xlsx/docx pipeline needs — which is why the `full` image
+  had grown to 1.28 GB, more than twice what its own documentation claimed. And
+  it was the wrong shape regardless: a whole office suite forked per document,
+  inside the API container, with no memory limit of its own.
+  Office documents now convert over HTTP against a
+  [Gotenberg](https://gotenberg.dev)-compatible service —
+  `FILEX_LIBREOFFICE_URL`, or the new `libreoffice` profile in
+  `docker-compose.yml` — which makes it an entry in `external_services` named
+  `libreoffice`, alongside OnlyOffice and drawio: configurable from
+  *Settings → External services* with **no restart**, with a Test button, and
+  reported on `/api/files/capabilities` as `thumbs.office`. A host that already
+  has `libreoffice` or `soffice` installed keeps using it with no configuration
+  at all; the remote converter wins when both exist.
+  ⚠ **Upgrade note:** an install that relied on the bundled LibreOffice stops
+  rendering office thumbnails until a service is configured. Those documents
+  land `state=skipped` with the reason `no office converter (set
+  FILEX_LIBREOFFICE_URL, or install libreoffice)`, and
+  `filex thumb backfill --retry-skipped` picks them up once one exists. Nothing
+  else regressed: office text still reaches the **search index** and the
+  assistant through the pure-Go OOXML extractors, which never used LibreOffice.
 - **The assistant panel never goes blank while a turn is running.** The
   activity line says "Thinking…" from the question until the first word or
   tool arrives; a turn that says nothing for a minute is dropped and the answer

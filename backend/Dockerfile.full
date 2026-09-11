@@ -1,6 +1,8 @@
 # filex full image — a slim image plus the programs the thumbnailer shells out
-# to. BASE_IMAGE must be an image built from backend/Dockerfile (or the `slim`
-# target of docker/Dockerfile):
+# to. LibreOffice is deliberately absent (~730 MB with its JRE); office
+# thumbnails use a conversion service, FILEX_LIBREOFFICE_URL. BASE_IMAGE must
+# be an image built from backend/Dockerfile (or the `slim` target of
+# docker/Dockerfile):
 #   docker build -f Dockerfile.full --build-arg BASE_IMAGE=filex:slim .
 ARG BASE_IMAGE=filex:slim
 FROM ${BASE_IMAGE}
@@ -10,8 +12,6 @@ RUN apk --no-cache add \
     imagemagick \
     ghostscript \
     poppler-utils \
-    libreoffice \
-    openjdk17-jre-headless \
     rsvg-convert \
     ttf-liberation \
     ttf-dejavu \

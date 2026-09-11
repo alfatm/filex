@@ -77,7 +77,7 @@ Cached JPEGs are released two ways, both described in
 | **Video** | `video/*` — mp4, webm, mov, mkv, avi, … | `ffmpeg` — first frame at ~1 s, scaled to 320 wide | `ffmpeg` |
 | **Audio** | `audio/*` — mp3, wav, ogg, flac, m4a, aac, opus | `ffmpeg` — a 320×120 waveform image (`showwavespic`) | `ffmpeg` |
 | **PDF** | `application/pdf` | Ghostscript renders page 1 at 96 dpi (falls back to poppler) | `gs` **or** `pdftoppm` |
-| **Office** | doc, docx, xls, xlsx, ppt, pptx, odt, ods, odp | LibreOffice headless → PDF → page 1 rendered like a PDF | `libreoffice` (or `soffice`) **and** one of `gs` / `pdftoppm` |
+| **Office** | doc, docx, xls, xlsx, ppt, pptx, odt, ods, odp | LibreOffice → PDF → page 1 rendered like a PDF | an **office conversion service** (`FILEX_LIBREOFFICE_URL`) *or* a local `libreoffice` / `soffice` — **and** one of `gs` / `pdftoppm` |
 | **SVG** | `image/svg+xml` | librsvg rasterises to PNG → re‑encoded to JPEG | `rsvg-convert` |
 | **Placeholder** | everything else — archives, 3D models, code, markdown, rtf, raw docs, … | Built‑in Go — a tinted card with the extension centred (colour hashed from the extension) | **none** |
 
@@ -90,9 +90,10 @@ Notes:
 - **SVG is checked before the generic `image/*` branch**, because Go's decoder
   can't parse SVG. If `rsvg-convert` isn't present the SVG is cleanly
   **`skipped`**, never failed.
-- **Office** goes through **two** tools: LibreOffice to make a PDF, then
-  Ghostscript/poppler to rasterise page 1. It also wants a **JRE** and **fonts**
-  present for reliable conversion (the stock full image ships both).
+- **Office** goes through **two** stages: LibreOffice makes a PDF, then
+  Ghostscript/poppler rasterises page 1. Only the second stage is in the filex
+  image. The first is a **separate service** — see
+  [The office conversion service](#the-office-conversion-service).
 
 ---
 
@@ -105,12 +106,56 @@ Notes:
 | `thumbs.cache_dir` | `<data_dir>/thumbs` | **config.yaml only** | Directory the cached `<id>.jpg` files live in. No env override. |
 | `thumbs.formats` | `[image, video, pdf, office]` | **config.yaml only** | Declares the kind list. No env override. |
 | `FILEX_THUMBS_SWEEP_INTERVAL` | `6h` | env / `thumbs.sweep_interval` | How often the cache is reconciled against the node catalogue. `0` disables the sweeper entirely. See [Reclaiming the cache](#reclaiming-the-cache). |
+| `FILEX_LIBREOFFICE_URL` | *(unset)* | env / `external_services.libreoffice` / admin UI | Base URL of the office→PDF conversion service. The **only** thumbnail setting that is a URL, because it is the only tool that isn't a local binary. Applies **without a restart** when set from *Settings → External services*. See below. |
 
-There is **no env var or config key for the external tools** — filex probes
-`PATH` at boot (`ffmpeg`, `gs`, `pdftoppm`, `libreoffice`/`soffice`,
-`rsvg-convert`) and enables each kind accordingly. In practice a kind renders
-when its MIME type matches **and** its tool is present; `cache_dir` is the
-`thumbs.*` value read at runtime.
+Apart from that one, there is **no env var or config key for the external
+tools** — filex probes `PATH` at boot (`ffmpeg`, `gs`, `pdftoppm`,
+`libreoffice`/`soffice`, `rsvg-convert`) and enables each kind accordingly. In
+practice a kind renders when its MIME type matches **and** its tool is present;
+`cache_dir` is the `thumbs.*` value read at runtime.
+
+---
+
+## The office conversion service
+
+LibreOffice is not in any filex image, and that is deliberate: it costs **~730
+MB** (558 MB plus the 172 MB OpenJDK 17 JRE its xlsx/docx pipeline calls
+`javaldx` from), which is more than everything else in the `full` image put
+together, and it forks a whole office suite per document. So it runs as its own
+service and filex posts documents to it over HTTP.
+
+The protocol is [Gotenberg](https://gotenberg.dev)'s LibreOffice route —
+`POST <url>/forms/libreoffice/convert`, the document in a `files` multipart
+field, a PDF in the response body — so any Gotenberg-compatible deployment
+works. filex uses nothing else from the API.
+
+```dotenv
+COMPOSE_PROFILES=libreoffice
+FILEX_LIBREOFFICE_URL=http://libreoffice:3000
+```
+
+The bundled `libreoffice` profile in `docker-compose.yml` runs
+`gotenberg/gotenberg:8` on the internal network with the Chromium routes turned
+off. The URL is **server-side only** — unlike OnlyOffice it is never handed to a
+browser — so an in-network address is the correct value, and the service should
+not be published on a host port.
+
+It is an entry in `external_services` like OnlyOffice and drawio — named
+`libreoffice`, kept deliberately distinct from `onlyoffice`, which sits next
+to it in the same list and does something entirely different (editing in a
+browser, never conversion). Which means
+*Settings → External services → libreoffice* can point filex at one live, with a
+**Test** button that probes `GET <url>/health`, and `/api/files/capabilities`
+reports `thumbs.office` true once a URL is configured.
+
+**Without either converter**, office documents land `state=skipped` with the
+reason `no office converter (set FILEX_LIBREOFFICE_URL, or install
+libreoffice)` —
+recoverable with `filex thumb backfill --retry-skipped` once one exists.
+
+> A host that already has `libreoffice` or `soffice` installed keeps using it,
+> with no service and no configuration. The remote converter wins when both are
+> available.
 
 ---
 
@@ -165,11 +210,16 @@ unlock the richer kinds:
 ```
 ffmpeg          → video + audio thumbnails
 ghostscript     → PDF (page 1)  ┐ office docs render via
-poppler-utils   → PDF fallback  ┘ LibreOffice → PDF → these
-libreoffice     → doc/docx/xls/xlsx/ppt/pptx/odt/ods/odp
-openjdk17-jre   → LibreOffice's conversion pipeline
-fonts (noto/liberation/dejavu)  → so office/PDF text isn't rendered as boxes
+poppler-utils   → PDF fallback  ┘ the office service → PDF → these
+rsvg-convert    → SVG
+imagemagick     → probed as `magick` / `convert`
+fonts (noto/liberation/dejavu)  → so PDF text isn't rendered as boxes
 ```
+
+> **LibreOffice is not in the list** — office documents need the
+> [conversion service](#the-office-conversion-service). It used to be bundled,
+> and dropping it took the `full` image from **1.28 GB to 535 MB** (`slim` is
+> 179 MB and carries none of these).
 
 > The stock `full` image ships `rsvg-convert` (librsvg) too, so SVG thumbnails
 > work on it. Whatever image you run, the definitive check for what's actually
@@ -325,7 +375,8 @@ and then `filex thumb backfill`.
   image previews plus placeholder cards for everything else.
 - **Missing tool for video / audio / PDF / office** → state **`skipped`**, with the
   missing tool named in the row's `error` (`ffmpeg not in PATH`, `no PDF renderer
-  (gs / pdftoppm) in PATH`, `libreoffice not in PATH`). No JPEG is written and the
+  (gs / pdftoppm) in PATH`, `no office converter (set
+  FILEX_LIBREOFFICE_URL, or install libreoffice)`). No JPEG is written and the
   client draws its own per‑type artwork.
 
   > ⚠ Until v0.35 these became a **placeholder card in state `ready`** instead —
