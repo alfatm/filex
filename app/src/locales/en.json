@@ -443,8 +443,6 @@
     "close": "Close",
     "previous": "Previous file",
     "next": "Next file",
-    "zoomIn": "View at actual size",
-    "zoomOut": "Fit to screen",
     "loading": "Loading preview…",
     "loadError": "The file could not be loaded.",
     "noPreview": "No preview available",

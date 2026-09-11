@@ -76,7 +76,7 @@ export function defaultSettings(): Settings {
     compactList: false,
     timeZone: browserZone(),
     defaultUploadFolder: '',
-    autoOpenPreview: true,
+    autoOpenPreview: false,
     conflictBehavior: 'ask',
     assistantEnabled: true,
     assistantMode: 'filename',

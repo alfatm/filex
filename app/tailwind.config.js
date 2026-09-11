@@ -72,6 +72,13 @@ export default {
         'control-md': 'var(--control-md)',
         'control-lg': 'var(--control-lg)',
       },
+      // A row that holds smaller controls still stands as tall as one control, so a bar swapped into its place
+      // (the selection bar over the filters) does not move everything below it.
+      minHeight: {
+        'control-sm': 'var(--control-sm)',
+        'control-md': 'var(--control-md)',
+        'control-lg': 'var(--control-lg)',
+      },
       fontSize: {
         // px scale from the spec; line-height 1 for single-line rows is set per element.
         '10': ['10px', '1.5'],

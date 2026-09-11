@@ -189,8 +189,7 @@ function onContextMenu(node: Node, event: MouseEvent) {
               <Checkbox
                 :label="t('files.selectItem', { name: node.name })"
                 :model-value="files.isSelected(node.id)"
-                @update:model-value="files.toggle(node.id)"
-                @click.stop
+                @click.stop="files.select(node.id, { toggle: true, range: $event.shiftKey })"
               />
             </td>
             <td>

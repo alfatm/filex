@@ -42,7 +42,59 @@ const meta = computed(() => {
 // Star state is local: the listing refresh replaces the nodes behind `props.nodes`, not the copies held here.
 const starred = ref(current.value.starred);
 const sharing = ref(false);
-const zoomed = ref(false);
+
+// Free zoom/pan of the image preview: the wheel scales around the cursor, dragging pans, double-click resets.
+const MIN_SCALE = 0.1;
+const MAX_SCALE = 20;
+/** Wheel delta (px) to log-scale factor; one notch (~100px) is about 1.16x. */
+const ZOOM_SENSITIVITY = 0.0015;
+
+const scale = ref(1);
+const offsetX = ref(0);
+const offsetY = ref(0);
+const panning = ref(false);
+let panOrigin = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
+
+const zoomLabel = computed(() => `${Math.round(scale.value * 100)}%`);
+
+function resetZoom() {
+  scale.value = 1;
+  offsetX.value = 0;
+  offsetY.value = 0;
+}
+
+function onWheel(event: WheelEvent) {
+  event.preventDefault();
+  const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  // Cursor relative to the box centre, which is where the image transform is anchored.
+  const cursorX = event.clientX - (box.left + box.width / 2);
+  const cursorY = event.clientY - (box.top + box.height / 2);
+  const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale.value * Math.exp(-event.deltaY * ZOOM_SENSITIVITY)));
+  const ratio = next / scale.value;
+  // Keep the image point under the cursor in place.
+  offsetX.value = cursorX - (cursorX - offsetX.value) * ratio;
+  offsetY.value = cursorY - (cursorY - offsetY.value) * ratio;
+  scale.value = next;
+}
+
+function onPanStart(event: PointerEvent) {
+  if (event.button !== 0) return;
+  panning.value = true;
+  panOrigin = { x: event.clientX, y: event.clientY, offsetX: offsetX.value, offsetY: offsetY.value };
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+}
+
+function onPanMove(event: PointerEvent) {
+  if (!panning.value) return;
+  offsetX.value = panOrigin.offsetX + (event.clientX - panOrigin.x);
+  offsetY.value = panOrigin.offsetY + (event.clientY - panOrigin.y);
+}
+
+function onPanEnd(event: PointerEvent) {
+  if (!panning.value) return;
+  panning.value = false;
+  (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+}
 
 // Fetched content of text-like files.
 type Status = 'loading' | 'ready' | 'error';
@@ -84,7 +136,7 @@ watch(
   current,
   (node) => {
     starred.value = node.starred;
-    zoomed.value = false;
+    resetZoom();
     lines.value = [];
     rows.value = [];
     void repository.recordOpen(node.id);
@@ -184,15 +236,33 @@ const CLOSE_CLASS =
           </button>
         </template>
 
-        <div v-if="kind === 'image'" class="max-h-[80vh] max-w-[90vw] overflow-auto">
+        <div
+          v-if="kind === 'image'"
+          class="absolute inset-0 flex touch-none items-center justify-center overflow-hidden"
+          :class="panning ? 'cursor-grabbing' : 'cursor-grab'"
+          @wheel="onWheel"
+          @pointerdown="onPanStart"
+          @pointermove="onPanMove"
+          @pointerup="onPanEnd"
+          @pointercancel="onPanEnd"
+          @dblclick="resetZoom"
+        >
           <img
             :key="current.id"
             :src="current.assetUrl"
             :alt="current.name"
-            :class="zoomed ? 'max-w-none cursor-zoom-out' : 'max-h-[80vh] max-w-[90vw] cursor-zoom-in object-contain'"
-            :title="t(zoomed ? 'preview.zoomOut' : 'preview.zoomIn')"
-            @click="zoomed = !zoomed"
+            draggable="false"
+            class="max-h-full max-w-full select-none object-contain"
+            :style="{ transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})` }"
           />
+          <!-- Only while zoomed: at fit-to-screen the number says nothing. -->
+          <p
+            v-if="scale !== 1"
+            class="pointer-events-none absolute bottom-5 left-1/2 -translate-x-1/2 rounded-full bg-white/10 px-2.5 py-1 text-11 leading-none text-white/60 tabular-nums"
+            aria-live="off"
+          >
+            {{ zoomLabel }}
+          </p>
         </div>
 
         <video v-else-if="kind === 'video'" :key="current.id" :src="current.assetUrl" controls autoplay muted playsinline class="max-h-[80vh] max-w-[90vw] rounded-lg" />

@@ -2,6 +2,7 @@
 /bin/
 /goreleaser-dist/
 /backend/dist/
+/backend/data/
 /backend/embed/web/
 /backend/embed/admin/
 /backend/embed/app/

@@ -152,11 +152,11 @@ watch(
       </div>
     </div>
 
-    <!-- Multi-selection only (single selection keeps the filters); centred on the 38px filter row it replaces, so nothing below moves. -->
+    <!-- Multi-selection only (single selection keeps the filters); the same control-md height as the filter row it replaces, so nothing below moves. -->
     <SelectionBar v-if="files.selected.length >= 2" class="mt-2" :class="view.mode === 'list' && 'mr-[9px]'" />
     <!-- The row WRAPS rather than squeezing: the chips set from the details panel are as many as the node has
          tags, and on one fixed line they pushed the name box and the sort control off the page. It keeps the
-         38px height until there is a second line to draw. -->
+         control-md height until there is a second line to draw. -->
     <div v-else class="mt-2 flex min-h-control-md flex-wrap items-center gap-2">
       <div role="group" :aria-label="t('filter.title')" class="flex min-w-0 flex-wrap items-center gap-2">
         <FilterChip v-for="id in FILTERS" :key="id" :id="id" />

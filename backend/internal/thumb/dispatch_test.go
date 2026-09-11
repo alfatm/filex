@@ -188,9 +188,9 @@ func TestGenerateThumb_UnknownExtensionKeepsTheCataloguedMime(t *testing.T) {
 	// Routed as an image, not to the placeholder card: the small-image branch
 	// it lands on fires only for a browser image MIME, which nothing but the
 	// catalogued value could have supplied here.
-	require.ErrorIs(t, p.GenerateThumb(ctx, n), thumb.ErrSkipped)
+	require.NoError(t, p.GenerateThumb(ctx, n))
 	row, err := store.GetThumbnail(ctx, n.ID)
 	require.NoError(t, err)
-	require.Equal(t, "skipped", row.State)
-	require.Equal(t, "small image, served as-is", row.Error)
+	require.Equal(t, "ready", row.State)
+	require.Equal(t, thumb.OriginalKey, row.StorageKey, "served as-is, not re-encoded")
 }

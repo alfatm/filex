@@ -42,7 +42,10 @@ export function itemMenuEntries(t: Composer['t'], node: Node, can: Capabilities)
   }
   const folder = node.kind === 'folder';
   return [
-    { id: 'open', label: t('menu.open'), icon: ExternalLink },
+    // Open means "open in an editor", which a folder answers by navigating into itself. No editor is built for a
+    // file yet, so the entry is left out rather than repeating what Preview already does; it returns per file type
+    // as the editors land.
+    ...(folder ? [{ id: 'open', label: t('menu.open'), icon: ExternalLink }] : []),
     { id: 'preview', label: t('menu.preview'), icon: Eye, disabled: folder, hint: off },
     // A folder download is one archive, which needs an endpoint of its own.
     { id: 'download', label: t('menu.download'), icon: Download, ...gate(folder ? can.folderDownload : true, 'files.download') },

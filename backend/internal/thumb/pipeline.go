@@ -33,11 +33,23 @@ import (
 var ErrSkipped = errors.New("thumb: skipped")
 
 // SmallImageBytes is the size under which a browser-renderable image is not
-// thumbnailed at all: the client shows the file itself as its tile, so a
-// 320px JPEG next to a 100 KB original would cost a render and a cache file
-// to save nothing. The client applies the same number (SMALL_IMAGE_BYTES in
-// app/src/data/http/map.ts); the two must move together.
+// re-encoded: the file itself IS its tile, so a 320px JPEG next to a 100 KB
+// original would cost a render and a cache file to save nothing. The client
+// applies the same number (SMALL_IMAGE_BYTES in app/src/data/http/map.ts); the
+// two must move together.
 const SmallImageBytes = 500 * 1024
+
+// OriginalKey marks a thumbnail row whose picture IS the file: a small browser
+// image, served byte for byte with no re-encode behind it. The row is `ready`
+// like any other — what changes is where the bytes come from, so the serving
+// side reads this instead of looking for a file in the cache directory.
+//
+// ⚠ These used to be written as `skipped`, which meant the listing carried no
+// `thumb_url` at all for them and every client had to know the size rule and
+// reconstruct the original's URL itself to show anything. A skipped row also
+// reads as "there is no preview here" to the backfill and to the admin
+// surfaces, which was never true of these files.
+const OriginalKey = "original"
 
 // Pipeline coordinates thumbnail generation.
 type Pipeline struct {
@@ -196,6 +208,9 @@ func (p *Pipeline) GenerateThumb(ctx context.Context, node *model.Node) error {
 	if byExt := mimeFromName(node.Name); byExt != "" {
 		mime = byExt
 	}
+	// Probed once, not per branch: the header read is cheap but it is still a
+	// read of the file, and two of the cases below ask the same question.
+	animatedWebP := mime == "image/webp" && p.webpAnimated(ctx, drv, node)
 	var err error
 	switch {
 	// SVG must come BEFORE the generic image/* branch — Go's stdlib
@@ -207,9 +222,29 @@ func (p *Pipeline) GenerateThumb(ctx context.Context, node *model.Node) error {
 	case mime == "image/svg+xml":
 		_ = p.store.SetThumbnailState(ctx, node.ID, "skipped", "rsvg-convert not in PATH")
 		return ErrSkipped
-	case isBrowserImage(mime) && node.Size > 0 && node.Size < SmallImageBytes:
-		_ = p.store.SetThumbnailState(ctx, node.ID, "skipped", "small image, served as-is")
+	// Animated WebP first, at ANY size: the image generator cannot decode one
+	// at all (see animated.go), so without this branch every animated WebP on
+	// the installation records a decode failure instead of a picture.
+	case animatedWebP && p.caps.Video:
+		err = p.generateAnimatedWebP(ctx, node, drv)
+	case animatedWebP:
+		_ = p.store.SetThumbnailState(ctx, node.ID, "skipped", animatedWebPReason)
 		return ErrSkipped
+	// A still image small enough to stand as its own tile: the row goes ready
+	// with the ORIGINAL bytes behind it — no re-encode, no cache file, nothing
+	// resized. An animated GIF is the exception: served as-is it would play in
+	// the listing, so it goes to the image generator, whose gif.Decode hands
+	// back the first frame.
+	case isBrowserImage(mime) && node.Size > 0 && node.Size < SmallImageBytes:
+		if mime == "image/gif" && p.gifAnimated(ctx, drv, node) {
+			err = p.generateImage(ctx, node, drv)
+			break
+		}
+		now := time.Now()
+		_ = p.store.UpsertThumbnail(ctx, &model.Thumbnail{
+			NodeID: node.ID, State: "ready", StorageKey: OriginalKey, GeneratedAt: &now,
+		})
+		return nil
 	case strings.HasPrefix(mime, "image/"):
 		err = p.generateImage(ctx, node, drv)
 	case strings.HasPrefix(mime, "video/") && p.caps.Video:
@@ -279,6 +314,27 @@ func (p *Pipeline) GenerateThumb(ctx context.Context, node *model.Node) error {
 func (p *Pipeline) CachePath(nodeID int64) string {
 	return fmt.Sprintf("%s/%d.jpg", p.cacheDir, nodeID)
 }
+
+// OpenOriginal opens the bytes behind an OriginalKey row — the file itself,
+// which for a small image is what the thumbnail endpoints stream. Same door as
+// every generator reads through, so a file still being transferred serves from
+// the staging area rather than 404ing against a driver that has nothing yet.
+func (p *Pipeline) OpenOriginal(ctx context.Context, node *model.Node) (io.ReadCloser, error) {
+	if p == nil || node == nil {
+		return nil, errors.New("thumb: no node")
+	}
+	drv, ok := p.storages[node.StorageID]
+	if !ok {
+		return nil, errors.New("thumb: no driver attached for storage")
+	}
+	return p.openSource(ctx, drv, node)
+}
+
+// MimeOf is the pipeline's extension→MIME table, for the serving side: an
+// OriginalKey tile answers with the file's own type, and that decision has to
+// come from the same table the dispatcher routed on rather than a second copy
+// of it. Empty for a name the pipeline has no opinion about.
+func MimeOf(name string) string { return mimeFromName(name) }
 
 // mimeFromName picks a thumbnail-pipeline-relevant MIME class from the
 // file extension. This is INTENTIONALLY narrow — the pipeline only

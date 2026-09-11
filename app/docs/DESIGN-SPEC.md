@@ -654,7 +654,16 @@ belongs to the folder it was typed in. It counts as a filter for the empty state
   naming a folder that is gone — replaces the listing with a message and a
   "Try again" button; the shell around it stays usable.
 - **Search results** carry a "Refine" button that reopens Advanced search on
-  the query behind the chips.
+  the query behind the chips, and a **drive picker** left of the count: a
+  `HardDrive` select, w 176, "All drives" first and then every drive the account
+  can see. It is a real narrowing rather than a sieve over the page — the drive
+  travels to the server as its row id, so the count beside it is that drive's
+  count and not "what survived of the first hundred". Picking a drive while the
+  scope is "Current folder" widens the scope to that whole drive: the folder
+  scope already names a folder on one drive, and two controls quietly overriding
+  each other is the contradiction the Path box was taught not to have. A drive
+  whose row id the server did not send (an older build) is offered disabled
+  rather than silently searching everything.
 - **Cut and paste** (Ctrl/Cmd+X, Ctrl/Cmd+V, and the two menus) is a move in
   two steps: cut rows stay in place at 50% opacity until they land. Paste
   targets the open folder, so it is disabled on the flat listings, and it
@@ -751,6 +760,13 @@ that box always was, **Skip this** is its negative. One path per mode, not a
 list: a second exclusion is one more click from a result row, and a list in that
 corner of the form would need a chip rack, an empty state and a scroll — three
 things for a case the rows already answer.
+
+⚠ **An exclusion names folders, not a place.** A chip reading `− /Design/Old`
+was taken off one row, but what travels to the server is the folder names, and a
+node's stored path starts below its drive — so on a multi-drive answer it hides
+`Design/Old` wherever it occurs. That is the honest reading of what the operator
+can express, and the fix when it is not what was meant is the drive picker
+beside the count (§7b), which narrows the whole answer to one drive.
 
 The box completes against the paths this browser has searched with before — see
 §7e — and not against the folders that exist. An exclusion that names nothing is

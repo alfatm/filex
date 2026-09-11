@@ -18,8 +18,10 @@ package thumb_test
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/png"
 	"os"
 	"testing"
@@ -46,6 +48,56 @@ func pngBytes(t *testing.T, w, h int) []byte {
 	}
 	var buf bytes.Buffer
 	require.NoError(t, png.Encode(&buf, img))
+	return buf.Bytes()
+}
+
+// animatedGifBytes is a two-frame GIF: the smallest thing that must NOT be
+// served as its own tile.
+func animatedGifBytes(t *testing.T, w, h int) []byte {
+	t.Helper()
+	frames := make([]*image.Paletted, 2)
+	delays := make([]int, 2)
+	for i := range frames {
+		f := image.NewPaletted(image.Rect(0, 0, w, h), color.Palette{color.Black, color.White})
+		f.SetColorIndex(i, 0, uint8(i))
+		frames[i] = f
+		delays[i] = 10
+	}
+	var buf bytes.Buffer
+	require.NoError(t, gif.EncodeAll(&buf, &gif.GIF{Image: frames, Delay: delays}))
+	return buf.Bytes()
+}
+
+// stillGifBytes is a one-frame GIF — the same format, nothing to play.
+func stillGifBytes(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewPaletted(image.Rect(0, 0, w, h), color.Palette{color.Black, color.White})
+	img.SetColorIndex(1, 1, 1)
+	var buf bytes.Buffer
+	require.NoError(t, gif.Encode(&buf, img, nil))
+	return buf.Bytes()
+}
+
+// webpBytes is a WebP header and nothing else. The pipeline decides whether a
+// WebP animates from the container alone, so the frames it would hold are not
+// part of what is being measured: an extended file carrying the ANIM flag, or
+// a plain lossy one that cannot animate at all.
+func webpBytes(t *testing.T, animated bool) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	buf.WriteString("RIFF")
+	require.NoError(t, binary.Write(&buf, binary.LittleEndian, uint32(24)))
+	buf.WriteString("WEBP")
+	if !animated {
+		buf.WriteString("VP8 ")
+		buf.Write(make([]byte, 12))
+		return buf.Bytes()
+	}
+	buf.WriteString("VP8X")
+	require.NoError(t, binary.Write(&buf, binary.LittleEndian, uint32(10)))
+	const animFlag = 0x02
+	buf.WriteByte(animFlag)
+	buf.Write(make([]byte, 9))
 	return buf.Bytes()
 }
 
@@ -124,24 +176,26 @@ func TestThumbnailFailureFromAPluginIsRecorded(t *testing.T) {
 	require.NotEmpty(t, row.Error, "a failed thumbnail with no reason cannot be diagnosed")
 }
 
-// Under SmallImageBytes a browser-renderable image is its own tile: the
-// pipeline records the verdict and renders nothing, so no cache file appears
-// and a backfill does not pick the row up again.
-func TestSmallImageIsSkippedNotRendered(t *testing.T) {
+// Under SmallImageBytes a browser-renderable image is its own tile: the row is
+// ready and points at the ORIGINAL, so every client gets a thumb_url for it,
+// and nothing is re-encoded — no cache file appears and a backfill leaves the
+// row alone.
+func TestSmallImageIsServedAsItsOriginal(t *testing.T) {
 	store, pipe, st, p := pluginPipeline(t)
 	src := pngBytes(t, 64, 64)
 	p.SeedBytes("kucuk.png", src)
 	n := fileNode(t, store, st, "/kucuk.png", "kucuk.png", int64(len(src)))
 	require.Less(t, n.Size, int64(thumb.SmallImageBytes), "fixture must sit under the threshold")
 
-	require.ErrorIs(t, pipe.GenerateThumb(context.Background(), n), thumb.ErrSkipped)
+	require.NoError(t, pipe.GenerateThumb(context.Background(), n))
 
 	row, err := store.GetThumbnail(context.Background(), n.ID)
 	require.NoError(t, err)
 	require.NotNil(t, row)
-	require.Equal(t, "skipped", row.State)
+	require.Equal(t, "ready", row.State)
+	require.Equal(t, thumb.OriginalKey, row.StorageKey, "the tile IS the file")
 	_, err = os.Stat(pipe.CachePath(n.ID))
-	require.True(t, os.IsNotExist(err), "a skipped image must leave no cache file")
+	require.True(t, os.IsNotExist(err), "the original must not be re-encoded into the cache")
 
 	// The same bytes claimed to be larger go through the image path as before.
 	p.SeedBytes("buyuk.png", src)
@@ -150,6 +204,63 @@ func TestSmallImageIsSkippedNotRendered(t *testing.T) {
 	row, err = store.GetThumbnail(context.Background(), big.ID)
 	require.NoError(t, err)
 	require.Equal(t, "ready", row.State, "thumbnail error: %s", row.Error)
+}
+
+// An ANIMATED image under the size threshold is the exception to serving the
+// original: a tile that plays turns a listing into a wall of moving pictures,
+// so it is rendered to a still frame like any larger image.
+func TestSmallAnimatedGifIsStilledNotServedAsItsOriginal(t *testing.T) {
+	store, pipe, st, p := pluginPipeline(t)
+	src := animatedGifBytes(t, 32, 32)
+	p.SeedBytes("oynayan.gif", src)
+	n := fileNode(t, store, st, "/oynayan.gif", "oynayan.gif", int64(len(src)))
+	require.Less(t, n.Size, int64(thumb.SmallImageBytes), "fixture must sit under the threshold")
+
+	require.NoError(t, pipe.GenerateThumb(context.Background(), n))
+
+	row, err := store.GetThumbnail(context.Background(), n.ID)
+	require.NoError(t, err)
+	require.Equal(t, "ready", row.State)
+	require.NotEqual(t, thumb.OriginalKey, row.StorageKey, "an animated tile must not be the file itself")
+	require.FileExists(t, pipe.CachePath(n.ID), "the still frame is a rendered JPEG")
+
+	// A single-frame GIF is not animated and keeps its original: the exception
+	// must be about frames, not about the format.
+	still := stillGifBytes(t, 32, 32)
+	p.SeedBytes("duran.gif", still)
+	n2 := fileNode(t, store, st, "/duran.gif", "duran.gif", int64(len(still)))
+	require.NoError(t, pipe.GenerateThumb(context.Background(), n2))
+	row2, err := store.GetThumbnail(context.Background(), n2.ID)
+	require.NoError(t, err)
+	require.Equal(t, thumb.OriginalKey, row2.StorageKey)
+}
+
+// An animated WebP cannot be decoded by the image generator at all, so on an
+// install without ffmpeg it skips WITH THE REASON — it does not record a decode
+// failure, and it must never be served as-is, whatever its size.
+func TestSmallAnimatedWebPSkipsWithItsReason(t *testing.T) {
+	store, pipe, st, p := pluginPipeline(t)
+	src := webpBytes(t, true)
+	p.SeedBytes("oynayan.webp", src)
+	n := fileNode(t, store, st, "/oynayan.webp", "oynayan.webp", int64(len(src)))
+
+	require.ErrorIs(t, pipe.GenerateThumb(context.Background(), n), thumb.ErrSkipped)
+
+	row, err := store.GetThumbnail(context.Background(), n.ID)
+	require.NoError(t, err)
+	require.Equal(t, "skipped", row.State)
+	require.Contains(t, row.Error, "ffmpeg", "the row is where an operator reads what is missing")
+	require.NotEqual(t, thumb.OriginalKey, row.StorageKey, "an animation must not be its own tile")
+
+	// A still WebP of the same size is not animated and keeps its original.
+	still := webpBytes(t, false)
+	p.SeedBytes("duran.webp", still)
+	n2 := fileNode(t, store, st, "/duran.webp", "duran.webp", int64(len(still)))
+	require.NoError(t, pipe.GenerateThumb(context.Background(), n2))
+	row2, err := store.GetThumbnail(context.Background(), n2.ID)
+	require.NoError(t, err)
+	require.Equal(t, "ready", row2.State)
+	require.Equal(t, thumb.OriginalKey, row2.StorageKey)
 }
 
 // ⚠ NOT MEASURED, and deliberately so: the video, audio, PDF and office

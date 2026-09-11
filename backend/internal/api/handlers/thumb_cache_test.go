@@ -14,6 +14,7 @@ package handlers_test
 import (
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -21,6 +22,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/brf-tech/filex/backend/internal/api"
+	"github.com/brf-tech/filex/backend/internal/model"
+	"github.com/brf-tech/filex/backend/internal/pathkey"
+	"github.com/brf-tech/filex/backend/internal/storage/drivers/local"
 	"github.com/brf-tech/filex/backend/internal/testutil"
 	"github.com/brf-tech/filex/backend/internal/thumb"
 )
@@ -97,4 +101,58 @@ func TestThumbsReset_WithThumbnailsSwitchedOffIs503(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 	require.FileExists(t, path, "a refused reset must not have cleared anything")
 	assert.Zero(t, backfills)
+}
+
+// A small image is served as its own file, with no cached JPEG behind it — and
+// that response has to carry a validator and a length like any other.
+//
+// ⚠ The regression this exists for: the first cut of that path took its
+// validator from node.Etag, which a LOCAL storage never fills. The answer was
+// then `no-cache` with nothing to revalidate against, so every visit to the
+// folder re-downloaded the whole picture and the tile appeared with a visible
+// delay — the one thing serving the original was supposed to avoid.
+func TestThumbServe_OriginalTileCarriesAValidatorWithoutAnEtag(t *testing.T) {
+	root := t.TempDir()
+	cache := t.TempDir()
+	var pipe *thumb.Pipeline
+	srv, client, store := testutil.NewTestServerWith(t, nil, func(d *api.Deps) {
+		pipe = thumb.New(d.Store, cache, thumb.Capabilities{Image: true})
+		d.Thumbs = pipe
+	})
+	email, pw := testutil.SeedAdmin(t, store)
+	testutil.LoginAs(t, srv, client, email, pw)
+
+	ctx := t.Context()
+	drv := &local.Driver{}
+	require.NoError(t, drv.Init(ctx, map[string]any{"root": root}))
+	st, err := store.CreateStorage(ctx, &model.Storage{
+		Name: "kucuk", Driver: "local", MountPath: "kucuk", Enabled: true, ConfigJSON: []byte(`{}`),
+	})
+	require.NoError(t, err)
+	pipe.AttachStorage(st.ID, drv)
+
+	body := []byte("not really a PNG, but bytes with a length")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "kucuk.png"), body, 0o644))
+	// No Etag on the row: exactly what a local storage catalogues.
+	n, err := store.CreateNode(ctx, &model.Node{
+		StorageID: st.ID, Name: "kucuk.png", Path: "/kucuk.png",
+		PathHash: pathkey.Hash(st.ID, "/kucuk.png"), Type: model.NodeTypeFile, Size: int64(len(body)),
+	})
+	require.NoError(t, err)
+	require.Empty(t, n.Etag, "the fixture is only honest while the row has no etag")
+	require.NoError(t, store.UpsertThumbnail(ctx, &model.Thumbnail{
+		NodeID: n.ID, State: "ready", StorageKey: thumb.OriginalKey,
+	}))
+
+	first := getThumb(t, client, srv.URL, n.ID, "")
+	defer first.Body.Close()
+	require.Equal(t, http.StatusOK, first.StatusCode)
+	etag := first.Header.Get("ETag")
+	require.NotEmpty(t, etag, "without a validator every visit re-downloads the picture")
+	assert.Equal(t, strconv.Itoa(len(body)), first.Header.Get("Content-Length"))
+	assert.Contains(t, first.Header.Get("Cache-Control"), "max-age")
+
+	second := getThumb(t, client, srv.URL, n.ID, etag)
+	defer second.Body.Close()
+	assert.Equal(t, http.StatusNotModified, second.StatusCode, "an unchanged file costs no bytes")
 }

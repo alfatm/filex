@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/brf-tech/filex/backend/internal/db"
+	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/thumb"
 )
 
@@ -49,6 +51,14 @@ func (h *Thumb) Serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not ready", http.StatusNotFound)
 		return
 	}
+	// A small image is its own tile: no cache file was ever written for it.
+	if t.StorageKey == thumb.OriginalKey {
+		node, nerr := h.Store.GetNode(r.Context(), id)
+		if nerr != nil || !writeOriginalTile(w, r, h.Pipeline, node) {
+			http.Error(w, "missing", http.StatusNotFound)
+		}
+		return
+	}
 	path := h.Pipeline.CachePath(id)
 	f, err := os.Open(path)
 	if err != nil {
@@ -79,6 +89,74 @@ func (h *Thumb) Serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "private, no-cache")
 	_, _ = copyFileToResponse(w, f)
+}
+
+// writeOriginalTile streams the file itself as its own tile — the OriginalKey
+// contract for an image small enough that resizing it would save nothing.
+// Reports whether a response was written; false leaves the status to the
+// caller, which is the only safe order once bytes are out.
+//
+// ⚠ It MUST answer with a validator and a length. There is no cache file to
+// derive either from, and the first cut of this handler leaned on node.Etag
+// alone — which a local storage does not fill. A `no-cache` response with no
+// validator is the worst answer there is: the browser asks every time and gets
+// the whole picture back every time, so a 400 KB tile was re-downloaded on
+// every visit to the folder and rendered with a visible lag.
+func writeOriginalTile(w http.ResponseWriter, r *http.Request, p *thumb.Pipeline, node *model.Node) bool {
+	if p == nil || node == nil {
+		return false
+	}
+	if etag := originalTileETag(node); etag != "" {
+		w.Header().Set("ETag", etag)
+		if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return true
+		}
+	}
+	rc, err := p.OpenOriginal(r.Context(), node)
+	if err != nil {
+		return false
+	}
+	defer rc.Close()
+	ctype := thumb.MimeOf(node.Name)
+	if ctype == "" {
+		ctype = node.Mime
+	}
+	w.Header().Set("Content-Type", ctype)
+	if node.Size > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(node.Size, 10))
+	}
+	// The bytes ARE the file, and the file endpoint next door promises the same
+	// minute on the same bytes. A rendered thumbnail cannot say this — it is
+	// regenerated under an unchanged URL — but this one cannot be: a file that
+	// changes changes the mtime the tile URL is keyed on.
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	// These are the USER's bytes under a type this handler chose, which is the
+	// shape a sniffing browser turns into someone else's script.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = io.Copy(w, rc)
+	return true
+}
+
+// originalTileETag is the file's own validator, quoted.
+//
+// The driver's etag when there is one — an object store supplies it, and it is
+// the most precise thing available. A local storage supplies none, so the
+// fallback is the pair that changes whenever the bytes do and that every node
+// row carries: the modification time and the size. Empty only for a node with
+// neither, which then simply carries no validator.
+func originalTileETag(node *model.Node) string {
+	if node.Etag != "" {
+		return `"` + strings.Trim(node.Etag, `"`) + `"`
+	}
+	mtime := node.DBMtime
+	if node.BackendMtime != nil {
+		mtime = *node.BackendMtime
+	}
+	if mtime.IsZero() {
+		return ""
+	}
+	return `"` + strconv.FormatInt(mtime.UnixNano(), 10) + "-" + strconv.FormatInt(node.Size, 10) + `"`
 }
 
 // thumbETag derives a strong validator from the cached file itself, so it

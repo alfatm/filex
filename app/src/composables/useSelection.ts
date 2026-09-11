@@ -3,7 +3,7 @@ import { computed, ref, type Ref } from 'vue';
 export interface SelectOptions {
   /** Ctrl/Cmd-click: toggle this id, keep the rest. */
   toggle?: boolean;
-  /** Shift-click: select the range from the anchor to this id. */
+  /** Shift-click: flip this id and apply its new state to the whole anchor→id range. */
   range?: boolean;
 }
 
@@ -54,9 +54,15 @@ export function useSelection<T extends { id: string }>(ordered: Readonly<Ref<T[]
     // A range needs an anchor that is still in the list; otherwise fall back to a plain click.
     const a = opts.range && anchorId.value ? ids.indexOf(anchorId.value) : -1;
     if (a !== -1) {
-      // Range is a union with the current selection (matches select-all → shift-click).
+      // The shift-clicked item flips; the whole anchor→target range then follows its new state.
       const b = ids.indexOf(id);
-      for (const i of ids.slice(Math.min(a, b), Math.max(a, b) + 1)) next.add(i);
+      const on = !next.has(id);
+      for (const i of ids.slice(Math.min(a, b), Math.max(a, b) + 1)) {
+        if (on) next.add(i);
+        else next.delete(i);
+      }
+      // A chain of shift-clicks starts each new range where the previous one ended.
+      anchorId.value = id;
     } else {
       if (opts.toggle && next.has(id)) next.delete(id);
       else next.add(id);

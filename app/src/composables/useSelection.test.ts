@@ -72,12 +72,33 @@ describe('useSelection', () => {
     expect(ids(sel)).toEqual(['d']);
   });
 
-  it('shift-click after select all keeps everything selected', () => {
+  it('a chain of shift-clicks anchors each range at the previous shift-click', () => {
+    const { sel } = setup();
+    sel.select('a');
+    sel.select('b', { range: true });
+    expect(ids(sel)).toEqual(['a', 'b']);
+    // From 'b', not from 'a': 'd' turns on, so b..d is added.
+    sel.select('d', { range: true });
+    expect(ids(sel)).toEqual(['a', 'b', 'c', 'd']);
+    // From 'd': 'c' is selected, so it flips off and takes c..d with it.
+    sel.select('c', { range: true });
+    expect(ids(sel)).toEqual(['a', 'b']);
+  });
+
+  it('shift-click onto a selected item deselects the whole range', () => {
     const { sel } = setup();
     sel.select('a');
     sel.selectAll();
     sel.select('c', { range: true });
-    expect(ids(sel)).toHaveLength(5);
+    expect(ids(sel)).toEqual(['d', 'e']);
+  });
+
+  it('shift-click on a checkbox extends the selection without dropping the rest', () => {
+    const { sel } = setup();
+    sel.select('e', { toggle: true });
+    sel.select('a', { toggle: true });
+    sel.select('c', { toggle: true, range: true });
+    expect(ids(sel)).toEqual(['a', 'b', 'c', 'e']);
   });
 
   it('ctrl-deselect moves the anchor to the clicked item', () => {

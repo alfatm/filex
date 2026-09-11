@@ -371,16 +371,21 @@ func (h *Share) serveSharedThumb(w http.ResponseWriter, r *http.Request, storage
 	if err != nil || n == nil || n.Type != model.NodeTypeFile {
 		return false
 	}
-	if !h.thumbReady(ctx, n.ID) {
+	row := h.thumbReady(ctx, n.ID)
+	if row == nil {
 		if size > sharedThumbMaxSource {
 			return false
 		}
 		if err := h.Thumbs.GenerateThumb(ctx, n); err != nil {
 			return false
 		}
-		if !h.thumbReady(ctx, n.ID) {
+		if row = h.thumbReady(ctx, n.ID); row == nil {
 			return false
 		}
+	}
+	// A small image is its own tile, with no cached JPEG behind it.
+	if row.StorageKey == thumb.OriginalKey {
+		return writeOriginalTile(w, r, h.Thumbs, n)
 	}
 	f, err := os.Open(h.Thumbs.CachePath(n.ID))
 	if err != nil {
@@ -407,9 +412,15 @@ func (h *Share) serveSharedThumb(w http.ResponseWriter, r *http.Request, storage
 	return true
 }
 
-func (h *Share) thumbReady(ctx context.Context, nodeID int64) bool {
+// thumbReady answers with the ready row, or nil when there is none: the caller
+// needs the row itself, because where a tile's bytes live (a cached JPEG, or
+// the small original) is written in it.
+func (h *Share) thumbReady(ctx context.Context, nodeID int64) *model.Thumbnail {
 	t, err := h.Store.GetThumbnail(ctx, nodeID)
-	return err == nil && t != nil && t.State == "ready"
+	if err != nil || t == nil || t.State != "ready" {
+		return nil
+	}
+	return t
 }
 
 // zipWarmTimeout bounds a share-creation warm. Generous — a folder share can
@@ -499,7 +510,7 @@ func (h *Share) warmFolderThumbs(node *model.Node) {
 					continue
 				}
 				n, err := h.Store.GetNodeByPath(ctx, storageID, pathkey.Hash(storageID, child))
-				if err != nil || n == nil || n.Type != model.NodeTypeFile || h.thumbReady(ctx, n.ID) {
+				if err != nil || n == nil || n.Type != model.NodeTypeFile || h.thumbReady(ctx, n.ID) != nil {
 					continue
 				}
 				if err := h.Thumbs.GenerateThumb(ctx, n); err == nil {

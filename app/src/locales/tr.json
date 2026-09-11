@@ -443,8 +443,6 @@
     "close": "Kapat",
     "previous": "Önceki dosya",
     "next": "Sonraki dosya",
-    "zoomIn": "Gerçek boyut",
-    "zoomOut": "Ekrana sığdır",
     "loading": "Önizleme yükleniyor…",
     "loadError": "Dosya yüklenemedi.",
     "noPreview": "Önizleme yok",

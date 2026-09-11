@@ -34,7 +34,10 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    emptyOutDir: true,
+    // Watch mode (`pnpm dev`) runs beside the web dev server, which scans this
+    // dist/. Wiping it on every rebuild makes that scan fail on a chunk that
+    // vanished mid-read; a one-shot build still starts from a clean dir.
+    emptyOutDir: !process.argv.includes('--watch'),
     sourcemap: true,
     cssCodeSplit: false,
     lib: {
