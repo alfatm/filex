@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"path"
 	"sort"
@@ -19,8 +20,8 @@ import (
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/e2e" /* wiring:e2 */
 	"github.com/brf-tech/filex/backend/internal/filebody"
-	"github.com/brf-tech/filex/backend/internal/metrics"
 	"github.com/brf-tech/filex/backend/internal/model"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/quota"
 	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/search"
@@ -63,17 +64,34 @@ type Manager struct {
 // ceiling. The identity comes from quotastore.OwnerFrom, not from the session,
 // so the public drop link is measured against the LINK CREATOR's quota — they
 // are the account whose disk is being filled.
-func (h *Manager) checkQuota(ctx context.Context, size int64) error {
-	if h.Quota == nil || size <= 0 {
+// addFiles is how many NEW file slots the write claims — 0 for an overwrite,
+// which adds bytes but no file.
+func (h *Manager) checkQuota(ctx context.Context, size, addFiles int64) error {
+	if h.Quota == nil || (size <= 0 && addFiles <= 0) {
 		return nil
 	}
-	if err := h.Quota.CheckCanWrite(ctx, quotastore.OwnerFrom(ctx), size); err != nil {
-		if errors.Is(err, quota.ErrQuotaExceeded) {
-			metrics.GuardRefusals.WithLabelValues(metrics.GuardQuota).Inc()
-		}
-		return err
+	return h.Quota.CheckCanWrite(ctx, quotastore.OwnerFrom(ctx), size, addFiles)
+}
+
+// recordUpload spends `size` of the acting account's upload-window allowance.
+// Called ONLY after the bytes have actually landed: a failed or refused write
+// costs the instance nothing and must not be charged.
+//
+// A ledger failure is logged, never returned — the bytes are on storage and
+// failing the request afterwards would be a lie. The cost is one uncounted
+// upload against the window.
+func (h *Manager) recordUpload(ctx context.Context, size int64) {
+	if h.Quota == nil || size <= 0 {
+		return
 	}
-	return nil
+	owner := quotastore.OwnerFrom(ctx)
+	if owner <= 0 {
+		return
+	}
+	if err := h.Quota.RecordUpload(ctx, owner, size); err != nil {
+		slog.Warn("quota: record upload",
+			slog.Int64("user", owner), slog.Int64("size", size), slog.String("err", err.Error()))
+	}
 }
 
 // AttachStaged wires the staged ingest path so every surface that writes
@@ -353,6 +371,17 @@ func (h *Manager) listVuefinder(w http.ResponseWriter, r *http.Request, action s
 		h.vfStream(w, r, current, rel, false)
 		return
 	case "download":
+		// The rule, plainly: VIEWING IS NOT GATED, TAKING A COPY IS. `preview`
+		// above — and thumbnails — stay open to anyone the ACL lets see the
+		// file, because a role that may read a document in the browser but not
+		// save a copy of it is a real configuration and gating both would make
+		// "no downloads" mean "no reading". Everything that hands the bytes
+		// over as a file to keep needs files.download: this verb,
+		// /api/files/download/zip, /api/ai/download, and /api/files/read
+		// with download=1.
+		if !requirePerm(w, r, perm.OpDownload) {
+			return
+		}
 		h.vfStream(w, r, current, rel, true)
 		return
 	default:
@@ -602,16 +631,43 @@ func (h *Manager) vfIndex(w http.ResponseWriter, r *http.Request, s *model.Stora
 	if err != nil {
 		// DB cache miss — try the driver. If the dir really doesn't
 		// exist there either, surface the original 404.
-		if h.vfIndexFromDriver(w, r, s, rel, storageNames, dirsOnly, set) {
+		handled, derr := h.vfIndexFromDriver(w, r, s, rel, storageNames, dirsOnly, set)
+		if handled {
+			return
+		}
+		// …but a driver we could not REACH says nothing about whether the
+		// dir is there, and 404 is what the client renders as "this folder
+		// was renamed, moved or deleted". Report the outage as an outage.
+		if derr != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": derr.Error()})
 			return
 		}
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
 		return
 	}
-	nodes, err := h.Store.ListNodesByParent(r.Context(), s.ID, parentID)
+	// The filter chips narrow inside the query, the way the flat listings'
+	// do. `subfolders` is the destination picker's tree walk and takes none.
+	facets := listingFacets(r)
+	var nodes []*model.Node
+	if facets.Any() && !dirsOnly {
+		nodes, err = h.Store.ListNodesByParentFiltered(r.Context(), s.ID, parentID, facets)
+	} else {
+		nodes, err = h.Store.ListNodesByParent(r.Context(), s.ID, parentID)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
+	}
+
+	// `total` is the UNFILTERED count: a filtered answer with fewer rows than
+	// the folder has is how the client tells "narrowed" from "empty".
+	var total int
+	if !dirsOnly {
+		total, err = h.Store.CountNodesByParent(r.Context(), s.ID, parentID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 
 	// Pre-sync escape hatch: brand-new storages have an empty cache
@@ -620,26 +676,34 @@ func (h *Manager) vfIndex(w http.ResponseWriter, r *http.Request, s *model.Stora
 	// first sync has run — afterwards the cache is authoritative
 	// (truly-empty dirs return [] without firing an extra driver
 	// list call).
-	if len(nodes) == 0 && s.LastSyncAt == nil {
-		if h.vfIndexFromDriver(w, r, s, rel, storageNames, dirsOnly, set) {
+	//
+	// Under a filter an empty page says nothing about the cache — a folder
+	// of notes asked for images is not an unsynced storage — so the question
+	// is put to the unfiltered count.
+	cacheEmpty := len(nodes) == 0
+	if !dirsOnly {
+		cacheEmpty = total == 0
+	}
+	if cacheEmpty && s.LastSyncAt == nil {
+		handled, derr := h.vfIndexFromDriver(w, r, s, rel, storageNames, dirsOnly, set)
+		if handled {
+			return
+		}
+		// The cache is empty and the driver is the only one who knows what is
+		// really there. Falling through on a driver failure answered 200 with
+		// an empty listing — the client then drew "this folder is empty",
+		// which is a claim about the user's files made out of an outage.
+		if derr != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": derr.Error()})
 			return
 		}
 	}
 
-	// Hydrate Thumb so projectFileNodes can emit thumb_url. The
-	// store's ListNodesByParent doesn't JOIN thumbnails (kept lean for
-	// sync/walker callers), so we patch each file's Thumb here. N+1 at
-	// list time is fine for realistic dir sizes (≤ low thousands);
-	// switch to a batched lookup if profiles ever flag it.
-	for _, n := range nodes {
-		if n.Type != model.NodeTypeFile {
-			continue
-		}
-		if t, terr := h.Store.GetThumbnail(r.Context(), n.ID); terr == nil && t != nil {
-			n.Thumb = t
-		}
-	}
+	attachThumbs(r.Context(), h.Store, nodes)
+	attachShared(r.Context(), h.Store, nodes)
+	attachItemCounts(r.Context(), h.Store, nodes, set)
 	files := projectFileNodes(s.Name, nodes, dirsOnly, set)
+	attachOwners(r.Context(), h.Store, files)
 	if dirsOnly {
 		writeJSON(w, http.StatusOK, map[string]any{"folders": files})
 		return
@@ -651,6 +715,7 @@ func (h *Manager) vfIndex(w http.ResponseWriter, r *http.Request, s *model.Stora
 		"read_only": s.ReadOnly,
 		"perm":      permString(set, rel),
 		"files":     files,
+		"total":     total,
 	}
 	/* wiring:e2 — E2E-encrypted folder awareness: badge encrypted dir rows
 	   (e2e:true) and, when the listed dir sits inside an encrypted subtree,
@@ -702,16 +767,21 @@ func permString(set *acl.Set, rel string) string {
 // writes the same vuefinder response shape vfIndex does. Used as a
 // fallback when DB cache is missing the dir (post-mutation, pre-sync).
 //
-// Returns true iff a response was written. False means the driver also
-// doesn't have the dir (or no resolver) — caller should write its own
-// 404 with the cache-side error message.
-func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *model.Storage, rel string, storageNames []string, dirsOnly bool, set *acl.Set) bool {
+// Returns (true, nil) iff a response was written. (false, nil) means the
+// driver also doesn't have the dir (or there is no resolver wired) — caller
+// should write its own 404 with the cache-side error message.
+//
+// (false, err) is the third answer, and it exists because the first two used
+// to be one: a driver that could not be REACHED was reported as a dir that is
+// not there. "Storage unreachable" and "no such folder" are different facts
+// about the user's files, and only the second one is ours to state.
+func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *model.Storage, rel string, storageNames []string, dirsOnly bool, set *acl.Set) (bool, error) {
 	if h.StorageResolver == nil {
-		return false
+		return false, nil
 	}
 	drv, err := h.StorageResolver(s.ID)
 	if err != nil {
-		return false
+		return false, err
 	}
 	clean := strings.Trim(rel, "/")
 	// Use List (not Stat) to verify the dir — many drivers (S3, GCS,
@@ -721,7 +791,15 @@ func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *m
 	// "this dir is browsable" signal across every driver we ship.
 	objs, err := drv.List(r.Context(), clean)
 	if err != nil {
-		return false
+		// ErrNotFound is the drivers' contract for "this path is not there",
+		// and it is the ONLY failure that lets the caller answer 404. Anything
+		// else (an unreachable bucket, a dead SFTP session, a permission the
+		// process lost) leaves the question unanswered, and guessing "missing"
+		// is how an outage came to read as a deleted folder.
+		if errors.Is(err, storage.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
 	}
 	// …except that blob stores also "list" a NONEXISTENT prefix as an
 	// empty success, which used to render phantom folders as browsable
@@ -731,15 +809,24 @@ func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *m
 	// filex carry a .keepdir marker (len(objs) > 0), and the storage
 	// root ("") is always browsable.
 	if len(objs) == 0 && clean != "" {
+		// A Stat that fails here is the "phantom prefix" answer, not an
+		// outage: the List above already proved the driver is reachable.
 		st, serr := drv.Stat(r.Context(), clean)
 		if serr != nil || st.Kind != storage.KindDirectory {
-			return false
+			return false, nil
 		}
 	}
 	files := projectDriverObjects(s.Name, clean, objs, dirsOnly, set)
 	if dirsOnly {
 		writeJSON(w, http.StatusOK, map[string]any{"folders": files})
-		return true
+		return true, nil
+	}
+	// The same chips vfIndex puts inside its query, applied in Go over what
+	// the driver said — and `total` counts the same thing there and here: the
+	// folder's entries before the filter.
+	total := len(files)
+	if facets := listingFacets(r); facets.Any() {
+		files = projectDriverObjects(s.Name, clean, keepDriverObjects(clean, objs, facets), false, set)
 	}
 	resp := map[string]any{
 		"adapter":   s.Name,
@@ -748,6 +835,7 @@ func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *m
 		"read_only": s.ReadOnly,
 		"perm":      permString(set, clean),
 		"files":     files,
+		"total":     total,
 	}
 	/* wiring:e2 — cold-cache fallback: a freshly-created encrypted folder
 	   (marker uploaded seconds ago, sync not yet run) must still present
@@ -769,7 +857,33 @@ func (h *Manager) vfIndexFromDriver(w http.ResponseWriter, r *http.Request, s *m
 	}
 	/* /wiring:e2 */
 	writeJSON(w, http.StatusOK, resp)
-	return true
+	return true, nil
+}
+
+// keepDriverObjects narrows a driver listing by the facets, through the same
+// predicate the cache path's SQL means. Each object is read as the node row
+// the sync would mint for it: a driver knows no owner, so an owner facet keeps
+// nothing here — exactly what the cache answers for a row the sync found.
+func keepDriverObjects(dir string, objs []storage.Object, f db.NodeFacets) []storage.Object {
+	out := make([]storage.Object, 0, len(objs))
+	for _, o := range objs {
+		rel := o.Path
+		if rel == "" {
+			rel = path.Join(dir, o.Name)
+		}
+		n := &model.Node{Name: o.Name, Path: "/" + strings.Trim(rel, "/"), Type: model.NodeTypeFile, Size: o.Size, Mime: o.Mime}
+		if o.Kind == storage.KindDirectory {
+			n.Type = model.NodeTypeDirectory
+		}
+		if !o.Mtime.IsZero() {
+			mt := o.Mtime
+			n.BackendMtime = &mt
+		}
+		if f.Matches(n) {
+			out = append(out, o)
+		}
+	}
+	return out
 }
 
 // projectDriverObjects shapes storage.Object entries into the same
@@ -786,24 +900,14 @@ func projectDriverObjects(adapter, dir string, objs []storage.Object, dirsOnly b
 		if isDir {
 			typ = "dir"
 		}
-		// Hide the same internal entries the cache projector hides.
-		if strings.Contains(o.Path, ".thumbs") || o.Name == ".keepdir" ||
-			o.Name == ".versions" || strings.Contains(o.Path, ".versions") {
-			continue
-		}
-		// Trash bucket — never expose in regular listings.
-		if o.Name == ".filex-trash" || strings.Contains(o.Path, ".filex-trash") {
-			continue
-		}
-		/* wiring:e2 — hide the encrypted-folder marker (same contract as
-		   the DB projector; detection flags come from the response). */
-		if o.Name == e2e.MarkerName {
-			continue
-		}
-		/* /wiring:e2 */
 		rel := o.Path
 		if rel == "" {
 			rel = path.Join(dir, o.Name)
+		}
+		// Hide the same internal entries the cache projector hides — one list,
+		// one rule, model.ReservedNames.
+		if model.IsReservedPath(rel) || o.Name == ".keepdir" {
+			continue
 		}
 		// RBAC: drop entries the caller isn't allowed to see.
 		if set != nil && !set.CanSee(rel) {
@@ -861,9 +965,16 @@ func (h *Manager) vfSearch(w http.ResponseWriter, r *http.Request, s *model.Stor
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": terr.Error()})
 		return
 	}
+	tagFilter = withPathExcludes(tagFilter, parsed)
 
 	keep := func(n *model.Node) bool {
 		if n == nil || n.DeletedAt != nil {
+			return false
+		}
+		// `-path:` too: the toolbar speaks one query language with
+		// /api/files/search, and an operator that worked in one box and
+		// not the other is the thing that comment above is about.
+		if search.PathExcluded(n.Path, parsed.ExcludePaths) {
 			return false
 		}
 		return crossStorage || n.StorageID == s.ID
@@ -893,7 +1004,7 @@ func (h *Manager) vfSearch(w http.ResponseWriter, r *http.Request, s *model.Stor
 		plan := search.PlanFallback(parsed.Text)
 		accept := func(rows []*model.Node) {
 			for _, n := range rows {
-				if plan.Accepts(n.Name, n.Path) && tagFilterAccepts(tagFilter, n.ID) {
+				if plan.Accepts(n.Name, n.Path) && filterAccepts(tagFilter, n) {
 					nodes = append(nodes, n)
 				}
 			}
@@ -959,18 +1070,13 @@ func (h *Manager) vfSearch(w http.ResponseWriter, r *http.Request, s *model.Stor
 		nodes = filtered
 	}
 
-	// Hydrate thumb metadata so search results carry the same
-	// thumb_url as the index listing (was always empty pre-v0.1.16).
-	for _, n := range nodes {
-		if n.Type != model.NodeTypeFile {
-			continue
-		}
-		if t, terr := h.Store.GetThumbnail(r.Context(), n.ID); terr == nil && t != nil {
-			n.Thumb = t
-		}
-	}
+	attachThumbs(r.Context(), h.Store, nodes)
 
+	// No item counts here: the hits span storages, so there is no single ACL set
+	// to decide whether a count would be honest. A folder hit shows its type.
+	attachShared(r.Context(), h.Store, nodes)
 	files := projectFileNodes(s.Name, nodes, false, nil)
+	attachOwners(r.Context(), h.Store, files)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"adapter":   s.Name,
 		"storages":  storageNames,
@@ -1052,7 +1158,18 @@ func (h *Manager) Stat(w http.ResponseWriter, r *http.Request) {
 //
 // Auth: requires an authenticated user (route is mounted behind the auth
 // middleware). Future RBAC checks slot in here once per-storage ACLs land.
+//
+// ⚠ files.download applies to `download=1` AND ONLY TO IT. This one handler is
+// both halves of the rule at ?q=preview / ?q=download: without the flag it
+// serves the body inline, which is viewing and stays open; with it, it sets
+// `Content-Disposition: attachment` and hands over a file to keep, which is
+// the act files.download names. Gating the whole route would take the viewer
+// away with the download; not gating it at all — which is what it did — left
+// "no downloads" true of one button and false of the URL behind it.
 func (h *Manager) Read(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("download") == "1" && !requirePerm(w, r, perm.OpDownload) {
+		return
+	}
 	if h.StorageResolver == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "no storage resolver"})
 		return
@@ -1217,6 +1334,163 @@ func joinAdapterPath(adapter, rel string) string {
 	return adapter + "://" + rel
 }
 
+// attachOwners stamps owner_id + owner_name onto projected listing entries.
+//
+// One query for the whole page, not GetNodeOwner per row — and it carries the
+// NAME, because an owner column that renders a number is a column nobody reads.
+// Nodes with no owner (anything a storage sync found rather than a person
+// uploading it) keep neither field: "unowned" and "owned by user 0" are not the
+// same statement.
+func attachOwners(ctx context.Context, store db.Store, files []map[string]any) {
+	if store == nil || len(files) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(files))
+	for _, f := range files {
+		if id, ok := f["id"].(int64); ok {
+			ids = append(ids, id)
+		}
+	}
+	owners, err := store.NodeOwners(ctx, ids)
+	if err != nil || len(owners) == 0 {
+		return
+	}
+	byNode := make(map[int64]db.NodeOwner, len(owners))
+	for _, o := range owners {
+		byNode[o.NodeID] = o
+	}
+	for _, f := range files {
+		id, ok := f["id"].(int64)
+		if !ok {
+			continue
+		}
+		if o, found := byNode[id]; found {
+			f["owner_id"], f["owner_name"] = o.OwnerID, o.Name
+		}
+	}
+}
+
+// attachOwnerNames is attachOwners for the handlers that answer with node rows
+// rather than projected maps — starred, recently opened, search.
+//
+// It exists because those three said "You" for every row. The rows already
+// carried `owner_id` (it is a column on model.Node), but no name, so the client
+// had a number and nothing to print — and fell back to naming the person
+// looking at the list as the owner of everything in it. On a shared drive that
+// is not a cosmetic default, it is a false statement about who put the file
+// there. One query per page, the same as attachOwners.
+func attachOwnerNames(ctx context.Context, store db.Store, nodes []*model.Node) {
+	if store == nil || len(nodes) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(nodes))
+	for _, n := range nodes {
+		if n != nil && n.OwnerID != nil {
+			ids = append(ids, n.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	owners, err := store.NodeOwners(ctx, ids)
+	if err != nil {
+		return
+	}
+	byNode := make(map[int64]db.NodeOwner, len(owners))
+	for _, o := range owners {
+		byNode[o.NodeID] = o
+	}
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		if o, found := byNode[n.ID]; found {
+			n.OwnerName = o.Name
+		}
+	}
+}
+
+// attachThumbs hydrates Thumb on the files of a page so the projection (or the
+// raw model.Node JSON) carries the thumbnail state, and the client can point
+// at /api/files/thumb/{id} instead of the original bytes.
+//
+// The store's node listings don't JOIN thumbnails (kept lean for sync/walker
+// callers), so each file is looked up here. N+1 per page is fine for
+// realistic sizes (≤ low thousands); switch to a batched lookup if profiles
+// ever flag it.
+func attachThumbs(ctx context.Context, store db.Store, nodes []*model.Node) {
+	if store == nil {
+		return
+	}
+	for _, n := range nodes {
+		if n == nil || n.Type != model.NodeTypeFile {
+			continue
+		}
+		if t, err := store.GetThumbnail(ctx, n.ID); err == nil && t != nil {
+			n.Thumb = t
+		}
+	}
+}
+
+// attachShared stamps Shared onto the nodes a public link currently points at.
+//
+// One query per listing page, like attachOwners. Without it every row reported
+// "not shared" and the only way to learn otherwise was to open the share modal
+// on the file — which is a question the listing was already claiming to answer.
+func attachShared(ctx context.Context, store db.Store, nodes []*model.Node) {
+	if store == nil || len(nodes) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.ID)
+	}
+	shared, err := store.SharedNodeIDs(ctx, ids)
+	if err != nil || len(shared) == 0 {
+		return
+	}
+	set := make(map[int64]struct{}, len(shared))
+	for _, id := range shared {
+		set[id] = struct{}{}
+	}
+	for _, n := range nodes {
+		if _, ok := set[n.ID]; ok {
+			n.Shared = true
+		}
+	}
+}
+
+// attachItemCounts stamps ItemCount onto the folders of a listing page.
+//
+// Skipped entirely when RBAC could hide some of those children from this
+// caller: the count comes from one grouped query and cannot apply CanSee per
+// child, so on a storage where the caller holds grants a traversal folder would
+// advertise more entries than opening it shows. A folder with no count renders
+// its type, which is what every folder did before this existed. Admins and
+// RBAC-off storages load no grants, so they are counted.
+func attachItemCounts(ctx context.Context, store db.Store, nodes []*model.Node, set *acl.Set) {
+	if store == nil || len(nodes) == 0 || len(set.Grants()) > 0 {
+		return
+	}
+	ids := make([]int64, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Type == model.NodeTypeDirectory {
+			ids = append(ids, n.ID)
+		}
+	}
+	counts, err := store.ChildCounts(ctx, ids)
+	if err != nil {
+		return
+	}
+	for _, n := range nodes {
+		if n.Type != model.NodeTypeDirectory {
+			continue
+		}
+		count := counts[n.ID] // absent means no children, which is a real zero
+		n.ItemCount = &count
+	}
+}
+
 // projectFileNodes shapes DB nodes into the FileExplorer FileNode
 // contract. The frontend keys it cares about: id, path, basename,
 // type, extension, size, last_modified, mime_type, thumb_url. We
@@ -1228,24 +1502,14 @@ func projectFileNodes(adapter string, nodes []*model.Node, dirsOnly bool, set *a
 		if n.DeletedAt != nil {
 			continue
 		}
-		// Hide internal buckets (trash, version history, thumbnails) from
-		// regular listings — they have dedicated surfaces / are implementation
-		// detail. The trash bucket lists via /admin/trash.
-		if strings.HasPrefix(n.Path, "/.filex-trash") || strings.HasPrefix(n.Path, ".filex-trash") || n.Name == ".filex-trash" {
+		// Hide filex's own buckets (trash, version history, thumbnails, the
+		// encrypted-folder marker) from regular listings — they have dedicated
+		// surfaces / are implementation detail. The trash lists via
+		// /admin/trash; the client learns about encryption from the
+		// response-level e2e/e2e_root flags, not from seeing the marker.
+		if model.IsReservedPath(n.Path) {
 			continue
 		}
-		if n.Name == ".versions" || n.Name == ".thumbs" ||
-			strings.Contains(n.Path, "/.versions") || strings.Contains(n.Path, "/.thumbs") {
-			continue
-		}
-		/* wiring:e2 — the encrypted-folder marker is an implementation
-		   detail: hidden from every listing/search projection (the client
-		   detects encryption via the response-level e2e/e2e_root flags and
-		   reads the marker itself through the preview endpoint). */
-		if n.Name == e2e.MarkerName {
-			continue
-		}
-		/* /wiring:e2 */
 		// RBAC: drop entries the caller isn't allowed to see.
 		if set != nil && !set.CanSee(n.Path) {
 			continue
@@ -1282,6 +1546,15 @@ func projectFileNodes(adapter string, nodes []*model.Node, dirsOnly bool, set *a
 		// thumb endpoint 404s and the SFC falls back to its icon.
 		if !isDir && n.Thumb != nil && (n.Thumb.State == "ready" || n.Thumb.State == "") && n.Thumb.StorageKey != "" {
 			entry["thumb_url"] = "/api/files/thumb/" + strconv.FormatInt(n.ID, 10)
+		}
+		if !n.CreatedAt.IsZero() {
+			entry["created_at"] = n.CreatedAt.UnixMilli()
+		}
+		if n.Shared {
+			entry["shared"] = true
+		}
+		if n.ItemCount != nil {
+			entry["item_count"] = *n.ItemCount
 		}
 		if n.BackendMtime != nil {
 			entry["last_modified"] = n.BackendMtime.UnixMilli()

@@ -1,20 +1,38 @@
-# Dockerfile.local — uses pre-built dist artifacts from `pnpm -r build`
-# Skips the in-image frontend build (which needs --shamefully-hoist tweaks
-# in the alpine pnpm cache that we don't want to upstream into the
-# canonical Dockerfile). Used for local hot-fix builds only.
+# Dockerfile.local — builds the image from dist artifacts already on the host,
+# skipping the in-image frontend build. Local hot-fix builds only; the canonical
+# recipe is docker/Dockerfile.
+#
+# ⚠ NOT PUBLISHABLE, for two reasons that the file name only hints at:
+#
+#   1. It is NOT reproducible. The frontend is whatever happens to be sitting
+#      in web/dist, packages/webcomponent/dist and app/dist on the machine that
+#      runs the build — a stale bundle is embedded silently. The root
+#      .dockerignore excludes those directories precisely so the canonical
+#      recipe can never pick them up; this file is exempted by its own
+#      docker/Dockerfile.local.dockerignore, which BuildKit resolves BY NAME.
+#      Rename this file and that exemption stops applying, with no error —
+#      the build just breaks somewhere confusing.
+#
+#   2. It is the FATTEST recipe in the repo, and deliberately off-doctrine: it
+#      is the only one that still bundles LibreOffice + a JRE (~730 MB), which
+#      everything else routes to a conversion service (FILEX_LIBREOFFICE_URL).
+#      Convenient when you are debugging office thumbnails on one machine; not
+#      what anybody should ship.
 #
 # Build (from repo root):
 #   pnpm -r --filter='./packages/*' build
 #   pnpm --filter='./web' build
-#   docker build -f docker/Dockerfile.local -t ghcr.io/brf-tech/filex:vX.Y.Z .
+#   VITE_FILEX_API=1 pnpm --filter='./app' build
+#   docker build -f docker/Dockerfile.local -t filex:local .
 
 # ---------------------------------------------------------------------------
-# Stage 1: Stage embed assets straight from the host build tree
+# Stage 1: stage embed assets straight from the host build tree
 # ---------------------------------------------------------------------------
 FROM alpine:3.20 AS embed-prep
 WORKDIR /tmp/embed
 COPY web/dist ./admin
 COPY packages/webcomponent/dist ./web
+COPY app/dist ./app
 
 # ---------------------------------------------------------------------------
 # Stage 2: Go binary
@@ -23,34 +41,35 @@ FROM golang:1.25-alpine AS backend-build
 RUN apk --no-cache add git ca-certificates
 WORKDIR /src
 
-COPY backend/go.mod ./
-COPY backend/go.sum* ./
-RUN go mod download || go mod tidy
+COPY backend/go.mod backend/go.sum ./
+RUN go mod download
 
 COPY backend/ ./
 COPY --from=embed-prep /tmp/embed/admin ./embed/admin
 COPY --from=embed-prep /tmp/embed/web   ./embed/web
-
-RUN go mod tidy
+COPY --from=embed-prep /tmp/embed/app   ./embed/app
 
 ARG VERSION=dev
 ARG COMMIT=unknown
 ARG DATE=unknown
-RUN CGO_ENABLED=0 GOOS=linux go build \
+# Symbol path read from go.mod — see docker/Dockerfile for why.
+RUN MODULE="$(go list -m)" && \
+    CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
-    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+    -ldflags="-s -w \
+        -X ${MODULE}/internal/version.Version=${VERSION} \
+        -X ${MODULE}/internal/version.Commit=${COMMIT} \
+        -X ${MODULE}/internal/version.Date=${DATE}" \
     -o /out/filex \
     ./cmd/filex
 
 # ---------------------------------------------------------------------------
-# Stage 3: Runtime — full thumbnail toolchain (matches docker/Dockerfile)
+# Stage 3: runtime — same toolchain as the `full` target of docker/Dockerfile
 # ---------------------------------------------------------------------------
 FROM alpine:3.20
-
 RUN apk --no-cache add \
         ca-certificates \
         tzdata \
-        su-exec \
         ffmpeg \
         ghostscript \
         poppler-utils \
@@ -60,8 +79,7 @@ RUN apk --no-cache add \
         ttf-liberation \
         ttf-dejavu \
         font-noto \
-        font-noto-cjk \
-    && addgroup -S filex && adduser -S -G filex filex
+        font-noto-cjk
 
 COPY --from=backend-build /out/filex /usr/local/bin/filex
 

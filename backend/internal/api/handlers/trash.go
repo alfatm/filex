@@ -4,6 +4,8 @@
 //
 //	GET  /api/files/manager/trash                          (auth)  list trashed
 //	POST /api/files/manager/restore                        (auth)  body {node_id}
+//	DELETE /api/files/manager/trash/{id}                   (auth)  purge one entry of my own
+//	POST /api/files/manager/trash/empty                    (auth)  purge what I can see in the trash
 //	DELETE /api/admin/trash/{id}                           (admin) immediate single purge
 //	POST /api/admin/trash/empty?older_than_days=N          (admin) immediate batch purge
 package handlers
@@ -11,6 +13,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path"
 	"strconv"
@@ -21,10 +24,12 @@ import (
 	"github.com/brf-tech/filex/backend/internal/acl"
 	"github.com/brf-tech/filex/backend/internal/confine"
 	"github.com/brf-tech/filex/backend/internal/db"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/protocolsync"
 	"github.com/brf-tech/filex/backend/internal/realtime"
 	"github.com/brf-tech/filex/backend/internal/search"
 	"github.com/brf-tech/filex/backend/internal/trash"
+	"github.com/brf-tech/filex/backend/internal/writehook"
 )
 
 // Trash wires trash retention HTTP routes.
@@ -71,6 +76,11 @@ type restoreNodeReq struct {
 
 // Restore lifts the deleted_at flag on a soft-deleted node.
 func (h *Trash) Restore(w http.ResponseWriter, r *http.Request) {
+	// files.restore — the same operation as restoring an older version: from
+	// the account holder's side both are "put back what I had".
+	if !requirePerm(w, r, perm.OpRestore) {
+		return
+	}
 	var req restoreNodeReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
@@ -146,6 +156,10 @@ func (h *Trash) announceRestore(ctx context.Context, nodeID int64) {
 	if err != nil || node == nil {
 		return
 	}
+	// The node's own feed recorded `file.trashed` when it went in; without the
+	// counterpart the activity panel shows a file that was deleted and never
+	// came back.
+	writehook.OnFileRestored(ctx, node.StorageID, node.Path, node.Name, writehook.OriginManager)
 	sy := protocolsync.New(h.Store, h.Index, nil, "")
 	for _, n := range sy.CollectSubtree(ctx, node.StorageID, node) {
 		sy.IndexNode(ctx, n)
@@ -157,6 +171,151 @@ func (h *Trash) announceRestore(ctx context.Context, nodeID int64) {
 	}
 	emitFolderChange(node.StorageID, path.Dir(node.Path), realtime.ChangeEvent{
 		Action: "create", Name: node.Name,
+	})
+}
+
+// trashEmptyMax is how many entries one Empty request purges. Purging is byte
+// work — a driver delete per file — so an unbounded "empty everything" is the
+// same long-held request the move to the ops queue was about. The answer says
+// whether more is left, and the caller asks again.
+const trashEmptyMax = 500
+
+// mayPurge answers whether this caller may destroy this trash entry, as an HTTP
+// status (0 = yes) and a message. The rule is the one Restore already applies —
+// confinement on the ORIGINAL path, ≥editor there — plus the entry having to be
+// in the trash at all.
+//
+// ≥editor rather than ownership: filex has no per-node owner, and the level that
+// let the caller delete the file in the first place is the honest bar for
+// letting them finish the job. A viewer sees the entry in the listing and cannot
+// purge it.
+func (h *Trash) mayPurge(r *http.Request, nodeID int64) (int, string) {
+	node, err := h.Store.GetNode(r.Context(), nodeID)
+	if err != nil || node == nil || node.DeletedAt == nil {
+		return http.StatusNotFound, "trash entry not found"
+	}
+	orig := node.StorageKey
+	if orig == "" {
+		orig = node.Path
+	}
+	if root, ok := confine.RootFrom(r.Context()); ok {
+		if !root.Within(h.storageName(r.Context(), node.StorageID), orig) {
+			return http.StatusForbidden, "path outside confined root"
+		}
+	}
+	if h.ACL != nil && !aclAllowID(r.Context(), h.ACL, h.Store, node.StorageID, orig, acl.LevelEditor) {
+		return http.StatusForbidden, "insufficient permission"
+	}
+	return 0, ""
+}
+
+// PurgeSelf destroys one entry of the caller's own trash.
+//
+// DELETE /api/files/manager/trash/{id}
+//
+// The admin route next to it (`/api/admin/trash/{id}`) takes any entry in the
+// deployment; this one takes only what the caller could have deleted, which is
+// what makes it safe to hand to an ordinary account. Without it a user's trash
+// was a room they could put things into and never take anything out of: items
+// sat there until the retention sweep, and "delete forever" was a button the
+// app had to keep switched off.
+func (h *Trash) PurgeSelf(w http.ResponseWriter, r *http.Request) {
+	// files.purge, not files.delete: this is the irrecoverable half. An
+	// install can perfectly well let a role move things to the trash while
+	// reserving the final, unrecoverable step for someone else.
+	if !requirePerm(w, r, perm.OpPurge) {
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
+		return
+	}
+	if status, msg := h.mayPurge(r, id); status != 0 {
+		writeJSON(w, status, map[string]string{"error": msg})
+		return
+	}
+	if err := h.Service.PurgeOne(r.Context(), id); err != nil {
+		if errors.Is(err, trash.ErrNotTrashed) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "trash entry not found"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// EmptySelf destroys everything in the trash this caller may purge.
+//
+// POST /api/files/manager/trash/empty
+//
+// Top-level rows only, which is the same list the app shows: purging a deleted
+// FOLDER already takes its descendants with it, so walking every row would visit
+// the files inside it a second time and count them twice.
+//
+// An entry the caller may not purge is SKIPPED, not refused — a shared drive
+// where somebody else deleted something must not make "empty my trash" fail
+// altogether. `more` says the cap was reached and there is another round to ask
+// for; a caller that keeps getting `purged: 0` has purged everything it may.
+//
+// ⚠ The listing is ordered by deletion time across EVERY account, and the
+// permission check runs on the rows it hands back — so judging only the first
+// page starves the caller on a shared instance: with `trashEmptyMax` other
+// people's deletions in front of it, every request answered `purged: 0,
+// skipped: 500` and the caller's own older entries were never reached. The app
+// stops asking as soon as a round purges nothing, so "Empty trash" quietly did
+// nothing at all. Hence the walk: pages that purged nothing are stepped over
+// until one produces a real result or the listing runs out.
+//
+// Advancing the offset is only sound because the walk stops at the first page
+// that purged something — a page that purged nothing left the listing exactly
+// as it found it, so the next offset still lines up. One page is also the cap
+// on this request's byte work, which is what `trashEmptyMax` was always for.
+func (h *Trash) EmptySelf(w http.ResponseWriter, r *http.Request) {
+	if !requirePerm(w, r, perm.OpPurge) {
+		return
+	}
+	purged, failed, skipped := 0, 0, 0
+	more := false
+	for offset := 0; ; {
+		entries, _, err := h.Service.List(r.Context(), nil, true, db.NodeFacets{}, trashEmptyMax, offset)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if len(entries) == 0 {
+			break
+		}
+		before := purged + failed
+		for _, e := range entries {
+			if status, _ := h.mayPurge(r, e.ID); status != 0 {
+				skipped++
+				continue
+			}
+			if err := h.Service.PurgeOne(r.Context(), e.ID); err != nil {
+				failed++
+				continue
+			}
+			purged++
+		}
+		// A failure counts as a result too: retrying the same unpurgeable rows
+		// on the next page boundary would spin over them for nothing.
+		if purged+failed > before {
+			more = len(entries) == trashEmptyMax
+			break
+		}
+		if len(entries) < trashEmptyMax {
+			break
+		}
+		offset += len(entries)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"purged":  purged,
+		"failed":  failed,
+		"skipped": skipped,
+		"more":    more,
 	})
 }
 
@@ -222,11 +381,27 @@ func (h *Trash) List(w http.ResponseWriter, r *http.Request) {
 			offset = n
 		}
 	}
-	entries, total, err := h.Service.List(r.Context(), storagePtr, limit, offset)
+	// `top_level_only=1`: one row per thing the user deleted, without the files
+	// that came along inside a deleted folder. Opt-in — the admin trash screen
+	// and the purge tooling still want every row.
+	topLevelOnly := q.Get("top_level_only") == "1" || q.Get("top_level_only") == "true"
+	entries, total, err := h.Service.List(r.Context(), storagePtr, topLevelOnly, listingFacets(r), limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	// Confinement and RBAC run over the PAGE, because neither is expressible in
+	// the query: a confinement root and a set of path-prefix grants are not
+	// columns. Two consequences, and both used to be got wrong.
+	//
+	// `total` counts the query's matches. Each pass may drop rows from this
+	// page, so it is reduced by what this page dropped — it used to be
+	// OVERWRITTEN with the surviving row count, which capped it at the page
+	// size: the admin trash screen asks for 50 and printed "50 items in the
+	// trash" over a trash holding thousands, and no pager could work off it.
+	// Rows dropped on the pages nobody asked for are not known, so on a paged
+	// listing the number is an upper bound rather than a count.
+	dropped := 0
 	// Confinement: only surface trashed nodes whose original path is inside
 	// the caller's root, so a tenant never sees another tenant's deleted files.
 	if root, ok := confine.RootFrom(r.Context()); ok {
@@ -236,8 +411,8 @@ func (h *Trash) List(w http.ResponseWriter, r *http.Request) {
 				kept = append(kept, e)
 			}
 		}
+		dropped += len(entries) - len(kept)
 		entries = kept
-		total = len(kept)
 	}
 	// RBAC: only surface trashed nodes the caller may see.
 	if h.ACL != nil {
@@ -247,8 +422,16 @@ func (h *Trash) List(w http.ResponseWriter, r *http.Request) {
 				kept = append(kept, e)
 			}
 		}
+		dropped += len(entries) - len(kept)
 		entries = kept
-		total = len(kept)
+	}
+	// The other consequence is still open and is NOT fixed here: because the
+	// passes run after LIMIT, a page whose rows are mostly invisible comes back
+	// short rather than reaching further down for visible ones. Closing that
+	// needs the grants inside the query, which is a change to how ACL is
+	// resolved, not to this handler.
+	if total -= dropped; total < len(entries) {
+		total = len(entries)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"entries": entries,

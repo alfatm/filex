@@ -4,8 +4,11 @@
 // authenticated session and act on the principal in the request context.
 //
 //	GET    /api/auth/me              — current user
+//	GET    /api/auth/methods         — how this user signs in, and what they may change
 //	PATCH  /api/auth/profile         — update email/username/locale/timezone
 //	POST   /api/auth/password        — change password (requires old)
+//	GET    /api/auth/sessions        — where this account is signed in
+//	DELETE /api/auth/sessions/{id}   — end one of those sessions
 //	POST   /api/auth/totp/enroll     — start TOTP enrollment
 //	POST   /api/auth/totp/verify     — confirm TOTP enrollment with code
 //	POST   /api/auth/totp/disable    — turn TOTP off (password + code)
@@ -16,8 +19,13 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	qrcode "github.com/skip2/go-qrcode"
 	"golang.org/x/crypto/bcrypt"
@@ -28,6 +36,7 @@ import (
 	authlocal "github.com/brf-tech/filex/backend/internal/auth/drivers/local"
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/identity"
+	"github.com/brf-tech/filex/backend/internal/model"
 )
 
 // AuthSelf wraps the self-service profile/password/TOTP routes.
@@ -52,6 +61,64 @@ func (h *AuthSelf) Me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"user": u})
 }
 
+// authMethods is what a signed-in user may know about their own sign-in: the
+// realm they belong to, whether that realm lets them change a password here,
+// and whether their filex second factor is on. Deliberately not the admin
+// answer — /api/admin/auth-providers carries issuers, client ids and bind
+// credentials and is supertenant-only. Nothing here is configuration.
+type authMethods struct {
+	// Provider is the realm's auth type ("local", "oidc", …), which is also
+	// the driver name, so the UI can name the sign-in method.
+	Provider string `json:"provider"`
+	// ChangePassword is the driver's own capability. False for OIDC: the
+	// password lives at the identity provider, and a form here would be a lie.
+	ChangePassword bool `json:"change_password"`
+	// TOTPEnabled is filex's own second factor. It only means anything on a
+	// local realm; an OIDC user's second step belongs to their provider.
+	TOTPEnabled bool `json:"totp_enabled"`
+}
+
+// Methods answers `GET /api/auth/methods` for the caller.
+func (h *AuthSelf) Methods(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFrom(r.Context())
+	if u == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
+		return
+	}
+	out := authMethods{Provider: h.realmOf(r, u), TOTPEnabled: u.TOTPEnabled}
+	if driver, err := auth.Get(out.Provider); err == nil {
+		out.ChangePassword = driver.Capabilities().ChangePassword
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// realmOf names the auth type this user signs in with.
+//
+// The password hash comes FIRST, ahead of the tenant row, because the tenant
+// row lies on the common install: `providers.auth_type` defaults to 'oidc'
+// (migration 00014) and the seeded `default` tenant is inserted without one,
+// so every single-tenant server claims OIDC while its admin signs in with a
+// password. The hash is the honest answer to the question the caller is really
+// asking — whether POST /api/auth/password can work for this account — since
+// that endpoint does nothing but compare against this hash.
+//
+// Without a hash the tenant's auth_type is the best evidence there is, and an
+// install predating the provider backfill has neither.
+func (h *AuthSelf) realmOf(r *http.Request, u *model.User) string {
+	if u.PasswordHash != "" {
+		return model.AuthTypeLocal
+	}
+	if u.ProviderID != nil && h.Store != nil {
+		if p, err := h.Store.GetProvider(r.Context(), *u.ProviderID); err == nil && p.AuthType != "" {
+			return p.AuthType
+		}
+	}
+	if enabled := auth.Enabled(); len(enabled) > 0 {
+		return enabled[0].Name()
+	}
+	return ""
+}
+
 type profileReq struct {
 	Email *string `json:"email,omitempty"`
 	// Username is the short login name used by the connection protocols
@@ -61,8 +128,12 @@ type profileReq struct {
 	// the account did not get is worse than an error.
 	Username    *string `json:"username,omitempty"`
 	DisplayName *string `json:"display_name,omitempty"`
-	Locale      *string `json:"locale,omitempty"`
-	Timezone    *string `json:"timezone,omitempty"`
+	// FullName and JobTitle are the optional profile fields of migration 00035. Absent means
+	// "leave as it was"; an empty string means "clear it".
+	FullName *string `json:"full_name,omitempty"`
+	JobTitle *string `json:"job_title,omitempty"`
+	Locale   *string `json:"locale,omitempty"`
+	Timezone *string `json:"timezone,omitempty"`
 	// AvatarURL is the profile picture — a small data:image/… URI (what the
 	// profile page's file picker produces) or an http(s)/site-relative URL.
 	// An explicit "" removes it. Absent = leave the current one alone.
@@ -114,6 +185,21 @@ func (h *AuthSelf) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	if req.DisplayName != nil {
 		_ = h.Store.UpdateUserDisplayName(r.Context(), u.ID, strings.TrimSpace(*req.DisplayName))
 	}
+	// Optional profile fields: written only when the caller sent the key, and an empty string is a
+	// legitimate value — it is how a job title is removed.
+	if req.FullName != nil || req.JobTitle != nil {
+		full, title := u.FullName, u.JobTitle
+		if req.FullName != nil {
+			full = strings.TrimSpace(*req.FullName)
+		}
+		if req.JobTitle != nil {
+			title = strings.TrimSpace(*req.JobTitle)
+		}
+		if err := h.Store.UpdateUserProfileFields(r.Context(), u.ID, full, title); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+	}
 	if req.AvatarURL != nil {
 		avatar := strings.TrimSpace(*req.AvatarURL)
 		// Reject loudly rather than silently dropping the picture: the user is
@@ -140,6 +226,108 @@ func (h *AuthSelf) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, _ := h.Store.GetUser(r.Context(), u.ID)
 	writeJSON(w, http.StatusOK, updated)
+}
+
+// sessionView is one row of GET /api/auth/sessions: where a sign-in came from and how long it
+// still has. The session token itself never leaves the server — it IS the credential, and a list
+// of live credentials is exactly what an XSS would want to read.
+type sessionView struct {
+	ID        int64     `json:"id"`
+	IP        string    `json:"ip,omitempty"`
+	UserAgent string    `json:"user_agent,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	// Current marks the session this very request is authenticated by — the one row that must
+	// not be offered an "end session" button, because ending it is signing out.
+	Current bool `json:"current"`
+}
+
+// Sessions answers `GET /api/auth/sessions` with the caller's own unexpired sign-ins.
+//
+// Scoped to the caller by construction: the user id comes from the request context, never from a
+// parameter, so there is no id to tamper with. A caller authenticated by an API token instead of
+// a browser session has no cookie, so no row comes back marked current.
+func (h *AuthSelf) Sessions(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFrom(r.Context())
+	if u == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
+		return
+	}
+	rows, err := h.Store.ListSessionsForUser(r.Context(), u.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	current := currentSessionToken(r)
+	out := make([]sessionView, 0, len(rows))
+	for _, s := range rows {
+		out = append(out, sessionView{
+			ID:        s.ID,
+			IP:        s.IP,
+			UserAgent: s.UserAgent,
+			CreatedAt: s.CreatedAt,
+			ExpiresAt: s.ExpiresAt,
+			Current:   current != "" && s.Token == current,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
+}
+
+// RevokeSession ends one of the caller's other sessions.
+//
+//	DELETE /api/auth/sessions/{id}
+//
+// The current session is refused rather than deleted: "sign out everywhere but here" is what this
+// surface is for, and a button that silently signs the user out of the tab they are looking at
+// would be indistinguishable from a bug.
+func (h *AuthSelf) RevokeSession(w http.ResponseWriter, r *http.Request) {
+	u := auth.UserFrom(r.Context())
+	if u == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthenticated"})
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad session id"})
+		return
+	}
+	rows, err := h.Store.ListSessionsForUser(r.Context(), u.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	var target *model.Session
+	for _, s := range rows {
+		if s.ID == id {
+			target = s
+			break
+		}
+	}
+	if target == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no such session"})
+		return
+	}
+	if token := currentSessionToken(r); token != "" && target.Token == token {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "that is the session you are calling from",
+			"hint":  "sign out to end this one",
+		})
+		return
+	}
+	if _, err := h.Store.DeleteUserSession(r.Context(), u.ID, id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// currentSessionToken is the browser session this request rides on, or "" for any other way in.
+func currentSessionToken(r *http.Request) string {
+	c, err := r.Cookie(authlocal.SessionCookieName)
+	if err != nil {
+		return ""
+	}
+	return c.Value
 }
 
 type passwordReq struct {
@@ -292,7 +480,10 @@ func (h *AuthSelf) TotpDisable(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "password incorrect"})
 		return
 	}
-	if !cur.TOTPEnabled || !verifyTOTP(cur.TOTPSecret, req.Code) {
+	// A recovery code is accepted here too: someone who lost the device has
+	// the password and the printed codes, and nothing else — without this the
+	// account stays locked behind a factor that no longer exists.
+	if !cur.TOTPEnabled || (!verifyTOTP(cur.TOTPSecret, req.Code) && !consumeTotpRecoveryCode(r, h.Store, cur.ID, req.Code)) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid code"})
 		return
 	}
@@ -338,6 +529,62 @@ func verifyTOTP(secret, code string) bool {
 		return false
 	}
 	return totp.Validate(code, secret)
+}
+
+// looksLikeRecoveryCode reports whether a normalised input has the shape
+// generateRecoveryCodes produces: exactly 10 characters from A-Z / 0-9. A
+// six-digit TOTP never has it, so a mistyped authenticator code costs no
+// database round-trip and is never mistaken for a recovery attempt.
+func looksLikeRecoveryCode(norm string) bool {
+	if len(norm) != 10 {
+		return false
+	}
+	for i := 0; i < len(norm); i++ {
+		c := norm[i]
+		if (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// consumeTotpRecoveryCode is the second chance a failed TOTP check gets: one
+// of the recovery codes handed out at enrollment, accepted exactly once. The
+// use is logged and audited as `totp.recovery_used` — a spent code is a
+// security event the account owner should be able to find later. Any store
+// failure is a plain refusal: the caller already answers 401 for that.
+func consumeTotpRecoveryCode(r *http.Request, store db.Store, userID int64, code string) bool {
+	norm := model.NormalizeRecoveryCode(code)
+	if !looksLikeRecoveryCode(norm) {
+		return false
+	}
+	ok, err := store.ConsumeTotpRecoveryCode(r.Context(), userID, norm)
+	if err != nil {
+		slog.Warn("totp: recovery code lookup failed",
+			slog.Int64("user", userID),
+			slog.String("err", err.Error()))
+		return false
+	}
+	if !ok {
+		return false
+	}
+	slog.Info("totp: recovery code used",
+		slog.Int64("user", userID),
+		slog.String("ip", clientIP(r)))
+	uid := userID
+	if err := store.InsertAuditEntry(r.Context(), &model.AuditEntry{
+		UserID:     &uid,
+		Action:     "totp.recovery_used",
+		TargetType: "user",
+		TargetID:   strconv.FormatInt(userID, 10),
+		IP:         clientIP(r),
+		CreatedAt:  time.Now(),
+	}); err != nil {
+		slog.Warn("totp: recovery audit insert failed",
+			slog.Int64("user", userID),
+			slog.String("err", err.Error()))
+	}
+	return true
 }
 
 // renderQRSVG renders the otpauth:// URI as a self-contained SVG QR code so

@@ -82,10 +82,14 @@ gone.
 
 A **folder** goes to trash as one restorable unit: the folder row is retagged
 into the trash and its cached descendants are dragged along with it, so a single
-Restore brings the whole subtree back. Note that the descendants are still
-individual rows, and the trash listing is flat — a deleted folder therefore
-shows its children as separate entries even though restoring the folder is one
-action.
+Restore brings the whole subtree back. The descendants are still individual
+rows, so the raw listing is flat: a deleted folder shows its children as
+separate entries even though restoring the folder is one action. Pass
+`?top_level_only=1` to leave those children out and get one row per thing that
+was actually deleted — what an end-user trash screen wants. "Top level" means
+"my parent is not in the trash too", not "I have no parent": a file the sync
+poller soft-deleted because it vanished from the storage keeps its live parent
+and stays in the listing either way.
 
 > ⚠ **Sync clients delete in bulk.** A single `rclone sync --delete` run can
 > remove hundreds of files, and every one of them now lands in the trash. That
@@ -135,13 +139,18 @@ rows at a time) and reports a summary (`scanned` / `deleted` / `failed` /
 
 | Method & path | Body / query | Notes |
 |---|---|---|
-| `GET /api/files/manager/trash` | `?storage_id=…&limit=…&offset=…` | Lists soft‑deleted items. `limit` defaults to 50 (max 500). Each entry shows the **original** `name`/`path` (not the internal trash key), `deleted_at`, `size`, `storage_name`, and **`ttl_days`** (days remaining before purge, floored at 0). |
+| `GET /api/files/manager/trash` | `?storage_id=…&limit=…&offset=…&top_level_only=1`, plus the filter facets `ext=` (repeated or comma-separated, dot-less), `modified_after=` (epoch ms), `size_min=`, `size_max=`, `owner_id=` | Lists soft‑deleted items. `limit` defaults to 50 (max 500). Each entry shows the **original** `name`/`path` (not the internal trash key), `deleted_at`, `size`, `storage_name`, **`type`** (`file` / `dir`, the same values every other node the API returns carries — without it a deleted FOLDER was indistinguishable from a file) and **`ttl_days`** (days remaining before purge, floored at 0). `top_level_only=1` drops the rows a deleted folder dragged in with it, and narrows `total` to match. The facets are the same words `POST /api/files/search` takes, and they narrow inside the query — so `total` counts the filtered set and a filtered page is a page of it, not of the newest 500. One difference from search: `modified_after` here tests **`deleted_at`**, because that is the date this listing shows and orders by. |
 | `POST /api/files/manager/restore` | `{ "node_id": 123 }` | Moves the file back to its original path and re‑attaches the row. |
+| `DELETE /api/files/manager/trash/{id}` | — | Destroys one entry of the caller's OWN trash — the same hard delete the admin route does, with the guard that makes it safe to hand to an ordinary account. A node that is not in the trash answers `404`, live rows included. |
+| `POST /api/files/manager/trash/empty` | — | Destroys everything in the trash this caller may purge; top‑level rows only, since purging a deleted folder already takes its contents. Answers `{ ok, purged, failed, skipped, more }`. An entry the caller may not purge is **skipped, not refused** — somebody else's deletion on a shared drive must not make "empty my trash" fail. ⚠ The listing is ordered by deletion time across every account, so the handler reads a page of 500, purges what it may, and steps over pages that purged nothing until one produces a result or the listing runs out; `more` says that page was full and there may be another round to ask for. Judging the first page alone answered `purged: 0, skipped: 500` on a busy install and emptied nothing. |
 
-Both are **filtered by access**: a [confined](RBAC.md) (root‑locked) caller only
-sees / can restore items whose original path is inside its root, and
+All four are **filtered by access**: a [confined](RBAC.md) (root‑locked) caller
+only sees / can act on items whose original path is inside its root, and
 [RBAC](RBAC.md) requires **≥viewer** to see an item in the list and **≥editor**
-on its original path to restore it (restore writes the file back).
+on its original path to restore it (restore writes the file back) or to purge it
+(≥editor rather than ownership, because filex has no per‑node owner and the
+level that let the caller delete the file is the honest bar for letting them
+finish the job — a viewer sees the entry and cannot destroy it).
 
 **Admin only:**
 
@@ -316,13 +325,21 @@ non‑default state is visible without reading the config.
 
 ### Versioning endpoints
 
-**User (authenticated session/token):**
+**User (authenticated session/token).** Every route below addresses a node by
+its NUMERIC id and is gated on the caller's level for that node — **≥viewer** to
+read the timeline, **≥editor** to write to it — plus the tenant confinement
+check. Before that gate existed, any authenticated account could hand in an id
+and read another person's revision history, or `POST /restore` and overwrite
+that file's live bytes with an older revision. An unknown id answers `404`
+rather than an empty timeline, because an empty timeline is itself an answer
+about whether that id names a file.
 
-| Method & path | Body / query | Notes |
-|---|---|---|
-| `GET /api/files/versions` | `?node_id=N` | Lists that node's snapshots, **newest first** (version number, size, etag, created). |
-| `POST /api/files/versions/restore` | `{ "node_id": N, "version_id": V, "snapshot_current": true }` | Copies version `V` back over the live file. `snapshot_current` (optional) snapshots the current content first so the restore can be undone. |
-| `POST /api/files/save-text` | `{ "path": "adapter://rel", "content": "…" }` | Saves text and snapshots the previous content first (see above). |
+| Method & path | Body / query | Level | Notes |
+|---|---|---|---|
+| `GET /api/files/versions` | `?node_id=N` | ≥viewer | Lists that node's snapshots, **newest first** (version number, size, etag, created). A trashed node still answers: its history is what somebody deciding whether to restore it wants to see. |
+| `POST /api/files/versions/snapshot` | `{ "node_id": N }` | ≥editor | Records the current content as a new version on demand. A write: it puts a new object into the storage, against a quota. |
+| `POST /api/files/versions/restore` | `{ "node_id": N, "version_id": V, "snapshot_current": true }` | ≥editor | Copies version `V` back over the live file. `snapshot_current` (optional) snapshots the current content first so the restore can be undone. `V` must belong to `N` — the service refuses a version from another node. |
+| `POST /api/files/save-text` | `{ "path": "adapter://rel", "content": "…" }` | ≥editor | Saves text and snapshots the previous content first (see above). |
 
 **Admin only:**
 

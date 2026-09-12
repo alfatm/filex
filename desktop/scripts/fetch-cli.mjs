@@ -69,7 +69,7 @@ if (process.env.FILEX_CLI_BIN) {
 // the embed directories are build output (gitignored), so a fresh checkout has
 // nothing there. A placeholder is what keeps this copy slim: it satisfies the
 // directive without pulling the 85 MB SPA in.
-for (const sub of ['admin', 'web']) {
+for (const sub of ['admin', 'web', 'app']) {
   const dir = path.join(BACKEND, 'embed', sub);
   fs.mkdirSync(dir, { recursive: true });
   if (fs.readdirSync(dir).length === 0) fs.writeFileSync(path.join(dir, '.keep'), '');

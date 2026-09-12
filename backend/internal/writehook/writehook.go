@@ -263,6 +263,19 @@ func OnFileTrashed(ctx context.Context, storageID int64, path, name, trashPath, 
 	})
 }
 
+// OnFileRestored emits one `file.restored` event — the counterpart of
+// OnFileTrashed: the bytes came back out of `.filex-trash/` and the node is
+// live again at `path`. A feed that records the trip into the trash and not
+// the trip back reads as though the file is still deleted.
+func OnFileRestored(ctx context.Context, storageID int64, path, name, origin string, meta ...map[string]any) {
+	emit(ctx, notify.Event{
+		Event: notify.EventFileRestored,
+		Body:  path,
+		Meta:  mergeMeta(origin, meta),
+		Node:  &notify.NodeRef{StorageID: storageID, Path: path, Name: name},
+	})
+}
+
 // mergeMeta folds the variadic extra maps into one meta map and stamps
 // the origin. Always returns a non-nil map the caller may extend.
 func mergeMeta(origin string, extra []map[string]any) map[string]any {

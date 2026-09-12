@@ -188,7 +188,10 @@ func IssueSession(ctx context.Context, store db.Store, userID int64) (string, er
 	if err != nil {
 		return "", err
 	}
-	if _, err := store.CreateSession(ctx, userID, tok, time.Now().Add(SessionTTL), "", ""); err != nil {
+	// The sessions table has had ip and user_agent columns since the first migration and nothing ever
+	// filled them, so "active sessions" could only ever have said "somewhere, in something".
+	ip, ua := auth.ClientFrom(ctx)
+	if _, err := store.CreateSession(ctx, userID, tok, time.Now().Add(SessionTTL), ip, ua); err != nil {
 		return "", err
 	}
 	return tok, nil

@@ -43,6 +43,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/protocolauth"
 	"github.com/brf-tech/filex/backend/internal/protocolsync"
 	"github.com/brf-tech/filex/backend/internal/quota"
+	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/search"
 	"github.com/brf-tech/filex/backend/internal/storage"
 	"github.com/brf-tech/filex/backend/internal/tenant"
@@ -311,9 +312,29 @@ func (h *Handler) preGate(r *http.Request, p *principal) (int, string) {
 	// answer 507 Insufficient Storage (RFC 4331 §5) — x/net/webdav turns a
 	// Close error into 405, which tells a client to stop trying the METHOD.
 	// A PUT with no Content-Length still gets caught at Close; see writeFile.
+	//
+	// Bytes AND the file count, but NOT the upload window: a mounted drive is
+	// a long-lived session, and 507 is the only refusal WebDAV can express
+	// here — a rate refusal would have to be spelled the same way, which would
+	// tell the client "you are out of space" about something that will work
+	// again in an hour. See quota.Service.CheckCanStore.
 	if r.Method == http.MethodPut && r.ContentLength > 0 && h.cfg.Quota != nil {
 		if u := auth.UserFrom(ctx); u != nil {
-			if err := h.cfg.Quota.CheckCanWrite(ctx, u.ID, r.ContentLength); err != nil {
+			// An overwrite claims no new file slot, so somebody at their file
+			// ceiling can still replace a file they already have — which is
+			// what macOS does constantly with its sidecar files.
+			//
+			// ⚠ Through quotastore, not the node cache alone as this did until
+			// 2026-09-11: a file sitting on the backend that no scan has
+			// catalogued yet read as NEW here and was refused on a full count,
+			// while the HTTP paths (handlers.targetHasFile) asked the driver
+			// too and allowed it. One helper, so the two cannot drift again.
+			drv, derr := h.cfg.Resolver(st.ID)
+			if derr != nil {
+				drv = nil // node cache only; it is still the better half of the answer
+			}
+			addFiles := quotastore.AddFilesForWrite(ctx, h.cfg.Quota, h.cfg.Store, drv, u.ID, st.ID, rel)
+			if err := h.cfg.Quota.CheckCanStore(ctx, u.ID, r.ContentLength, addFiles); err != nil {
 				return http.StatusInsufficientStorage, "quota exceeded"
 			}
 		}

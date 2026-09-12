@@ -17,6 +17,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/protocolauth"
+	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/storage"
 	"github.com/brf-tech/filex/backend/internal/trash"
 	"github.com/brf-tech/filex/backend/internal/writehook"
@@ -95,7 +96,13 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, p *protocola
 	// The per-user ceiling, checked BEFORE the bytes land. Checking afterwards
 	// means the disk already holds what the quota was meant to prevent.
 	if u := auth.UserFrom(ctx); u != nil && h.cfg.Quota != nil {
-		if err := h.cfg.Quota.CheckCanWrite(ctx, u.ID, size); err != nil {
+		// The file COUNT as well as the bytes. It was 0 here until 2026-09-11,
+		// which meant `quota_files` was an HTTP-only limit: a user at their
+		// ceiling was refused 413 in the browser and could still push ten
+		// thousand objects through this handler, because quotastore.CreateNode
+		// counts them whoever let them in.
+		addFiles := quotastore.AddFilesForWrite(ctx, h.cfg.Quota, h.cfg.Store, drv, u.ID, st.ID, key)
+		if err := h.cfg.Quota.CheckCanStore(ctx, u.ID, size, addFiles); err != nil {
 			WriteError(w, r, http.StatusRequestEntityTooLarge, "EntityTooLarge", err.Error())
 			return
 		}

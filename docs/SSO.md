@@ -234,7 +234,7 @@ the `reason=`:
 | `local: login refused` `reason="account has no local password"` (info) | The account exists but carries no local hash — a directory or OIDC account. No password will ever work on the `local` driver; it has to sign in the way it was created, or be given a password. |
 | `local: could not judge the credentials` `reason="user lookup failed"` (**error**) | The *server* failed, not the caller — a locked sqlite file, a dropped connection. The caller still sees a plain 401, so without this line "the database is down" is indistinguishable from a typo. It is also returned as a real error rather than `unauthorized`, which is what lets a multi-driver chain report it. |
 | `local: stored password hash is unusable` `reason="bad password hash"` (**error**) | `users.password_hash` is not a bcrypt hash — truncated, or written by something else. That account can never sign in until its password is reset. |
-| `login refused` `reason="two-factor code required"` / `"invalid two-factor code"` (debug) | The password was **right**; the second factor was missing or wrong. This one the caller is also told (`totp_required: true`), because the form has to know to ask. |
+| `login refused` `reason="two-factor code required"` / `"invalid two-factor code"` (debug) | The password was **right**; the second factor was missing or wrong. This one the caller is also told (`totp_required: true`), because the form has to know to ask. One of the recovery codes shown at enrollment is accepted in the same `totp` field — once; a spent code is logged as `totp: recovery code used` and audited as `totp.recovery_used`. |
 
 ---
 

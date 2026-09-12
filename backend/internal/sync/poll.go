@@ -171,6 +171,7 @@ func (s *storageSyncer) walk(ctx context.Context, p string, parent *int64, added
 			// time. This — not the drift branch below — is the first import
 			// of an existing storage, and the reason the hook exists.
 			s.enqueueScan(ctx, created)
+			s.enqueueThumb(ctx, created)
 			if obj.Kind == storage.KindDirectory {
 				cn, err := s.walk(ctx, obj.Path, &created.ID, added, updated)
 				if err == nil {
@@ -205,12 +206,13 @@ func (s *storageSyncer) walk(ctx context.Context, p string, parent *int64, added
 			// The row is re-read once and shared by both consumers: `existing`
 			// still carries the PRE-drift size, and the scanner's size ceiling
 			// has to be applied to the bytes that are actually there.
-			if drifted && (s.index != nil || s.avScan != nil) {
+			if drifted && (s.index != nil || s.avScan != nil || s.thumbs != nil) {
 				if fresh, _ := s.store.GetNode(ctx, existing.ID); fresh != nil {
 					if s.index != nil {
 						_ = s.index.IndexNode(ctx, fresh)
 					}
 					s.enqueueScan(ctx, fresh)
+					s.enqueueThumb(ctx, fresh)
 				}
 			}
 			count++
@@ -247,6 +249,13 @@ func (s *storageSyncer) enqueueScan(ctx context.Context, n *model.Node) {
 		return
 	}
 	s.avScan(ctx, n)
+}
+
+func (s *storageSyncer) enqueueThumb(ctx context.Context, n *model.Node) {
+	if s.thumbs == nil || n == nil || n.Type != model.NodeTypeFile {
+		return
+	}
+	s.thumbs(ctx, n)
 }
 
 // reconcileTrash puts right anything LIVE inside `.filex-trash/`.

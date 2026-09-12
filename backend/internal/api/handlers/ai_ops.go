@@ -302,13 +302,18 @@ func (a *aiOps) List(ctx context.Context, p string) ([]aiEntry, error) {
 	}
 	out := make([]aiEntry, 0, len(objs))
 	for _, o := range objs {
-		if o.Name == ".filex-trash" || strings.Contains(o.Path, ".filex-trash") ||
-			strings.Contains(o.Path, ".thumbs") || o.Name == ".keepdir" {
-			continue
-		}
 		objRel := o.Path
 		if objRel == "" {
 			objRel = path.Join(rel, o.Name)
+		}
+		// ⚠ Whole path COMPONENTS, through the shared test. The substring form
+		// this replaces knew two of the four buckets and matched them anywhere
+		// in the path, so a file the person had called `my.thumbsup.png` was
+		// invisible to the assistant with no sign that anything had been
+		// dropped. `.keepdir` stays separate: it is a driver's marker for an
+		// empty folder, not one of filex's own buckets.
+		if model.IsReservedPath(objRel) || o.Name == ".keepdir" {
+			continue
 		}
 		typ := "file"
 		if o.Kind == storage.KindDirectory {
@@ -481,7 +486,10 @@ func (a *aiOps) WriteStream(ctx context.Context, p string, src io.Reader, size i
 	}
 
 	if a.staged.ShouldStage(size) {
-		node, serr := a.staged.IngestStream(ctx, s.ID, rel, src, size, currentUserID(ctx), "")
+		// uploadIdentity, not currentUserID: a ticketed upload (PUT /u/{ticket})
+		// runs as the MINTER via quotastore.WithOwner, and that is the account
+		// whose window this transfer spends.
+		node, serr := a.staged.IngestStream(ctx, s.ID, rel, src, size, uploadIdentity(ctx), "")
 		switch {
 		case serr == nil:
 			return &aiEntry{
@@ -507,7 +515,7 @@ func (a *aiOps) WriteStream(ctx context.Context, p string, src io.Reader, size i
 	n, _ := io.ReadFull(src, sniff[:])
 	mime := ""
 	if n > 0 {
-		mime = storage.RefineOfficeMime(http.DetectContentType(sniff[:n]), name)
+		mime = storage.RefineMime(http.DetectContentType(sniff[:n]), name)
 	}
 	body := io.Reader(io.MultiReader(bytes.NewReader(sniff[:n]), src))
 	if sk, ok := src.(io.Seeker); ok && n > 0 {
@@ -653,7 +661,14 @@ func (a *aiOps) listAllFiles(ctx context.Context, drv storage.Driver, root strin
 			return err
 		}
 		for _, o := range objs {
-			if o.Name == ".filex-trash" || o.Name == ".thumbs" {
+			childRel := o.Path
+			if childRel == "" {
+				childRel = path.Join(dir, o.Name)
+			}
+			// Whole path COMPONENTS, through the shared test: the two names
+			// this walk knew were half the list, so a copy or a move that went
+			// through it still carried `.versions/` along.
+			if model.IsReservedPath(childRel) {
 				continue
 			}
 			switch o.Kind {
@@ -1098,13 +1113,16 @@ func (a *aiOps) zipAdd(ctx context.Context, zw *zip.Writer, drv storage.Driver, 
 			return nil
 		}
 		for _, o := range objs {
-			if o.Name == ".filex-trash" || strings.Contains(o.Path, ".filex-trash") ||
-				strings.Contains(o.Path, ".thumbs") || o.Name == ".keepdir" {
-				continue
-			}
 			childRel := o.Path
 			if childRel == "" {
 				childRel = path.Join(rel, o.Name)
+			}
+			// ⚠ Whole path COMPONENTS, through the shared test. The substring
+			// form this replaces dropped `my.thumbsup.png` from the archive
+			// silently — the zip simply came out short. `.keepdir` stays
+			// separate: it is a driver's empty-folder marker, not a bucket.
+			if model.IsReservedPath(childRel) || o.Name == ".keepdir" {
+				continue
 			}
 			if aerr := a.zipAdd(ctx, zw, drv, storageID, childRel, path.Join(base, o.Name), seen); aerr != nil {
 				return aerr

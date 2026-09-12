@@ -108,7 +108,8 @@ func TestComments_CRUD_ACL_AdminDelete_Purge(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(raw, &created))
 	assert.Equal(t, "ilk yorum", created.Comment.Body, "body is trimmed")
-	assert.Equal(t, "cu@test.local", created.Comment.AuthorName, "author falls back to email")
+	assert.Empty(t, created.Comment.AuthorName,
+		"the account has set no display name, and the address is not a fallback for one")
 	assert.True(t, created.Comment.CanDelete)
 
 	// Second comment by the admin → chronological list of two.

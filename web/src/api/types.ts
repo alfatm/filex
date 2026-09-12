@@ -218,6 +218,15 @@ export interface DriftReport {
   details_url?: string;
 }
 
+// Answer of the thumbnail reset endpoints. `cleared` counts the thumbnails
+// dropped; `regenerating` is false when the server cannot rebuild them by
+// itself (no backfill wired), which is when the operator has to run
+// `filex thumb backfill`.
+export interface ThumbResetResult {
+  cleared: number;
+  regenerating: boolean;
+}
+
 export interface DemoMode {
   enabled: boolean;
   user: string;
@@ -227,7 +236,6 @@ export interface Capabilities {
   version: string;
   build: string;
   ffmpeg: boolean;
-  imagemagick: boolean;
   ghostscript: boolean;
   libreoffice: boolean;
   onlyoffice_url?: string | null;

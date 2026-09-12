@@ -137,10 +137,13 @@ async function openDemo() {
 }
 
 function startOidc() {
-  window.location.href = AuthApi.oidcStartUrl(
-    'oidc',
-    (route.query.redirect as string) || '/admin/',
-  );
+  // ⚠ `router.resolve().href`, not the raw `redirect` query: the guard stores a
+  // route path with no base in it ("/settings"), and the backend now HONOURS
+  // return_to — so the bare value would bounce an admin to the end-user app's
+  // /settings instead of the console's. resolve() puts the SPA's own base back
+  // on, which is also what keeps this right at /drive/.
+  const redirect = route.query.redirect as string | undefined;
+  window.location.href = AuthApi.oidcStartUrl('oidc', redirect ? router.resolve(redirect).href : '/admin/');
 }
 </script>
 

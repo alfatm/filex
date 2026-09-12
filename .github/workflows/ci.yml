@@ -21,13 +21,14 @@ jobs:
         with:
           go-version: "1.25"
           cache-dependency-path: backend/go.sum
-      # backend/embed/{admin,web} are git-ignored — the real bytes come from
-      # the frontend build. `//go:embed all:admin all:web` fails to resolve on
-      # empty dirs, so drop a placeholder for vet/test/build.
+      # backend/embed/{admin,web,app} are git-ignored — the real bytes come
+      # from the frontend build. `//go:embed all:admin all:web all:app` fails
+      # to resolve on empty dirs, so drop a placeholder for vet/test/build.
       - name: Embed placeholders
         run: |
-          mkdir -p backend/embed/admin backend/embed/web
-          touch backend/embed/admin/.placeholder backend/embed/web/.placeholder
+          mkdir -p backend/embed/admin backend/embed/web backend/embed/app
+          touch backend/embed/admin/.placeholder backend/embed/web/.placeholder \
+                backend/embed/app/.placeholder
       - name: Vet
         working-directory: backend
         run: go vet ./...
@@ -60,6 +61,47 @@ jobs:
           pnpm --filter='./web' build
       - name: Unit tests
         run: pnpm --filter='./web' --filter='./packages/*' test
+
+  # The end-user SPA. Its own job rather than a few more steps in `frontend`
+  # because it is a separate surface with its own toolchain (vue-tsc over
+  # ~42k lines, eslint, vitest) and a red one should name itself in the
+  # checks list. It IS a gate on a shippable artifact: docker/Dockerfile builds
+  # `app/` and the binary serves it at the apex (`backend/embed`, `wireStatic`),
+  # so a red job here means the bundle that ships is the broken one. release.yml
+  # runs the same three checks before `binaries`, because a tag can be pushed
+  # from a commit this workflow never saw.
+  app:
+    name: App (pnpm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9.12.0"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # ⚠ Required, not an optimisation. `app` imports @brftech/filex-core
+      # through that package's `exports`, which point at `dist/` — and `dist/`
+      # is git-ignored. On a fresh checkout nothing that imports core resolves
+      # until this has run, so `type-check` would fail on missing modules and
+      # report it as the app's own type errors. The image build hits the same
+      # trap, which is why docker/Dockerfile builds the packages first too.
+      - name: Build @brftech/filex-core (app resolves it through dist/)
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
+        run: pnpm --filter='@brftech/filex-core' build
+      - name: Type-check
+        env:
+          # vue-tsc needs headroom on the full component bundle.
+          NODE_OPTIONS: "--max-old-space-size=4096"
+        run: pnpm --filter='./app' type-check
+      - name: Lint
+        run: pnpm --filter='./app' lint
+      - name: Unit tests
+        run: pnpm --filter='./app' test
 
   browser:
     name: Browser E2E (Cypress)
@@ -120,6 +162,65 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  # The end-user SPA against a REAL filex server — and now the only coverage it
+  # has. It exercises `app/src/data/http/` and its contract with the Go
+  # handlers. A mock-driven suite used to sit beside it carrying the UI-contract
+  # coverage; it went with the mock, so the screens themselves are not covered
+  # end to end any more.
+  #
+  # Same shape as the Cypress job above and for the same reason: one command
+  # that builds this tree, starts it on a free port against a throwaway data
+  # dir, runs the specs and tears it all down. No secrets, no live host.
+  app-e2e:
+    name: App E2E (Playwright, real backend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9.12.0"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: backend/go.sum
+
+      # Chromium is a download of its own, outside node_modules, keyed by the
+      # Playwright version — the same reasoning as the Cypress cache above.
+      - name: Cache the Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('e2e/package.json') }}
+
+      - run: pnpm install --frozen-lockfile
+      - name: Ensure Chromium is present
+        run: pnpm --filter='./e2e' install:browsers
+
+      # Builds packages + admin UI + embed assets + the Go binary, then core and
+      # the app bundle with VITE_FILEX_API set, seeds one drive, serves the
+      # BUILD over `vite preview` (never the dev server — its screenshot hooks
+      # can forge answers the server never gave) and runs the specs against it.
+      - name: Run the app suite against a throwaway instance
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
+        run: node e2e/run.mjs app --build
+
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-e2e-report
+          path: |
+            e2e/playwright-report/app-live
+            e2e/test-results/app-live
+          if-no-files-found: ignore
+          retention-days: 7
+
   docker:
     name: Docker image builds
     runs-on: ubuntu-latest
@@ -127,7 +228,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      # Build the full image end-to-end (frontend + backend + embed) to catch
+      # Build both variants end-to-end (frontend + backend + embed) to catch
       # multi-stage regressions. No push — release publishing is separate.
-      - name: Build image
-        run: docker build -f docker/Dockerfile -t filex:ci .
+      #
+      # The toolchain image is built HERE rather than pulled from ghcr, so this
+      # job also covers docker/Dockerfile.tools and stays green on a PR that
+      # edits the tool list before anything is published. The full build reuses
+      # every stage of the slim one; only the last FROM differs.
+      - name: Build toolchain image
+        run: docker build -f docker/Dockerfile.tools -t filex-tools:ci docker/
+      - name: Build slim image
+        run: docker build -f docker/Dockerfile -t filex:ci-slim .
+      - name: Build full image
+        run: |
+          docker build -f docker/Dockerfile \
+            --build-arg RUNTIME_BASE=filex-tools:ci -t filex:ci-full .

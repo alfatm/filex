@@ -16,6 +16,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/protocolauth"
+	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/staging"
 	"github.com/brf-tech/filex/backend/internal/storage"
 	"github.com/brf-tech/filex/backend/internal/writehook"
@@ -280,18 +281,26 @@ func (h *Handler) completeMultipartUpload(w http.ResponseWriter, r *http.Request
 	defer body.Close()
 	size := body.Size()
 
-	if up.UserID != 0 && h.cfg.Quota != nil {
-		if err := h.cfg.Quota.CheckCanWrite(ctx, up.UserID, size); err != nil {
-			WriteError(w, r, http.StatusRequestEntityTooLarge, "EntityTooLarge", err.Error())
-			return
-		}
-	}
-
+	// ⚠ The driver is resolved BEFORE the quota check, not after as it was:
+	// the file-COUNT half of the check needs it to tell an overwrite from a new
+	// object, and an unresolvable storage is a 500 either way.
 	drv, err := h.cfg.Resolver(st.ID)
 	if err != nil {
 		WriteError(w, r, http.StatusInternalServerError, "InternalError", "storage unavailable")
 		return
 	}
+
+	if up.UserID != 0 && h.cfg.Quota != nil {
+		// The file COUNT as well as the bytes — every S3 client above a size
+		// threshold completes its uploads here, so passing 0 left the count
+		// ceiling unenforced on exactly the large-upload path.
+		addFiles := quotastore.AddFilesForWrite(ctx, h.cfg.Quota, h.cfg.Store, drv, up.UserID, st.ID, key)
+		if err := h.cfg.Quota.CheckCanStore(ctx, up.UserID, size, addFiles); err != nil {
+			WriteError(w, r, http.StatusRequestEntityTooLarge, "EntityTooLarge", err.Error())
+			return
+		}
+	}
+
 	writer, ok := drv.(storage.Writer)
 	if !ok {
 		WriteError(w, r, http.StatusNotImplemented, "NotImplemented", "this storage does not support writes")

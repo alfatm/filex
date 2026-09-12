@@ -1,0 +1,43 @@
+# Build context for docker/Dockerfile.local. BuildKit prefers this file over
+# the root .dockerignore when that Dockerfile is the one being built.
+.git
+.github
+.gitlab
+.claude
+.vscode
+.idea
+
+node_modules
+**/node_modules
+**/.turbo
+**/.vite
+
+# Host build output is the POINT of this recipe: it copies web/dist,
+# packages/webcomponent/dist and app/dist straight from the host tree, so
+# unlike the root .dockerignore this file does NOT exclude them.
+
+# Workspace projects and trees the image does not build.
+desktop
+docs-site
+e2e
+demo
+docs
+deploy
+bin
+
+# Runtime data, not sources.
+data
+storage-data
+storage-local
+
+# Backend artefacts.
+filex
+filex-test
+backend/embed/admin
+backend/embed/web
+backend/embed/app
+!backend/embed/admin/.keep
+!backend/embed/web/.keep
+!backend/embed/app/.keep
+
+*.log

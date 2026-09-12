@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/trash"
 )
 
@@ -182,7 +183,7 @@ func TestQuota_ReleasedOnlyAtPurge(t *testing.T) {
 	assert.EqualValues(t, 4096, f.usage(t), "trashed bytes still occupy the storage")
 
 	svc := trash.New(f.store, f.deps.StorageResolver, f.deps.Quota)
-	rows, _, err := f.store.ListTrashed(context.Background(), &f.storage.ID, 100, 0)
+	rows, _, err := f.store.ListTrashed(context.Background(), &f.storage.ID, false, db.NodeFacets{}, 100, 0)
 	require.NoError(t, err)
 	require.NotEmpty(t, rows, "the delete must have produced a trash row")
 	require.NoError(t, svc.PurgeOne(context.Background(), rows[0].ID))

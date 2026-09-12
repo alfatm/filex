@@ -39,6 +39,14 @@ type BackfillOptions struct {
 	// kinds that previously skipped (e.g. v0.1.7 generic fallback /
 	// audio waveform) — without this, old rows freeze the pipeline.
 	RetrySkipped bool
+	// RetryOriginal includes nodes already `ready` as their OWN bytes
+	// (StorageKey=original). Those rows record a decision — "this file is
+	// cheap enough to serve raw" — not a rendered picture, and the rule
+	// behind it moves: thumb.maxRawTilePixels was added after rows had
+	// already been written under the byte limit alone. Without this, an 8K
+	// WebP catalogued before that keeps stalling the grid forever, because
+	// `ready` is the one state a backfill never re-runs.
+	RetryOriginal bool
 	// Concurrency controls the worker pool size. <=0 → 4.
 	Concurrency int
 	// ProgressEvery determines how many processed nodes between an
@@ -143,11 +151,12 @@ func (s *Server) BackfillThumbs(ctx context.Context, opts BackfillOptions) (Back
 	// no atomics needed.
 	emitted := 0
 	walker := &backfillWalker{
-		store:        s.store,
-		retryFailed:  opts.RetryFailed,
-		retrySkipped: opts.RetrySkipped,
-		limit:        opts.Limit,
-		emitted:      &emitted,
+		store:         s.store,
+		retryFailed:   opts.RetryFailed,
+		retrySkipped:  opts.RetrySkipped,
+		retryOriginal: opts.RetryOriginal,
+		limit:         opts.Limit,
+		emitted:       &emitted,
 	}
 	walkErr := func() error {
 		for _, st := range targets {
@@ -189,10 +198,11 @@ type backfillWalker struct {
 		ListNodesByParent(ctx context.Context, storageID int64, parentID *int64) ([]*model.Node, error)
 		GetThumbnail(ctx context.Context, nodeID int64) (*model.Thumbnail, error)
 	}
-	retryFailed  bool
-	retrySkipped bool
-	limit        int  // 0 = unlimited
-	emitted      *int // pointer so we can mutate across recursive calls
+	retryFailed   bool
+	retrySkipped  bool
+	retryOriginal bool
+	limit         int  // 0 = unlimited
+	emitted       *int // pointer so we can mutate across recursive calls
 }
 
 // errLimitReached is the sentinel that aborts the walk once limit is hit.
@@ -252,6 +262,8 @@ func (w *backfillWalker) walk(ctx context.Context, storageID int64, parentID *in
 //     leftover from a crash). Skip "ready" / "skipped" / "failed".
 //   - retryFailed=true:  emit when no row exists OR row is "pending" / "failed".
 //     Skip "ready" / "skipped".
+//   - retryOriginal=true: additionally emit "ready" rows that are the file's
+//     own bytes rather than a rendered picture — see RetryOriginal.
 func (w *backfillWalker) shouldProcess(ctx context.Context, n *model.Node) bool {
 	existing, err := w.store.GetThumbnail(ctx, n.ID)
 	if err != nil || existing == nil {
@@ -259,7 +271,7 @@ func (w *backfillWalker) shouldProcess(ctx context.Context, n *model.Node) bool 
 	}
 	switch existing.State {
 	case "ready":
-		return false
+		return w.retryOriginal && existing.StorageKey == thumb.OriginalKey
 	case "skipped":
 		return w.retrySkipped
 	case "failed":

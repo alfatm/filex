@@ -15,6 +15,7 @@ import (
 
 	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/model"
+	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/storage"
 )
 
@@ -308,7 +309,11 @@ func (u *upload) Close() error {
 	ctx := context.WithoutCancel(u.fs.ctx)
 	// The ceiling, before the bytes reach the storage.
 	if usr := auth.UserFrom(ctx); usr != nil && u.fs.srv.cfg.Quota != nil {
-		if err := u.fs.srv.cfg.Quota.CheckCanWrite(ctx, usr.ID, u.size); err != nil {
+		// Bytes AND the file count — see the sftp twin for why passing 0 made
+		// `quota_files` an HTTP-only limit.
+		addFiles := quotastore.AddFilesForWrite(ctx, u.fs.srv.cfg.Quota, u.fs.srv.cfg.Store,
+			u.drv, usr.ID, u.target.Storage.ID, u.target.Rel)
+		if err := u.fs.srv.cfg.Quota.CheckCanStore(ctx, usr.ID, u.size, addFiles); err != nil {
 			return err
 		}
 	}

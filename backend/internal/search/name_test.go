@@ -625,3 +625,71 @@ func TestFuzzinessFor_Digits(t *testing.T) {
 		}
 	}
 }
+
+func TestParseQueryExcludePaths(t *testing.T) {
+	cases := []struct {
+		raw     string
+		text    string
+		exclude []string
+	}{
+		{"config -path:archive", "config", []string{"archive"}},
+		// A path arrives normalised, so the separators the user typed —
+		// and whether they typed a leading or trailing slash at all —
+		// stop being something the rest of the pipeline has to know.
+		{"config -path:/demo/archive/", "config", []string{"demo archive"}},
+		{"config -PATH:Archive", "config", []string{"archive"}},
+		{"a -path:x1 -path:y2", "a", []string{"x1", "y2"}},
+		{`a -path:"old files"`, "a", []string{"old files"}},
+		// One character names no folder anybody meant: it stays text
+		// rather than hiding most of a drive between two keystrokes.
+		{"a -path:x", "a -path:x", nil},
+		{"a -path:", "a -path:", nil},
+		// Positive `path:` is not an operator — confining to a subtree is
+		// the path_prefix facet's job, so this is a filename to look for.
+		{"path:archive", "path:archive", nil},
+	}
+	for _, c := range cases {
+		got := ParseQuery(c.raw)
+		if got.Text != c.text {
+			t.Errorf("%q: text = %q, want %q", c.raw, got.Text, c.text)
+		}
+		if !equalStrings(got.ExcludePaths, c.exclude) {
+			t.Errorf("%q: exclude paths = %v, want %v", c.raw, got.ExcludePaths, c.exclude)
+		}
+		if got.HasFilter() != (len(c.exclude) > 0) {
+			t.Errorf("%q: HasFilter = %v", c.raw, got.HasFilter())
+		}
+		// A path exclusion is not a tag filter, and the tag branches must
+		// not start answering for it.
+		if got.HasTagFilter() {
+			t.Errorf("%q: HasTagFilter = true", c.raw)
+		}
+	}
+}
+
+func TestPathExcluded(t *testing.T) {
+	cases := []struct {
+		path    string
+		exclude []string
+		want    bool
+	}{
+		{"/demo/archive/q1.pdf", []string{"archive"}, true},
+		{"/demo/archive/q1.pdf", []string{"demo archive"}, true},
+		{"/Demo/Archive/q1.pdf", []string{"archive"}, true},
+		{"/demo/design/logo.svg", []string{"archive"}, false},
+		// A whole word run, not a raw substring: excluding `doc` must not
+		// take `/documents` with it.
+		{"/documents/report.md", []string{"doc"}, false},
+		{"/documents/report.md", []string{"documents"}, true},
+		// Order matters, so the folder that was excluded is the one hidden.
+		{"/archive/demo.pdf", []string{"demo archive"}, false},
+		// Any of them hides the node; several exclusions widen what is hidden.
+		{"/demo/tmp/x.txt", []string{"archive", "tmp"}, true},
+		{"/demo/tmp/x.txt", nil, false},
+	}
+	for _, c := range cases {
+		if got := PathExcluded(c.path, c.exclude); got != c.want {
+			t.Errorf("PathExcluded(%q, %v) = %v, want %v", c.path, c.exclude, got, c.want)
+		}
+	}
+}

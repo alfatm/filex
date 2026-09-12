@@ -14,10 +14,11 @@ All paths end at the same place: the admin UI at `…/admin` (and the same app w
 the panel, for the accounts you hand out, at `…/drive`), with a first‑run
 admin account (see [First run](#first-run)).
 
-**Images.** `ghcr.io/brf-tech/filex:latest` is the full‑featured image
-(thumbnails for image/video/pdf/office included). `…:slim` is a smaller image
-without the thumbnail toolchain — thumbnails then degrade to placeholder cards.
-The binary inside both is identical; only the runtime tooling differs.
+**Images.** `:latest` is the full‑featured image (thumbnails for
+image/video/pdf/office included). `:slim` is a smaller image without the
+thumbnail toolchain — thumbnails then degrade to placeholder cards. The binary
+inside both is identical; only the runtime tooling differs. Registry paths and
+sizes: [Images](DOCKER.md#images).
 
 ---
 

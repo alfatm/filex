@@ -23,6 +23,6 @@ Then **App Templates** → *filex* → adjust env → **Deploy the container**.
 
 Volumes `/data` (DB/index/thumbs) and `/srv/files` (managed files) are created
 as anonymous Docker volumes by default — edit the mappings at deploy time to
-bind host paths. The template uses `:latest`; substitute
-`ghcr.io/brf-tech/filex:vX.Y.Z` (a tag from
-[Releases](https://github.com/BRF-Tech/filex/releases)) to pin.
+bind host paths. The template uses `:latest`; substitute a pinned `:vX.Y.Z`
+tag (see [Images](../../docs/DOCKER.md#images) for the full path, and
+[Releases](https://github.com/BRF-Tech/filex/releases) for the tags).

@@ -96,6 +96,15 @@ convert:
   enabled: false
   url: ""                 # https://files.example.com/convert
 
+# Office→PDF conversion for thumbnails of doc/docx/xls/xlsx/ppt/pptx/odf.
+# LibreOffice is not in the filex image (~730 MB with its JRE), so this runs as
+# its own Deployment — any Gotenberg-compatible service. Cluster-internal: no
+# browser ever talks to it, so a ClusterIP address is the right url.
+# See docs/thumbnails.md#the-office-conversion-service.
+libreoffice:
+  enabled: false
+  url: ""                 # http://filex-libreoffice:3000
+
 # Mermaid diagrams render in the browser with no service — always available.
 
 # ── Bundled MinIO (S3-compatible storage) ───────────────────────────────

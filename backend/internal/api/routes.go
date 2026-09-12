@@ -21,6 +21,7 @@ import (
 
 	"github.com/brf-tech/filex/backend/internal/acl"
 	"github.com/brf-tech/filex/backend/internal/api/handlers"
+	"github.com/brf-tech/filex/backend/internal/assistant"
 	"github.com/brf-tech/filex/backend/internal/auth"
 	"github.com/brf-tech/filex/backend/internal/capability"
 	cloudpkg "github.com/brf-tech/filex/backend/internal/cloud" /* kimlik:e3 cloud */
@@ -38,6 +39,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/notify"
 	"github.com/brf-tech/filex/backend/internal/onlyoffice"
 	"github.com/brf-tech/filex/backend/internal/ops"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/plugin"
 	"github.com/brf-tech/filex/backend/internal/protocolauth"
 	"github.com/brf-tech/filex/backend/internal/protocolsync"
@@ -47,6 +49,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/replica"
 	"github.com/brf-tech/filex/backend/internal/s3api"
 	"github.com/brf-tech/filex/backend/internal/search"
+	"github.com/brf-tech/filex/backend/internal/secretbox"
 	"github.com/brf-tech/filex/backend/internal/share"
 	"github.com/brf-tech/filex/backend/internal/sharezip"
 	"github.com/brf-tech/filex/backend/internal/staging"
@@ -102,6 +105,11 @@ type Deps struct {
 	// ACL resolves per-user/per-item grants (RBAC feature). Constructed in
 	// BuildRouter from Store when nil.
 	ACL *acl.Resolver
+	// Perm resolves role → allowed OPERATIONS (internal/perm). Constructed in
+	// BuildRouter from Store when nil. It is a second, coarser gate beside the
+	// ACL: the ACL decides which items a person may touch, this decides which
+	// kinds of thing their role may do at all. Both must say yes.
+	Perm *perm.Service
 	// ProtocolAuth is the one door every non-HTTP protocol resolves its caller
 	// through (WebDAV today; S3, SFTP, FTPS, NFS and FUSE next). ONE instance is
 	// shared on purpose: a resolver per protocol would mean a credential cache
@@ -137,6 +145,16 @@ type Deps struct {
 	// file per editing window instead of one per Ctrl+S. nil falls back to
 	// AVScan (scan immediately) rather than to no scan.
 	AVScanAfterSave func(ctx context.Context, n *model.Node)
+	// ThumbBackfill re-dispatches the thumbnail pipeline over the given
+	// storages (nil = every enabled storage) and RETURNS IMMEDIATELY: the walk
+	// runs in a goroutine of the bootstrap's making, on a context that outlives
+	// the request that asked for it. Wired by the server bootstrap; nil leaves
+	// the admin reset endpoints clearing thumbnails without rebuilding them.
+	//
+	// ⚠ No context parameter on purpose. The one context a handler has to hand
+	// is the request's, and it is cancelled the moment the response is written
+	// — which would kill the walk a few files in.
+	ThumbBackfill func(storageIDs []int64)
 	// Updater tracks published releases and (on installs that own their
 	// binary) applies them. Nil = the feature is off; the admin endpoints then
 	// report a "disabled" status instead of disappearing. See docs/UPDATES.md.
@@ -171,6 +189,11 @@ func BuildRouter(d *Deps) http.Handler {
 	// the caller's grants + account-role ceiling.
 	if d.ACL == nil {
 		d.ACL = acl.New(d.Store)
+	}
+	// Per-role OPERATION permissions (internal/perm, migration 00044) — the
+	// coarse gate that sits BESIDE the ACL above, not instead of it.
+	if d.Perm == nil {
+		d.Perm = perm.New(d.Store)
 	}
 	if d.External == nil {
 		d.External = external.New(d.Store)
@@ -229,6 +252,11 @@ func BuildRouter(d *Deps) http.Handler {
 
 	r.Use(Logger)
 	r.Use(Recoverer)
+	// Per-role operation permissions travel on the request context, so any
+	// handler can ask "may this role do this" with one line (handlers/
+	// perm_guard.go). Mounted at the root, before auth: nothing is decided
+	// here — the check runs inside the handler, long after the caller is known.
+	r.Use(handlers.PermMiddleware(d.Perm))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   d.Cfg.CORS.AllowedOrigins,
 		AllowedMethods:   d.Cfg.CORS.AllowedMethods,
@@ -404,12 +432,36 @@ func BuildRouter(d *Deps) http.Handler {
 
 	// New self-service + admin handlers.
 	authSelf := handlers.NewAuthSelf(d.Store)
+	assistantH := handlers.NewAssistant(d.Store)
+	assistantAdminH := handlers.NewAssistantAdmin(d.Store)
+	// The model side. The box unseals the provider key; a build error here
+	// (an unusable FILEX_SECRET_KEY) leaves the assistant unconfigured rather
+	// than taking the router down — every other feature is unaffected by it.
+	assistantBox, _ := secretbox.New(d.Cfg.SecretKey)
+	assistantAI := assistant.New(d.Store, assistantBox)
+	assistantH.AttachAI(assistantAI)
+	// The files it may look at — the same ACL-checked core the MCP server uses,
+	// so the assistant sees exactly what the person asking could open.
+	assistantH.AttachTools(handlers.AssistantToolDeps{
+		Store:    d.Store,
+		Resolver: d.StorageResolver,
+		ACL:      d.ACL,
+		Index:    d.Index,
+		Body:     d.Body,
+		Versions: d.Versions,
+		Share:    d.Share,
+		Trash:    d.Trash,
+		Tenants:  tenants,
+	})
+	assistantProviderH := handlers.NewAssistantProviderAdmin(d.Store, assistantBox, assistantAI)
 	dashH := handlers.NewDashboard(d.Store, d.Caps, d.Worker)
 	auditH := handlers.NewAudit(d.Store)
 	syncAdmH := handlers.NewSyncAdmin(d.Store)
 	sharesAdmH := handlers.NewSharesAdmin(d.Store)
 	externalH := handlers.NewExternalAdmin(d.Store, d.Caps, d.External, envManagedExternal(d.Cfg))
 	authProvH := handlers.NewAuthProviders(d.Store)
+	storagesUserH := handlers.NewStoragesUser(d.Store)
+	storagesUserH.AttachACL(d.ACL)
 	storagesAdmH := handlers.NewStoragesAdmin(d.Store)
 	// Test probes a plugin driver properly (handlers/storages_admin.go).
 	storagesAdmH.Plugins = d.Plugins
@@ -418,15 +470,20 @@ func BuildRouter(d *Deps) http.Handler {
 	queueH := handlers.NewQueue(d.Queue)
 	notifH := handlers.NewNotifications(d.Notify)
 	replicaH := handlers.NewReplica(d.Store, d.ReplicaService, d.ReplicaCron, d.ReplicaReloader)
+	activityH := handlers.NewActivity(d.Store)
+	activityH.AttachACL(d.ACL)
 	trashH := handlers.NewTrash(d.Trash, d.Store)
 	trashH.AttachSearchIndex(d.Index)
 	trashH.AttachACL(d.ACL)
 	metaH := handlers.NewMeta(d.Store)
 	sharedH := handlers.NewShared(d.Store)
-	quotaH := handlers.NewQuota(d.Quota)
+	quotaH := handlers.NewQuota(d.Quota, d.Store)
 	saveTextH := handlers.NewSaveText(d.Store, d.StorageResolver)
 	saveTextH.AttachACL(d.ACL)
 	saveTextH.AttachSearchIndex(d.Index)
+	// The editor writes bytes like any other upload surface, so it answers to
+	// the same ceilings.
+	saveTextH.AttachQuota(d.Quota)
 	if d.Versions != nil {
 		// Snapshot the pre-edit bytes into version history before
 		// every save-text write (Ada, translated from Turkish: "not a
@@ -478,6 +535,7 @@ func BuildRouter(d *Deps) http.Handler {
 	}
 	versionsH := handlers.NewVersions(d.Store, d.Versions)
 	versionsH.AttachSearchIndex(d.Index)
+	versionsH.AttachACL(d.ACL)
 	grantsH := handlers.NewGrants(d.Store, d.ACL)
 	grantsH.AttachInvite(d.Share, d.Mailer, d.Cfg.PublicURL)
 	grantsH.AttachTenants(tenants)
@@ -643,8 +701,34 @@ func BuildRouter(d *Deps) http.Handler {
 		// re-mounting an already-mounted path (the public /api/auth Route
 		// above owns it). We declare each leaf path inline instead.
 		r.Get("/api/auth/me", authSelf.Me)
+		// What the caller may change about their own sign-in; the admin
+		// auth-provider surface stays supertenant-only.
+		r.Get("/api/auth/methods", authSelf.Methods)
 		r.Patch("/api/auth/profile", authSelf.UpdateProfile)
 		r.Post("/api/auth/password", authSelf.ChangePassword)
+		// Where this account is signed in, and how to end one of those sign-ins. Both are
+		// scoped to the caller by the context principal, not by a parameter.
+		r.Get("/api/auth/sessions", authSelf.Sessions)
+		r.Delete("/api/auth/sessions/{id}", authSelf.RevokeSession)
+		// The assistant's conversation history. Every route is scoped to the
+		// caller by the context principal, and the one that returns MESSAGES has
+		// no administrator path through it at all — see handlers/assistant.go.
+		// Whether asking is possible at all — the panel is drawn from this.
+		r.Get("/api/assistant/status", assistantH.Status)
+		// One question, answered as a stream so it can be stopped mid-answer.
+		r.Post("/api/assistant/sessions/{id}/turn", assistantH.Turn)
+		// Permission to read ONE file, given by the person, for this
+		// conversation only — the gate in front of read_file.
+		r.Post("/api/assistant/sessions/{id}/approvals", assistantH.Approve)
+		// A plan of work the assistant proposed: the person decides, and the
+		// SERVER runs what the stored plan says — see handlers/assistant_plans.go.
+		r.Post("/api/assistant/sessions/{id}/plans/{planID}/approve", assistantH.ApprovePlan)
+		r.Post("/api/assistant/sessions/{id}/plans/{planID}/cancel", assistantH.CancelPlan)
+		r.Get("/api/assistant/sessions", assistantH.Sessions)
+		r.Post("/api/assistant/sessions", assistantH.CreateSession)
+		r.Get("/api/assistant/sessions/{id}", assistantH.Messages)
+		r.Patch("/api/assistant/sessions/{id}", assistantH.RenameSession)
+		r.Delete("/api/assistant/sessions/{id}", assistantH.DeleteSession)
 		r.Post("/api/auth/totp/enroll", authSelf.TotpEnroll)
 		r.Post("/api/auth/totp/verify", authSelf.TotpVerify)
 		r.Post("/api/auth/totp/disable", authSelf.TotpDisable)
@@ -731,14 +815,29 @@ func BuildRouter(d *Deps) http.Handler {
 			// proxy (which injects the token); returns {ticket, ws_url} for a
 			// direct cross-origin wss:// connection. Confinement is inherited.
 			r.Post("/ws-ticket", wsh.Ticket)
+			// The drives this user may open, by the name that addresses them
+			// (`<name>://<path>`). The same list reaches a client as a side
+			// effect of `?q=index`; this route answers it without listing a
+			// folder first, so a drive switcher can render before navigation.
+			r.Get("/storages", storagesUserH.List)
 			r.Get("/manager", mh.List)
 			r.Post("/manager", mh.Mutate)
 			r.Get("/manager/trash", trashH.List)
+			// What happened to one file. Beside the listings rather than under
+			// /api/admin/audit: the audit page answers "what did this ACCOUNT
+			// do", this answers "what happened to this FILE", and only the
+			// second is a question an ordinary user asks about their own files.
+			r.Get("/activity", activityH.List)
 			// What OTHER people shared with me. Sits beside the trash listing
 			// because it is the same kind of surface: a virtual folder the
 			// navigation panel opens, not a path under a storage.
 			r.Get("/manager/shared-with-me", sharedH.SharedWithMe)
 			r.Post("/manager/restore", trashH.Restore)
+			// Purging one's OWN trash. `empty` is declared before the `{id}`
+			// route out of the same habit as the upload routes, though the
+			// methods already keep them apart.
+			r.Post("/manager/trash/empty", trashH.EmptySelf)
+			r.Delete("/manager/trash/{id}", trashH.PurgeSelf)
 			r.Get("/stat", mh.Stat)
 			r.Get("/read", mh.Read)
 			// Search — POST is the canonical body-carrying endpoint;
@@ -774,6 +873,11 @@ func BuildRouter(d *Deps) http.Handler {
 			r.Post("/upload/{id}/commit", suh.Commit)
 			r.Delete("/upload/{id}", suh.Abort)
 
+			// A folder or a selection as one archive, streamed. The single-file
+			// download stays where it is (`?q=preview&download=1`): it can be
+			// ranged and resumed, and a zip of one file would help nobody.
+			r.Get("/download/zip", ah.DownloadZip)
+
 			r.Post("/archive/list", ah.List)
 			r.Post("/archive/extract", ah.Extract)
 			r.Post("/archive/add", ah.Add)
@@ -800,6 +904,7 @@ func BuildRouter(d *Deps) http.Handler {
 			r.Delete("/permissions/{id}", grantsH.Delete)
 			r.Get("/permissions/resolve", grantsH.Resolve)
 			r.Get("/permissions/users", grantsH.SearchUsers)
+			r.Get("/permissions/groups", grantsH.SearchGroups)
 			r.Post("/permissions/invite", grantsH.Invite)
 			r.Post("/permissions/share-mail", grantsH.ShareMail)
 
@@ -879,8 +984,27 @@ func BuildRouter(d *Deps) http.Handler {
 
 		r.Route("/api/admin", func(r chi.Router) {
 			r.Get("/dashboard", dashH.Get)
+
+			// Assistant history: how much of it each account holds, and the
+			// ability to clear one. Metadata only — the handler contains no
+			// call that could return a conversation.
+			r.Get("/assistant/sessions", assistantAdminH.Sessions)
+			r.Delete("/assistant/sessions/{id}", assistantAdminH.DeleteSession)
+			// The model provider: one for the whole installation, so the
+			// handler additionally refuses a tenant admin.
+			r.Get("/assistant/provider", assistantProviderH.Get)
+			r.Put("/assistant/provider", assistantProviderH.Put)
+			r.Post("/assistant/provider/test", assistantProviderH.Test)
 			// Duplicate-file report — same (size, etag) grouping (v0.2 "Bul").
 			r.Get("/duplicates", handlers.NewDuplicates(d.Store).Report)
+
+			// Per-role operation permissions (internal/perm, migration 00044).
+			// GET carries the catalogue too, so the screen renders the same
+			// checkbox grid this build actually enforces rather than a list
+			// compiled into the SPA that could drift from it.
+			rolesAdmH := handlers.NewRolesAdmin(d.Perm)
+			r.Get("/roles", rolesAdmH.List)
+			r.Put("/roles/{name}", rolesAdmH.Update)
 
 			// Driver config contracts — what fields each storage driver
 			// needs, straight from the driver registry. Every admin
@@ -903,6 +1027,12 @@ func BuildRouter(d *Deps) http.Handler {
 				r.Delete("/{id}", pluginsH.Delete)
 			})
 
+			// Thumbnail maintenance — drops cached thumbnails so they are
+			// rebuilt. Scoped per storage and installation-wide; see
+			// handlers/thumbs_admin.go for why "ready" rows need an explicit
+			// reset rather than a backfill.
+			thumbsAdmH := handlers.NewThumbsAdmin(d.Thumbs, d.ThumbBackfill)
+
 			r.Route("/storages", func(r chi.Router) {
 				r.Get("/", stg.List)
 				r.Post("/", stg.Create)
@@ -913,7 +1043,10 @@ func BuildRouter(d *Deps) http.Handler {
 				r.Post("/{id}/sync", stg.TriggerSync)
 				r.Get("/{id}/sync-runs", storagesAdmH.SyncRuns)
 				r.Get("/{id}/drift", storagesAdmH.Drift)
+				r.Post("/{id}/thumbs/reset", thumbsAdmH.ResetStorage)
 			})
+
+			r.Post("/thumbs/reset", thumbsAdmH.ResetAll)
 
 			// Replication targets — separate entity (backup-only sinks).
 			// See handlers/replication_targets.go for the rationale.
@@ -988,7 +1121,23 @@ func BuildRouter(d *Deps) http.Handler {
 
 			// Global RBAC permissions overview — who has what, where.
 			r.Get("/grants", grantsH.AdminList)
+			r.Post("/grants", grantsH.AdminCreate)
+			r.Patch("/grants/{id}", grantsH.AdminUpdate)
 			r.Delete("/grants/{id}", grantsH.AdminDelete)
+
+			// User groups (migration 00043) — a named set of accounts a path
+			// can be granted to once instead of once per person.
+			groupsAdmH := handlers.NewGroupsAdmin(d.Store)
+			r.Route("/groups", func(r chi.Router) {
+				r.Get("/", groupsAdmH.List)
+				r.Post("/", groupsAdmH.Create)
+				r.Get("/{id}", groupsAdmH.Get)
+				r.Patch("/{id}", groupsAdmH.Update)
+				r.Delete("/{id}", groupsAdmH.Delete)
+				r.Put("/{id}/members", groupsAdmH.ReplaceMembers)
+				r.Post("/{id}/members", groupsAdmH.AddMember)
+				r.Delete("/{id}/members/{userId}", groupsAdmH.RemoveMember)
+			})
 
 			r.Route("/audit", func(r chi.Router) {
 				r.Get("/", auditH.List)
@@ -1014,6 +1163,15 @@ func BuildRouter(d *Deps) http.Handler {
 				r.Get("/{user_id}", quotaH.AdminGet)
 				r.Post("/{user_id}", quotaH.AdminSet)
 				r.Post("/{user_id}/recompute", quotaH.AdminRecompute)
+			})
+
+			// The INSTANCE defaults and the per-user table behind the admin
+			// quota page. Plural, and not under /quota/{user_id}, because
+			// these are about everybody.
+			r.Route("/quotas", func(r chi.Router) {
+				r.Get("/", quotaH.AdminDefaults)
+				r.Patch("/", quotaH.AdminSetDefaults)
+				r.Get("/users", quotaH.AdminUsers)
 			})
 
 			r.Route("/versions", func(r chi.Router) {
@@ -1207,17 +1365,9 @@ func BuildRouter(d *Deps) http.Handler {
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// ────── root → admin SPA ──────
-	// Bare `/` would otherwise return chi's stock 404. The admin SPA
-	// lives at /admin/, so 302 anyone landing on the apex URL there.
-	// Demo deployments render a public landing on /admin/login;
-	// non-demo deployments render a sign-in form. Either way the SPA
-	// owns the user-facing entry.
-	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
-		http.Redirect(w, req, "/admin/", http.StatusFound)
-	})
-
 	// ────── embedded static ──────
+	// This also claims `/` and the root catch-all for the end-user app, so it
+	// goes LAST: every route registered above wins over the SPA fallback.
 	wireStatic(r, d.Embed)
 
 	return r
@@ -1227,14 +1377,15 @@ func BuildRouter(d *Deps) http.Handler {
 // admin panel is served from. See wireStatic and GitHub #14.
 const UserUIPrefix = "/drive"
 
-// wireStatic mounts the embedded /admin SPA and the per-asset Web
-// Component bundle at /embed.js (+ neighbouring assets).
+// wireStatic mounts the embedded /admin SPA, the end-user app at the root and
+// the per-asset Web Component bundle at /embed.js (+ neighbouring assets).
 //
 // Layout inside the embed.FS:
 //
 //	admin/  ← Vite-built Vue 3 admin SPA (index.html + assets/...)
 //	web/    ← @brftech/filex Web Component bundle (filex.iife.js +
 //	          style.css + LICENSE)
+//	app/    ← Vite-built Vue 3 end-user SPA (app/), mounted at /
 //
 // SPA fallback: any /admin/* request that doesn't map to a real file
 // falls back to admin/index.html so vue-router's client routes work.
@@ -1282,6 +1433,50 @@ func wireStatic(r chi.Router, fs embed.FS) {
 		r.Handle(UserUIPrefix, http.RedirectHandler(UserUIPrefix+"/", http.StatusMovedPermanently))
 		r.Handle(UserUIPrefix+"/", userSPA)
 		r.Handle(UserUIPrefix+"/*", userSPA)
+	}
+
+	// ⚠ Registered together with the root catch-all below, and only because of
+	// it: an unknown /api/… path is a typo or a removed endpoint, and answering
+	// it with the SPA's index.html turns a clean 404 into "unexpected token <"
+	// inside somebody's JSON parser. Subtrees that are their own subrouter
+	// (/api/auth, /api/files, …) already answer for themselves and are more
+	// specific, so this only catches what nothing else claims.
+	r.Handle("/api/*", http.NotFoundHandler())
+
+	// The end-user app — a bundle of its OWN (app/), not the admin SPA under a
+	// second name the way /drive is — and it owns the ROOT: an apex visit is a
+	// person wanting their files, not the administrator's console (which keeps
+	// /admin/). Until this moved, `/` was a 302 to /admin/.
+	//
+	// ⚠ This registers a root catch-all, so it MUST be wired after every other
+	// route: chi prefers a more specific pattern, so /api/…, /admin/…, /s/{token}
+	// and friends still win, but anything NOT registered now answers the app's
+	// index.html with 200 instead of a 404. Two consequences to keep in mind:
+	// a new top-level route does not exist until it is registered here, and
+	// /files/edit stays the ADMIN editor (registered above), which shadows the
+	// app's own /files/:path* for a folder literally named "edit".
+	//
+	// ⚠ A non-empty embed/app is NOT proof that the app was built: every build
+	// pipeline creates the directory whether or not it ran the app build, and
+	// stripPrefix only rejects an EMPTY one — so a lone `.keep` would pass it
+	// and then answer 500 "missing index.html" on every request. Probing
+	// index.html is what turns that into a readable 404 naming the build.
+	appFS, err := stripPrefix(fs, "app")
+	if err == nil {
+		if _, err = appFS.ReadFile("index.html"); err != nil {
+			appFS = nil
+		}
+	}
+	if appFS == nil {
+		// No bundle: keep the apex useful rather than answering chi's stock
+		// 404 — the console is the one UI this build definitely carries.
+		r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+			http.Redirect(w, req, "/admin/", http.StatusFound)
+		})
+	} else {
+		appSPA := spaHandler{root: appFS, urlPrefix: ""}
+		r.Handle("/", appSPA)
+		r.Handle("/*", appSPA)
 	}
 
 	webFS, err := stripPrefix(fs, "web")

@@ -42,6 +42,10 @@ type Service struct {
 	okTTL   time.Duration
 	failTTL time.Duration
 
+	// thumbsDisabled is FILEX_THUMBS_ENABLED=false, negated so the zero value
+	// keeps the probing behaviour every embedder and test already relies on.
+	thumbsDisabled bool
+
 	// Static fields filled by the bootstrap that don't need probing.
 	authDrivers      []string
 	storageDrivers   []string
@@ -86,6 +90,20 @@ func (s *Service) SetStaticInventory(
 	s.demoUser = demoUser
 	s.defaultLocale = defaultLocale
 	s.oidcAutoRedirect = oidcAutoRedirect
+	s.cached = nil
+	s.mu.Unlock()
+}
+
+// SetThumbsEnabled applies FILEX_THUMBS_ENABLED. With thumbnails off the
+// `thumbs` block reports every kind false — including `image`, which needs no
+// tool — because the honest answer to "can this server render a thumbnail" is
+// no, and a client that believes otherwise waits for tiles that never arrive.
+// The probes are skipped entirely in that state.
+//
+// Call once at boot, before the first Get().
+func (s *Service) SetThumbsEnabled(enabled bool) {
+	s.mu.Lock()
+	s.thumbsDisabled = !enabled
 	s.cached = nil
 	s.mu.Unlock()
 }
@@ -185,21 +203,25 @@ func (s *Service) refresh(ctx context.Context) (*model.Capabilities, error) {
 	caps.DemoUser = s.demoUser
 	caps.DefaultLocale = s.defaultLocale
 	caps.OIDCAutoRedirect = s.oidcAutoRedirect
+	thumbsDisabled := s.thumbsDisabled
 	s.mu.RUnlock()
-	if has("magick") || has("convert") {
-		caps.Thumbs.ImageMagick = true
+	// FILEX_THUMBS_ENABLED=false: report the whole block false and probe
+	// nothing. `image` goes too — it needs no tool, but nothing renders it
+	// either, and a client told image=true keeps waiting for a tile.
+	if thumbsDisabled {
+		caps.Thumbs = model.ThumbCapabilities{}
 	}
-	if has("ffmpeg") {
+	if !thumbsDisabled && has("ffmpeg") {
 		caps.Thumbs.Video = true
 		caps.Thumbs.Audio = true
 	}
-	if has("gs") || has("pdftoppm") {
+	if !thumbsDisabled && (has("gs") || has("pdftoppm")) {
 		caps.Thumbs.PDF = true
 	}
-	if has("libreoffice") || has("soffice") {
+	if !thumbsDisabled && (has("libreoffice") || has("soffice")) {
 		caps.Thumbs.Office = true
 	}
-	if has("rsvg-convert") {
+	if !thumbsDisabled && has("rsvg-convert") {
 		caps.Thumbs.SVG = true
 	}
 	// Optional OCR for content search — resolution shared with the
@@ -249,6 +271,15 @@ func (s *Service) refresh(ctx context.Context) (*model.Capabilities, error) {
 				st.State = "disabled"
 			}
 			caps.External[es.Name] = st
+			// The office→PDF service is the one external service a THUMB
+			// kind depends on, so `thumbs.office` has to answer for both
+			// converters. Configured is enough, deliberately: a service that
+			// is momentarily unreachable leaves rows `failed`, which a
+			// backfill retries, whereas advertising office=false would write
+			// them `skipped` — the state nothing re-runs.
+			if es.Name == "libreoffice" && es.Enabled && es.URL != "" && !thumbsDisabled {
+				caps.Thumbs.Office = true
+			}
 		}
 	}
 
@@ -331,8 +362,9 @@ func missingSecret(name, secret string) bool {
 // while the service itself is healthy. Services without an entry (drawio)
 // keep the raw-URL probe.
 var externalHealthPaths = map[string]string{
-	"onlyoffice": "/healthcheck",
-	"convert":    "/healthz",
+	"onlyoffice":  "/healthcheck",
+	"convert":     "/healthz",
+	"libreoffice": "/health",
 }
 
 // externalProbeURL returns the URL to probe for the named service — the

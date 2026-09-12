@@ -15,22 +15,12 @@ import (
 	"github.com/brf-tech/filex/backend/internal/trash"
 )
 
-// hiddenNames are filex-internal buckets never exposed over WebDAV.
-var hiddenNames = map[string]bool{
-	".filex-trash": true,
-	".versions":    true,
-	".thumbs":      true,
-}
-
-// hiddenPath reports whether any segment of rel is an internal bucket.
-func hiddenPath(rel string) bool {
-	for _, seg := range strings.Split(rel, "/") {
-		if hiddenNames[seg] {
-			return true
-		}
-	}
-	return false
-}
+// hiddenPath reports whether rel names one of filex's own buckets, or lives
+// anywhere beneath one. WebDAV addresses a deep path directly, so the test is
+// per path COMPONENT — through model.IsReservedPath, the one list every
+// surface now shares, rather than a private copy that knew three of the four
+// names.
+func hiddenPath(rel string) bool { return model.IsReservedPath(rel) }
 
 // davFS is the composite webdav.FileSystem: the first path segment picks a
 // storage, the rest is storage-relative. One instance lives per request and
@@ -460,7 +450,7 @@ func (f *davFS) storageDir(ctx context.Context, st *model.Storage, set *acl.Set,
 	}
 	infos := make([]os.FileInfo, 0, len(objs))
 	for _, o := range objs {
-		if hiddenNames[o.Name] {
+		if hiddenPath(o.Name) {
 			continue
 		}
 		childRel := acl.CleanRel(o.Path)

@@ -18,6 +18,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/antivirus"
 	"github.com/brf-tech/filex/backend/internal/api"
 	"github.com/brf-tech/filex/backend/internal/api/handlers"
+	"github.com/brf-tech/filex/backend/internal/assistant"
 	"github.com/brf-tech/filex/backend/internal/auth"
 	authapitoken "github.com/brf-tech/filex/backend/internal/auth/drivers/apitoken"
 	authldap "github.com/brf-tech/filex/backend/internal/auth/drivers/ldap"
@@ -48,6 +49,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/replica"
 	"github.com/brf-tech/filex/backend/internal/search"
+	"github.com/brf-tech/filex/backend/internal/secretbox"
 	"github.com/brf-tech/filex/backend/internal/sftpsrv"
 	"github.com/brf-tech/filex/backend/internal/share"
 	"github.com/brf-tech/filex/backend/internal/sharezip"
@@ -442,18 +444,34 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 
 	bgBody := filebody.New(store, stagingArea).WithCache(fileCache)
 
-	// Thumbnail pipeline.
-	pipelineCaps := thumb.Capabilities{Image: true}
+	// Thumbnail pipeline. FILEX_THUMBS_ENABLED is applied to the capability
+	// service FIRST, because the probe below is what the pipeline's own
+	// capabilities are built from: switch thumbnails off and /api/capabilities
+	// stops advertising tools nothing will call, instead of the advertised set
+	// and the running set disagreeing.
+	caps.SetThumbsEnabled(cfg.Thumbs.Enabled)
+	pipelineCaps := thumb.Capabilities{Image: cfg.Thumbs.Enabled}
 	cap, _ := caps.Get(ctx)
 	if cap != nil {
 		pipelineCaps.Video = cap.Thumbs.Video
 		pipelineCaps.Audio = cap.Thumbs.Audio
 		pipelineCaps.PDF = cap.Thumbs.PDF
-		pipelineCaps.Office = cap.Thumbs.Office
+		// NOT cap.Thumbs.Office: that one is also true for a configured remote
+		// service, and this field means "a local binary is installed". The
+		// remote converter reaches the pipeline through
+		// AttachOfficeConverter below, live rather than at boot.
+		pipelineCaps.Office = cfg.Thumbs.Enabled && thumb.OfficeBinAvailable()
 		pipelineCaps.SVG = cap.Thumbs.SVG
 	}
 	pipeline := thumb.New(store, cfg.Thumbs.CacheDir, pipelineCaps)
 	pipeline.AttachBody(bgBody)
+	if !cfg.Thumbs.Enabled {
+		// The switch a config file has always documented and nothing has ever
+		// read: `Thumbs.Enabled` was parsed and dropped on the floor, so
+		// FILEX_THUMBS_ENABLED=false generated thumbnails anyway.
+		pipeline.Disable()
+		slog.Info("thumbnails: disabled (FILEX_THUMBS_ENABLED=false)")
+	}
 
 	// Share service.
 	shareSvc := share.NewService(store)
@@ -499,10 +517,18 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 		storages: map[int64]storage.Driver{},
 	}
 
-	// External services (OnlyOffice, drawio, converter) resolve from the
+	// External services (OnlyOffice, drawio, converters) resolve from the
 	// `external_services` table on every use, so what the admin UI saves is
 	// what the running process does.
 	extResolver := external.New(store)
+
+	// Office thumbnails go through the same table: the converter is a separate
+	// service (LibreOffice is ~730 MB of packages and a fork per document, so
+	// it does not belong in the filex image), and it can be pointed at a new
+	// URL without a restart like every other external service.
+	pipeline.AttachOfficeConverter(func(ctx context.Context) string {
+		return extResolver.URL(ctx, external.LibreOffice)
+	})
 
 	// OnlyOffice integration.
 	//
@@ -573,7 +599,11 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 	ooSvc.StorageResolver = resolver
 
 	// Async ops queue — DB-backed, restart-safe.
-	opsSvc := ops.New(sqlDB, resolver)
+	opsSvc := ops.New(sqlDB, dbDrv.Dialect(), resolver)
+	// Only the crash-recovery requeue now — the schema arrives with db.Migrate
+	// above, which fails hard. A warning is the right level: the table is
+	// there either way, and the cost of a failure here is that ops interrupted
+	// by the last shutdown stay parked in `running` rather than resuming.
 	if err := opsSvc.Migrate(ctx); err != nil {
 		slog.Warn("ops: migrate", slog.String("err", err.Error()))
 	}
@@ -686,6 +716,15 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 	// Database-backed settings seeded from the environment on first boot only.
 	// The env var is inert once a row exists (see package dbsetting).
 	antivirus.SeedSettings(ctx, store)
+	// The quota defaults (migration 00042). Seeded here, next to every other
+	// first-boot seeding, so the rows exist before anything resolves them.
+	quota.SeedSettings(ctx, store)
+	// The assistant's provider settings, seeded the same way. The key is sealed
+	// on the way in, so an install with no FILEX_SECRET_KEY is told the key was
+	// not stored rather than having it written to the database in the clear.
+	if box, err := secretbox.New(cfg.SecretKey); err == nil {
+		assistant.SeedSettings(ctx, store, box)
+	}
 	// ⚠⚠ This resolution is what the process RUNS with until it restarts.
 	// enabled / mode / clamd address are read once, here, because the lines
 	// below are the wiring itself: registering the queue handler and handing
@@ -745,6 +784,21 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 				slog.String("mode", avRes.Mode),
 				slog.String("reason", reason))
 		}
+	}
+
+	// Thumbnails for files that arrive ON a storage. Every write through filex
+	// dispatches the pipeline from its handler; the sync walk has none, so its
+	// files kept placeholder tiles until an operator ran `thumb backfill`. A
+	// queue op, not the handlers' goroutine: the walk finds files by the
+	// thousand and the pool is bounded. Without a persistent queue the walk
+	// stays as it was and backfill remains the way (docs/thumbnails.md).
+	if srvObj.qpool != nil {
+		thumbJob := queue.NewThumbJob(store, pipeline.GenerateThumb)
+		srvObj.qpool.Register(queue.TypeThumb, thumbJob.Handle)
+		qd := srvObj.queue
+		worker.AttachThumbs(func(ctx context.Context, n *model.Node) {
+			thumbJob.Enqueue(ctx, qd, n)
+		})
 	}
 
 	// Replica orchestration. The wrapper Driver itself is created
@@ -858,7 +912,7 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 			var out []sharezip.DirShare
 			complete := false
 			for offset := 0; offset < maxShares; offset += page {
-				rows, total, err := store.ListAllShares(ctx, nil, true, page, offset)
+				rows, total, err := store.ListAllShares(ctx, nil, "", true, page, offset)
 				if err != nil {
 					return nil, err
 				}
@@ -980,6 +1034,29 @@ func New(ctx context.Context, cfg config.Config, embedFS embed.FS) (*Server, err
 		AVScan:          avEnqueue,          /* koru:k2 av */
 		AVScanAfterSave: avEnqueueAfterSave, /* koru:k2 av — debounced editor save */
 		E2EEscrow:       escrowKey,          /* wiring:e2 — nil when escrow is off */
+	}
+	// Thumbnail regeneration behind the admin reset endpoints. Detached from
+	// the request on purpose (the walk outlives the 202) and bound to THIS
+	// context — the process-lifetime one — so a shutdown stops it.
+	deps.ThumbBackfill = func(storageIDs []int64) {
+		go func() {
+			defer func() {
+				if rec := recover(); rec != nil {
+					slog.Warn("thumb reset: regeneration panic recovered", slog.Any("recover", rec))
+				}
+			}()
+			res, err := srvObj.BackfillThumbs(ctx, BackfillOptions{StorageIDs: storageIDs})
+			if err != nil {
+				slog.Warn("thumb reset: regeneration aborted", slog.String("err", err.Error()))
+				return
+			}
+			slog.Info("thumb reset: regeneration done",
+				slog.Any("storages", storageIDs),
+				slog.Int("processed", res.Processed),
+				slog.Int("ok", res.OK),
+				slog.Int("failed", res.Failed),
+				slog.Int("skipped", res.Skipped))
+		}()
 	}
 	// WebDAV server (/dav/<storage>/<path>, HTTP Basic) — the handler itself
 	// is composed inside api.BuildRouter (single Mount line, see
@@ -1208,6 +1285,7 @@ func seedExternalDefaults(ctx context.Context, store db.Store, cfg config.Config
 		{name: "onlyoffice", url: cfg.ExternalServices.OnlyOffice.URL, secret: cfg.ExternalServices.OnlyOffice.JWTSecret},
 		{name: "drawio", url: cfg.ExternalServices.Drawio.URL, secret: ""},
 		{name: "convert", url: cfg.ExternalServices.Convert.URL, secret: ""},
+		{name: "libreoffice", url: cfg.ExternalServices.LibreOffice.URL, secret: ""},
 	}
 	for _, d := range defaults {
 		cur, _ := store.GetExternalService(ctx, d.name)

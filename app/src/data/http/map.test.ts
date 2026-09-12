@@ -1,0 +1,250 @@
+import { describe, expect, it } from 'vitest';
+import { noQuota } from '../types';
+import {
+  fromFileNode,
+  fromModelNode,
+  fromTrashEntry,
+  toQuota,
+  toStorage,
+  type WireFileNode,
+  type WireNode,
+} from './map';
+
+const listed = (patch: Partial<WireFileNode> = {}): WireFileNode => ({
+  id: 42,
+  path: 'main://Docs/report.pdf',
+  basename: 'report.pdf',
+  type: 'file',
+  extension: 'pdf',
+  size: 2048,
+  mime_type: 'application/pdf',
+  storage: 'main',
+  last_modified: Date.parse('2026-07-01T10:00:00Z'),
+  ...patch,
+});
+
+describe('listing rows → app model', () => {
+  it('takes the address as the id and derives the parent from it', () => {
+    expect(fromFileNode(listed())).toMatchObject({
+      id: 'main://Docs/report.pdf',
+      name: 'report.pdf',
+      parentId: 'main://Docs',
+      kind: 'file',
+      size: 2048,
+      fileType: 'pdf',
+      thumbnail: 'pdf',
+      modifiedAt: '2026-07-01T10:00:00.000Z',
+    });
+  });
+
+  it('serves a file’s bytes through the endpoint that listed it, so no node id is needed', () => {
+    expect(fromFileNode(listed()).assetUrl).toBe('/api/files/manager?q=preview&path=main%3A%2F%2FDocs%2Freport.pdf');
+  });
+
+  it('gives a folder no size and no bytes', () => {
+    const folder = fromFileNode(listed({ type: 'dir', path: 'main://Docs', basename: 'Docs', size: 4096 }));
+    expect(folder).toMatchObject({ kind: 'folder', size: 0, parentId: 'main://' });
+    expect(folder.assetUrl).toBeUndefined();
+    expect(folder.fileType).toBeUndefined();
+  });
+
+  it('treats a symlink as the file it stands for', () => {
+    expect(fromFileNode(listed({ type: 'symlink' })).kind).toBe('file');
+  });
+
+  it('sorts a dateless row last rather than as an invalid date', () => {
+    expect(fromFileNode(listed({ last_modified: undefined })).modifiedAt).toBeUndefined();
+  });
+
+  it('points the tile at the cached thumbnail, versioned by mtime, and at nothing when the server has none', () => {
+    const thumbed = fromFileNode(listed({ thumb_url: '/api/files/thumb/42' }));
+    expect(thumbed.thumbUrl).toBe(`/api/files/thumb/42?v=${Date.parse('2026-07-01T10:00:00Z')}`);
+    expect(fromFileNode(listed({ thumb_url: '/api/files/thumb/42', last_modified: undefined })).thumbUrl).toBe('/api/files/thumb/42');
+    expect(fromFileNode(listed()).thumbUrl).toBeUndefined();
+  });
+
+  it('ignores the server’s extension card for types the app draws itself', () => {
+    // README.md would arrive with a thumb_url: the pipeline paints a coloured card with "MD" on it for any file it
+    // cannot render. The app has its own document art, so the card is not shown.
+    const md = listed({ path: 'main://Docs/README.md', basename: 'README.md', extension: 'md', thumb_url: '/api/files/thumb/42' });
+    expect(fromFileNode(md).thumbUrl).toBeUndefined();
+    expect(fromFileNode(md).thumbnail).toBe('document');
+    expect(fromFileNode(listed({ path: 'main://Docs/clip.mp4', basename: 'clip.mp4', extension: 'mp4', thumb_url: '/api/files/thumb/42' })).thumbUrl).toBe(
+      `/api/files/thumb/42?v=${Date.parse('2026-07-01T10:00:00Z')}`,
+    );
+  });
+
+  it('leaves the small-image rule to the server: no thumb_url, no tile, whatever the size', () => {
+    // A file the server serves as its own bytes still arrives WITH a thumb_url — the row is `ready`, only its bytes
+    // come from the file instead of the cache. So size tells this mapper nothing, and it no longer looks at it: a
+    // 400 KB 8K WebP is small by bytes and ruinous to decode, which is a call only the server can make.
+    const photo = (size: number) => listed({ path: 'main://Docs/photo.webp', basename: 'photo.webp', extension: 'webp', size });
+    expect(fromFileNode(photo(1024)).thumbUrl).toBeUndefined();
+    expect(fromFileNode(photo(1024 * 1024)).thumbUrl).toBeUndefined();
+    expect(fromFileNode({ ...photo(1024), thumb_url: '/api/files/thumb/42' }).thumbUrl).toBe(
+      `/api/files/thumb/42?v=${Date.parse('2026-07-01T10:00:00Z')}`,
+    );
+  });
+
+  it('leaves starred off: it is per-user metadata a listing row does not carry', () => {
+    expect(fromFileNode(listed())).toMatchObject({ starred: false });
+  });
+
+  it('takes shared from the row, and reads a missing flag as not shared', () => {
+    expect(fromFileNode(listed({ shared: true })).shared).toBe(true);
+    expect(fromFileNode(listed()).shared).toBe(false);
+  });
+
+  it('counts a folder only when the server counted it: no count is not zero items', () => {
+    const dir = listed({ type: 'dir', path: 'main://Docs', basename: 'Docs' });
+    expect(fromFileNode({ ...dir, item_count: 12 }).itemCount).toBe(12);
+    expect(fromFileNode({ ...dir, item_count: 0 }).itemCount).toBe(0);
+    expect(fromFileNode(dir).itemCount).toBeUndefined();
+  });
+
+  it('dates the row from created_at, and omits the field where the server sent none', () => {
+    expect(fromFileNode(listed({ created_at: Date.parse('2026-06-02T08:30:00Z') })).createdAt).toBe('2026-06-02T08:30:00.000Z');
+    expect(fromFileNode(listed()).createdAt).toBeUndefined();
+  });
+});
+
+describe('metadata rows → app model', () => {
+  const model = (patch: Partial<WireNode> = {}): WireNode => ({
+    id: 7,
+    storage_id: 1,
+    name: 'notes.md',
+    path: '/Docs/notes.md',
+    type: 'file',
+    size: 12,
+    db_mtime: '2026-07-01T10:00:00Z',
+    created_at: '2026-06-01T09:00:00Z',
+    storage: 'main',
+    ...patch,
+  });
+
+  it('rebuilds the address from the storage name the endpoint attaches', () => {
+    expect(fromModelNode(model(), 'main')).toMatchObject({
+      id: 'main://Docs/notes.md',
+      parentId: 'main://Docs',
+      createdAt: '2026-06-01T09:00:00Z',
+    });
+  });
+
+  it('prefers the driver mtime over filex’s own cached one', () => {
+    expect(fromModelNode(model({ backend_mtime: '2026-07-09T08:00:00Z' }), 'main').modifiedAt).toBe('2026-07-09T08:00:00Z');
+    expect(fromModelNode(model({ backend_mtime: null }), 'main').modifiedAt).toBe('2026-07-01T10:00:00Z');
+  });
+
+  it('carries the trash timestamp only when there is one', () => {
+    expect(fromModelNode(model(), 'main').deletedAt).toBeUndefined();
+    expect(fromModelNode(model({ deleted_at: '2026-07-10T12:00:00Z' }), 'main').deletedAt).toBe('2026-07-10T12:00:00Z');
+  });
+
+  it('builds the thumbnail address from the node id, only once the pipeline reports it ready', () => {
+    const photo = (patch: Partial<WireNode> = {}) => model({ name: 'photo.jpg', path: '/Docs/photo.jpg', size: 4 << 20, ...patch });
+    expect(fromModelNode(photo({ thumb: { state: 'ready' } }), 'main').thumbUrl).toBe('/api/files/thumb/7?v=2026-07-01T10%3A00%3A00Z');
+    expect(fromModelNode(photo({ thumb: { state: 'pending' } }), 'main').thumbUrl).toBeUndefined();
+    expect(fromModelNode(photo(), 'main').thumbUrl).toBeUndefined();
+    expect(fromModelNode(photo({ type: 'dir', thumb: { state: 'ready' } }), 'main').thumbUrl).toBeUndefined();
+    // The server's extension card for a markdown file is not a picture of it; the app's document art shows instead.
+    expect(fromModelNode(model({ thumb: { state: 'ready' } }), 'main').thumbUrl).toBeUndefined();
+    // A row the pipeline did not make ready has no tile here either, however small the file is.
+    expect(fromModelNode(photo({ size: 1024, thumb: { state: 'skipped' } }), 'main').thumbUrl).toBeUndefined();
+  });
+
+  it('dates a Recent row by the open the endpoint reports, leaving the mtime where it was', () => {
+    expect(fromModelNode(model({ opened_at: '2026-07-09T08:30:00Z' }), 'main')).toMatchObject({
+      openedAt: '2026-07-09T08:30:00Z',
+      modifiedAt: '2026-07-01T10:00:00Z',
+    });
+    expect(fromModelNode(model(), 'main').openedAt).toBeUndefined();
+  });
+
+  it('carries the share flag, so a starred or recently-opened row badges like a listed one', () => {
+    expect(fromModelNode(model({ shared: true }), 'main').shared).toBe(true);
+    expect(fromModelNode(model(), 'main').shared).toBe(false);
+  });
+});
+
+describe('trash rows → app model', () => {
+  it('shows where the node came from and dates the row by its deletion', () => {
+    const node = fromTrashEntry({
+      id: 9,
+      storage_id: 1,
+      storage_name: 'main',
+      path: '/Design/logo.svg',
+      name: 'logo.svg',
+      size: 900,
+      deleted_at: '2026-07-10T12:00:00Z',
+    });
+    expect(node).toMatchObject({
+      id: 'main://Design/logo.svg',
+      originalPath: '/Design',
+      deletedAt: '2026-07-10T12:00:00Z',
+      modifiedAt: '2026-07-10T12:00:00Z',
+    });
+    // A server too old to name the kind leaves every row a file, which is what they all were before it did.
+    expect(node.kind).toBe('file');
+    expect(node.ttlDays).toBeUndefined();
+  });
+
+  it('keeps a deleted folder a folder, without a size, and counts down its stay', () => {
+    const folder = fromTrashEntry({
+      id: 9,
+      storage_id: 1,
+      storage_name: 'main',
+      path: '/Design',
+      name: 'Design',
+      type: 'dir',
+      size: 4096,
+      deleted_at: '2026-07-10T12:00:00Z',
+      ttl_days: 23,
+    });
+    // As a file it drew an icon picked by extension and a byte count where a folder shows a dash.
+    expect(folder).toMatchObject({ kind: 'folder', size: 0, ttlDays: 23, fileType: undefined });
+  });
+});
+
+describe('storages', () => {
+  it('is addressed by its name, and its root is the bare adapter form', () => {
+    const storage = toStorage({ id: 7, name: 'main', read_only: false, used_bytes: 100 }, { ...noQuota(), totalBytes: 1000 });
+    expect(storage).toEqual({ id: 'main', serverId: 7, name: 'main', rootId: 'main://', quota: { ...noQuota(), usedBytes: 100, totalBytes: 1000 }, shared: false, viaGroups: [] });
+    // A server too old to send the row id leaves it 0, which the drive picker reads as "cannot narrow to this
+    // drive" rather than as drive zero.
+    expect(toStorage({ name: 'main', read_only: false }, noQuota()).serverId).toBe(0);
+  });
+
+  it('measures the drive’s own bytes against the account ceiling, not the account’s bytes against it', () => {
+    const [main, backup] = [
+      toStorage({ name: 'main', read_only: false, used_bytes: 300 }, { ...noQuota(), totalBytes: 1000 }),
+      toStorage({ name: 'backup', read_only: true, used_bytes: 700 }, { ...noQuota(), totalBytes: 1000 }),
+    ];
+    expect([main.quota.usedBytes, backup.quota.usedBytes]).toEqual([300, 700]);
+    // A server too old to report it says nothing rather than repeating the account's figure under every drive.
+    expect(toStorage({ name: 'old', read_only: false }, { ...noQuota(), totalBytes: 1000 }).quota.usedBytes).toBe(0);
+  });
+
+  it('shows an unlimited account as no ceiling rather than a bar that never fills', () => {
+    expect(toQuota({ used_bytes: 5, quota_bytes: 0, unlimited: true })).toEqual({ ...noQuota(), usedBytes: 5 });
+    expect(toQuota({ used_bytes: 5, quota_bytes: 50 })).toEqual({ ...noQuota(), usedBytes: 5, totalBytes: 50 });
+  });
+
+  // Three ceilings, three ways of saying "none": a flag for bytes, a flag for the file count, and a plain 0 from a
+  // server that sends the number and no flag at all.
+  it('reads the file and rolling-upload ceilings, and each one’s own “unlimited”', () => {
+    expect(
+      toQuota({
+        used_bytes: 5,
+        quota_bytes: 50,
+        used_files: 1240,
+        quota_files: 5000,
+        upload_used_bytes: 21,
+        upload_quota_bytes: 100,
+        upload_window_hours: 24,
+      }),
+    ).toEqual({ usedBytes: 5, totalBytes: 50, usedFiles: 1240, totalFiles: 5000, uploadUsedBytes: 21, uploadTotalBytes: 100, uploadWindowHours: 24 });
+
+    const open = toQuota({ used_bytes: 5, quota_bytes: 50, used_files: 7, quota_files: 5000, files_unlimited: true, upload_quota_bytes: 100, upload_unlimited: true });
+    expect([open.totalFiles, open.uploadTotalBytes]).toEqual([0, 0]);
+  });
+});

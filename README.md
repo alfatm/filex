@@ -96,7 +96,7 @@ or **too big** (a groupware suite you deploy for the file tab). filex aims at th
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  filex (Go binary; 43 MB slim / 511 MB w/ thumbnails)       │
+│  filex (Go binary; 179 MB slim / 535 MB w/ thumbnails)      │
 ├─────────────────────────────────────────────────────────────┤
 │  HTTP API (chi)  │  Admin UI (Vue 3, embedded)              │
 │  Auth Drivers:   │  local · oidc · ldap · proxy-header      │
@@ -350,7 +350,7 @@ credentials**, so even an agent with no filex token can finish the transfer with
 - **Universal converter** — optional side-car converts between document/image formats from the UI. It, OnlyOffice and drawio are configured in the admin panel and apply to the running server, with no restart ([docs/ONLYOFFICE.md](docs/ONLYOFFICE.md), [docs/CONVERT-INTEGRATION.md](docs/CONVERT-INTEGRATION.md)).
 - **Notifications** — generic JSON webhooks (Slack/Discord-agnostic): any number of targets, each with its own signing secret and its own per-event subscription, plus an in-app bell with read/unread and a per-user mute matrix. A write that **creates** a file and a write that **replaces** one are different events (`file.uploaded` / `file.updated`), and the ones an operator most wants on their own — an infected upload quarantined, a failed upload, an encrypted folder opened with its recovery key — are subscribable individually ([docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)).
 - **Search** — Bleve embedded, full-text + metadata, permission-aware. VS Code-style filename scoring: folders count and word order does not (`main code` finds `Code/main.go`), separators and typos forgiven (`invoice 2026` finds `invoice_2026.pdf`, `mian.go` finds `main.go`) while numbers are matched literally (`2026` never means `2025`), `tag:` filters, exact matches ranked first.
-- **Thumbnails** — image, video (ffmpeg), PDF (ghostscript), Office (libreoffice); capability-aware. A cached thumbnail is released when the file it belongs to is deleted for good, and a periodic reconciler reclaims the orphans an older install accumulated ([docs/thumbnails.md](docs/thumbnails.md)).
+- **Thumbnails** — image, video (ffmpeg), PDF (ghostscript), Office (a LibreOffice conversion service, not bundled — see [docs/thumbnails.md](docs/thumbnails.md#the-office-conversion-service)); capability-aware. A cached thumbnail is released when the file it belongs to is deleted for good, and a periodic reconciler reclaims the orphans an older install accumulated ([docs/thumbnails.md](docs/thumbnails.md)).
 - **Tabs, themes & deep links** — several folders open side by side, light/dark/auto theme, and an address bar that tracks the open folder so a pasted link lands there.
 - **Audit log** — every mutation recorded with actor, integration identity and metadata.
 - **CLI client** — the same binary reaches a remote server (`filex client`, `filex sync`) with no server-side plugin ([docs/CLI.md](docs/CLI.md)).

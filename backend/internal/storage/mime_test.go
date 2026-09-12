@@ -2,7 +2,7 @@ package storage
 
 import "testing"
 
-func TestRefineOfficeMime(t *testing.T) {
+func TestRefineMime(t *testing.T) {
 	cases := []struct {
 		detected string
 		filename string
@@ -24,11 +24,27 @@ func TestRefineOfficeMime(t *testing.T) {
 		{"image/png", "deck.pptx", "image/png"},
 		{"", "deck.pptx", ""},
 		{"application/octet-stream", "deck.pptx", "application/octet-stream"},
+
+		// An SVG has no magic number, so sniffing calls it text. This is what
+		// cost every .svg on a local storage its thumbnail: catalogued as
+		// text/plain, it matched neither SVG branch of the thumbnail
+		// dispatcher and got the generic placeholder card instead.
+		{"text/plain; charset=utf-8", "logo.svg", "image/svg+xml"},
+		{"text/xml; charset=utf-8", "logo.svg", "image/svg+xml"},
+		{"text/plain; charset=utf-8", "LOGO.SVG", "image/svg+xml"},
+		{"text/html; charset=utf-8", "logo.svg", "image/svg+xml"},
+
+		// Only the text answers are overridden, and only for .svg: a file
+		// whose BYTES are a PNG keeps image/png however it is named, and a
+		// text file that is not an SVG stays text.
+		{"image/png", "logo.svg", "image/png"},
+		{"text/plain; charset=utf-8", "notes.txt", "text/plain; charset=utf-8"},
+		{"text/plain; charset=utf-8", "no-extension", "text/plain; charset=utf-8"},
 	}
 	for _, c := range cases {
-		got := RefineOfficeMime(c.detected, c.filename)
+		got := RefineMime(c.detected, c.filename)
 		if got != c.want {
-			t.Errorf("RefineOfficeMime(%q, %q) = %q, want %q", c.detected, c.filename, got, c.want)
+			t.Errorf("RefineMime(%q, %q) = %q, want %q", c.detected, c.filename, got, c.want)
 		}
 	}
 }

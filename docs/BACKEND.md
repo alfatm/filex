@@ -132,7 +132,8 @@ build metadata and a set of flat aliases kept for older embeds)
   "external": {
     "onlyoffice": { "enabled": true, "url": "https://docs.example.com", "state": "ok" },
     "drawio":     { "enabled": false, "url": "", "state": "" },
-    "convert":    { "enabled": false, "url": "", "state": "" }
+    "convert":    { "enabled": false, "url": "", "state": "" },
+    "libreoffice": { "enabled": true, "url": "http://libreoffice:3000", "state": "ok" }
   },
   "onlyoffice_url": "https://docs.example.com",
   "drawio_url": "",
@@ -242,13 +243,53 @@ the trash); a name already taken becomes `name-copy`. Full behaviour:
 [Moving files between storages](STORAGE.md#moving-files-between-storages).
 
 **Refusals** are at submit time, not in the worker: `400` unknown target adapter
-· `403` read-only target storage (with a `hint`) · `403` no editor permission on
-the source, or on the target folder **in the destination's storage** · `400`
-mixed-adapter *sources* (one batch, one source storage).
+· `403` read-only target storage (with a `hint`) · `403` read-only SOURCE storage
+for move and delete, which take bytes away from it (copy only reads, so it is
+allowed) · `403` no editor permission on the source, or on the target folder
+**in the destination's storage** · `400` mixed-adapter *sources* (one batch, one
+source storage).
 
 ⚠ Before v0.27.0 the destination's `<adapter>://` prefix was dropped and the
 remaining relative path applied to the SOURCE storage, so a cross-storage paste
 answered `202` and wrote the file into the depo it was copied from.
+
+### Search facets
+`POST /api/files/search` also takes the filter half of a query. All optional;
+each one narrows, none widens.
+
+| Field | Meaning |
+|---|---|
+| `path_prefix` | Confine to one subtree, storage-relative (`/Docs/2026`). This is "search in the current folder". |
+| `ext` | Extensions without the dot (`["md","pdf"]`). **Extensions, not a type-group name** — which extensions count as "documents" is the client's vocabulary, and a second copy of that taxonomy here is a second copy to keep in step. |
+| `modified_after` | Epoch milliseconds. |
+| `size_min` / `size_max` | Bytes. `size_max: 0` means no ceiling. |
+| `owner_id` | filex's numeric user id. |
+| `dirs_only` | Answer with **folders** and nothing else. The destination picker's filter box: its tree loads a level at a time, so without this the box could only search the levels somebody had already opened — which is the same as not having one. |
+
+`ext`, `size_min` and `size_max` imply files only — a folder has no extension
+and its size is a rollup. A date or an owner keeps folders. `dirs_only` is the
+mirror of that implication and overrides it: asking for folders *and* for an
+extension is a contradiction, and it is answered with nothing rather than by
+quietly keeping one half.
+
+**Why they are not applied to the answer.** The full-text index knows a
+document's name, path, mime and type and nothing else, so a filtered search used
+to mean "the first N hits for the text, minus the ones that did not fit": if the
+files the user wanted ranked two hundredth, they saw nothing and could not tell
+that from "there are none". The facets are resolved against the node table and
+applied as a restriction on which documents the index may return — the same
+mechanism `tag:` uses — plus an exact pass over the results, which is what makes
+them right on the two paths that never consult the index (a bare `tag:` listing
+and the SQL LIKE fallback).
+
+⚠ The id set behind the restriction is capped at 10 000 per storage, as `tag:`
+is and for the same reason: the ids become a boolean query inside the index.
+Past the cap the answer carries `"facets_truncated": true` — the filter became a
+sample, so a hit outside it cannot be found however well it matches.
+
+A search with no `storage_id` resolves the facets against every enabled storage
+and unions them; the RBAC pass at the end drops whatever the caller may not see,
+as it does for any hit.
 
 ### `POST /api/files/ops` ![user](https://img.shields.io/badge/-user-blue)
 The unified form behind the three per-verb endpoints:
@@ -269,10 +310,88 @@ The unified form behind the three per-verb endpoints:
 ```
 
 ### `POST /api/files/delete` ![user](https://img.shields.io/badge/-user-blue)
+Same shape and same queued answer as move and copy — one verb, one queue.
 ```json
-{ "paths": ["/storage1/a.txt", "/storage1/sub/"] }
+{ "source": ["alpha://a.txt", "alpha://klasor"] }
 ```
-Returns `200 + { deleted: ["..."], failed: [{ path: "...", error: "..." }] }`.
+**Response 202** `{ "op": { "id": 14, "kind": "delete", … } }`; poll
+`GET /api/files/ops/{id}`.
+
+**This is the move to trash, not a purge.** The worker runs the same `trash.Put`
+the synchronous `?q=delete` runs: the bytes are renamed into `.filex-trash/` and
+the row keeps its id, so `POST /api/files/manager/restore` can put it back.
+A driver that can neither move nor copy has nothing to preserve with, and only
+there is the delete a real one. Purging is the admin's `/api/admin/trash/*`.
+
+**Refusals** are the same submit-time ones as move, minus the destination:
+`403` read-only source storage · `403` no editor permission on a source ·
+`400` mixed-adapter sources · `400` a source that names a storage root.
+
+### `DELETE /api/files/manager/trash/:id` ![user](https://img.shields.io/badge/-user-blue)
+Destroy one entry of the caller's OWN trash. `200 { ok: true }`.
+
+The admin route beside it (`DELETE /api/admin/trash/{id}`) takes any entry in the
+deployment; this one takes only what the caller could have deleted in the first
+place — confinement on the entry's ORIGINAL path, ≥editor there — which is what
+makes it safe to hand to an ordinary account.
+
+**A node that is not in the trash answers `404`**, live rows included. The purge
+takes the bytes at the row's current path, and for a live row that path is where
+the file still is.
+
+### `POST /api/files/manager/trash/empty` ![user](https://img.shields.io/badge/-user-blue)
+Destroy everything in the trash this caller may purge.
+```json
+{ "ok": true, "purged": 12, "failed": 0, "skipped": 0, "more": false }
+```
+Top-level entries only — purging a deleted folder already takes its contents.
+An entry the caller may not purge is `skipped`, not refused: on a shared drive,
+somebody else's deletion must not make "empty my trash" fail altogether.
+
+⚠ The trash listing is ordered by deletion time across **every** account and the
+permission check runs on the rows it hands back, so the first 500 rows are not
+the caller's first 500 rows. The handler therefore reads a page of 500, purges
+what it may, and **steps over pages that purged nothing** until one produces a
+result or the listing runs out. A page that purged something is where the
+request stops — one page of real byte work is the cap, so no single call holds
+open for a trash of any size — and `more` says that page was full, so there may
+be another round to ask for.
+
+That walk is what makes `purged: 0` mean what it says: the whole listing was
+read and there is nothing left this caller may purge. Judging the first page
+alone, it instead meant 500 other people's deletions sat in front of the
+caller's own — every request answering `purged: 0, skipped: 500` — and since the
+app stops asking as soon as a round purges nothing, "Empty trash" quietly did
+nothing at all.
+
+### `GET /api/files/activity` ![user](https://img.shields.io/badge/-user-blue)
+What has happened to ONE file. `?path=<adapter>://<rel>&limit=50` (50 is both
+the default and the ceiling — a details panel shows a short history; the long
+one is the admin audit page).
+```json
+{ "events": [
+  { "id": 23, "event": "file.moved", "at": "2026-09-07T19:26:20Z",
+    "actor_id": 1, "actor_name": "Ada Lovelace",
+    "meta": { "from": "/Docs/act.txt", "to": "/Docs/gunluk.txt", "origin": "manager" } }
+] }
+```
+Readable by whoever may read the file (≥viewer, plus root confinement). A caller
+without that gets `403`, not an empty list — an empty list would answer whether
+the file exists.
+
+The rows are the canonical file events every write surface already emits, read
+back the other way round. `meta` is the event's own payload, which is what tells
+a rename from a move without a second vocabulary here; `actor` and `node` are
+lifted out into fields.
+
+⚠ **Keyed by path**, because that is what the event carries. A renamed file has
+its history split across the two names — the events from before the rename stay
+under the old one. Same property every path-addressed surface in filex has.
+
+⚠ **History starts at the upgrade.** Migration 00034 added the columns that make
+an event findable per node and deliberately did not backfill them from
+`meta_json`: parsing every existing row would spend a long migration on events
+nothing could have shown anyway.
 
 ### `GET /api/files/manager/shared-with-me` ![user](https://img.shields.io/badge/-user-blue)
 
@@ -411,6 +530,31 @@ Cancels the upload and discards staged chunks.
 
 Server-side zip handling. Limited to `FILEX_LIMITS_MAX_ARCHIVE_BYTES`
 (default 1 GiB).
+
+### `GET /api/files/download/zip` ![user](https://img.shields.io/badge/-user-blue)
+
+Streams any mix of files and folders as one archive — what a browser's
+"Download" does with a folder or a multi-selection.
+
+```
+GET /api/files/download/zip?path=main://Design&path=main://notes.md&name=stuff.zip
+```
+
+| Param | Meaning |
+|---|---|
+| `path` | repeated, once per selected file or folder; folders are walked recursively |
+| `name` | optional archive filename; defaults to `<basename>.zip` for a single path, `files.zip` for several |
+
+A GET with the paths in the query string, not a POST with a body, because the
+download has to be a navigation for the browser to own its save dialog, its
+progress and its disk write. At most 500 paths.
+
+Each root is resolved, confinement-checked, authorised (≥viewer) and stat'ed
+**before** the first byte, since the status line is 200 from the moment a zip
+header is written. Members inside a subtree the caller may not see are skipped,
+the way a folder listing skips them. A read error deep inside a folder can only
+end the stream, leaving a short file — there is no way to change the status by
+then.
 
 ### `POST /api/files/archive/list` ![user](https://img.shields.io/badge/-user-blue)
 **Request**

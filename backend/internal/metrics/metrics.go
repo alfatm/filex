@@ -127,8 +127,9 @@ var (
 // ── guards ──────────────────────────────────────────────────────────────────
 
 // GuardRefusals counts every refusal by a guard, labelled with which one.
-// guard="disk" is the staging free-space guard; guard="quota" is the per-user
-// ceiling. One metric with a label rather than two metrics, so an alert can
+// guard="disk" is the staging free-space guard; guard="quota" the per-user
+// byte ceiling, guard="files" the file-count ceiling and guard="upload_rate"
+// the upload window. One metric with a label rather than two metrics, so an alert can
 // say "any guard is firing" without being edited every time one is added.
 var GuardRefusals = prometheus.NewCounterVec(prometheus.CounterOpts{
 	Name: "filex_guard_refusals_total",
@@ -139,6 +140,12 @@ var GuardRefusals = prometheus.NewCounterVec(prometheus.CounterOpts{
 const (
 	GuardDisk  = "disk"
 	GuardQuota = "quota"
+	// GuardFiles is the per-user file-COUNT ceiling and GuardUploadRate the
+	// per-user upload window (both migration 00042). Separate label values,
+	// not one "quota", because they are refused for different reasons and an
+	// operator seeing a spike has to know which resource ran out.
+	GuardFiles      = "files"
+	GuardUploadRate = "upload_rate"
 )
 
 // ── transfers ───────────────────────────────────────────────────────────────
@@ -259,6 +266,8 @@ func init() {
 	// instead of "no data" before the first refusal ever happens.
 	GuardRefusals.WithLabelValues(GuardDisk)
 	GuardRefusals.WithLabelValues(GuardQuota)
+	GuardRefusals.WithLabelValues(GuardFiles)
+	GuardRefusals.WithLabelValues(GuardUploadRate)
 	Swept.WithLabelValues("row")
 	Swept.WithLabelValues("orphan")
 

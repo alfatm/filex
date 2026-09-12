@@ -26,6 +26,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/notify"
 	"github.com/brf-tech/filex/backend/internal/pathkey"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/share"
 	"github.com/brf-tech/filex/backend/internal/sharezip"
 	"github.com/brf-tech/filex/backend/internal/storage"
@@ -168,6 +169,12 @@ type shareCreateRespInner struct {
 // The legacy embed.js posts `{ node_id, pin, expires_in, … }` and reads
 // the flat fields. We support both.
 func (h *Share) HandleCreate(w http.ResponseWriter, r *http.Request) {
+	// files.share — minting a PUBLIC link, the one action here that puts a
+	// file within reach of someone who has no account at all. Listing and
+	// revoking one's own links stay open.
+	if !requirePerm(w, r, perm.OpShare) {
+		return
+	}
 	var req shareCreateReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
@@ -364,24 +371,39 @@ func (h *Share) serveSharedThumb(w http.ResponseWriter, r *http.Request, storage
 	if err != nil || n == nil || n.Type != model.NodeTypeFile {
 		return false
 	}
-	if !h.thumbReady(ctx, n.ID) {
+	row := h.thumbReady(ctx, n.ID)
+	if row == nil {
 		if size > sharedThumbMaxSource {
 			return false
 		}
 		if err := h.Thumbs.GenerateThumb(ctx, n); err != nil {
 			return false
 		}
-		if !h.thumbReady(ctx, n.ID) {
+		if row = h.thumbReady(ctx, n.ID); row == nil {
 			return false
 		}
+	}
+	// A small image is its own tile, with no cached JPEG behind it.
+	if row.StorageKey == thumb.OriginalKey {
+		return writeOriginalTile(w, r, h.Thumbs, n)
 	}
 	f, err := os.Open(h.Thumbs.CachePath(n.ID))
 	if err != nil {
 		return false
 	}
 	defer f.Close()
+	// Same validator contract as /api/files/thumb/{id} (see thumb.go): the URL
+	// is the node and nothing else, so a day of blind freshness would pin a
+	// regenerated thumbnail out of sight on every public gallery too.
+	if etag := thumbETag(f); etag != "" {
+		w.Header().Set("ETag", etag)
+		if match := r.Header.Get("If-None-Match"); match != "" && etagMatches(match, etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return true
+		}
+	}
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("Cache-Control", "private, no-cache")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// ⚠ Reported to the caller as handled even if the copy dies mid-stream:
 	// the headers are already out, so falling through would write a second
@@ -390,9 +412,15 @@ func (h *Share) serveSharedThumb(w http.ResponseWriter, r *http.Request, storage
 	return true
 }
 
-func (h *Share) thumbReady(ctx context.Context, nodeID int64) bool {
+// thumbReady answers with the ready row, or nil when there is none: the caller
+// needs the row itself, because where a tile's bytes live (a cached JPEG, or
+// the small original) is written in it.
+func (h *Share) thumbReady(ctx context.Context, nodeID int64) *model.Thumbnail {
 	t, err := h.Store.GetThumbnail(ctx, nodeID)
-	return err == nil && t != nil && t.State == "ready"
+	if err != nil || t == nil || t.State != "ready" {
+		return nil
+	}
+	return t
 }
 
 // zipWarmTimeout bounds a share-creation warm. Generous — a folder share can
@@ -468,7 +496,7 @@ func (h *Share) warmFolderThumbs(node *model.Node) {
 				if rendered >= prewarmThumbMax || ctx.Err() != nil {
 					return
 				}
-				if browseSkipNames[o.Name] {
+				if shareHidden(o.Name) {
 					continue
 				}
 				child := joinShareRel(dir, o.Name)
@@ -482,7 +510,7 @@ func (h *Share) warmFolderThumbs(node *model.Node) {
 					continue
 				}
 				n, err := h.Store.GetNodeByPath(ctx, storageID, pathkey.Hash(storageID, child))
-				if err != nil || n == nil || n.Type != model.NodeTypeFile || h.thumbReady(ctx, n.ID) {
+				if err != nil || n == nil || n.Type != model.NodeTypeFile || h.thumbReady(ctx, n.ID) != nil {
 					continue
 				}
 				if err := h.Thumbs.GenerateThumb(ctx, n); err == nil {
@@ -908,7 +936,7 @@ func (h *Share) streamFolderZip(ctx context.Context, w http.ResponseWriter, drv 
 			return err
 		}
 		for _, o := range objs {
-			if o.Name == ".filex-trash" || o.Name == ".thumbs" || o.Name == ".keepdir" {
+			if shareHidden(o.Name) {
 				continue
 			}
 			entry := prefix + o.Name

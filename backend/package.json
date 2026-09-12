@@ -1,0 +1,9 @@
+{
+  "name": "@brftech/filex-backend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "filex Go backend — a workspace member only so `pnpm dev` at the root brings the API up beside the frontends",
+  "scripts": {
+    "dev": "FILEX_LISTEN=${FILEX_LISTEN:-127.0.0.1:5212} FILEX_DATA_DIR=${FILEX_DATA_DIR:-./.dev-data} go run ./cmd/filex serve"
+  }
+}

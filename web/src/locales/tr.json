@@ -84,6 +84,7 @@
   },
   "nav": {
     "dashboard": "Panel",
+    "app": "Uygulama",
     "files": "Dosyalar",
     "storages": "Depolar",
     "users": "Kullanıcılar",
@@ -91,7 +92,6 @@
     "external": "Dış servisler",
     "authProviders": "Kimlik sağlayıcılar",
     "apiMcp": "API / MCP",
-    "grants": "İzinler",
     "audit": "Denetim kaydı",
     "sync": "Senkron çalışmaları",
     "shares": "Paylaşımlar",
@@ -116,7 +116,12 @@
     "branding": "Kurumsal Kimlik",
     "updates": "Güncellemeler",
     "connections": "Bağlantılar",
-    "plugins": "Eklentiler"
+    "plugins": "Eklentiler",
+    "assistant": "Yapay zekâ asistanı",
+    "access": "Erişim",
+    "quotas": "Kotalar",
+    "roles": "Roller",
+    "groups": "Gruplar"
   },
   "login": {
     "title": "Oturum aç",
@@ -236,7 +241,14 @@
     "deletedOk": "Depo silindi",
     "createdOk": "Depo oluşturuldu",
     "updatedOk": "Depo güncellendi",
-    "syncStarted": "Senkron başladı"
+    "syncStarted": "Senkron başladı",
+    "resetThumbs": "Önizlemeleri sıfırla",
+    "resetThumbsAll": "Tüm önizlemeleri sıfırla",
+    "resetThumbsConfirm": "\"{name}\" deposunun önbellekteki önizlemeleri silinsin mi? Arka planda hemen yeniden oluşturulur. Video, PDF ve ofis önizlemeleri için sunucuda ffmpeg / ghostscript / libreoffice gerekir — bunlar yoksa bu dosyalar yer tutucu kart olarak görünür.",
+    "resetThumbsConfirmAll": "Tüm depoların önbellekteki önizlemeleri silinsin mi? Arka planda hemen yeniden oluşturulur; büyük bir kurulumda bu, her dosyayı kapsayan uzun bir geçiş demektir.",
+    "resetThumbsOk": "{count} önizleme silindi; arka planda yeniden oluşturuluyor.",
+    "resetThumbsOkNoRegen": "{count} önizleme silindi. Bu sunucu bunları kendi başına yeniden oluşturamaz — `filex thumb backfill` komutunu çalıştırın.",
+    "resetThumbsNone": "Silinecek önbelleklenmiş önizleme yoktu."
   },
   "users": {
     "title": "Kullanıcılar",
@@ -361,6 +373,55 @@
     "envManaged": "Ortam değişkeniyle ayarlı",
     "envManagedHint": "Bir ortam değişkeniyle sabitlenmiş. Buradaki değişiklik hemen uygulanır ama filex bir sonraki açılışta ortamdaki değeri geri yazar."
   },
+  "assistant": {
+    "title": "Yapay zekâ asistanı",
+    "subtitle": "Bu kurulumun konuştuğu model ve sakladığı sohbet geçmişi.",
+    "savedOk": "Asistan ayarları kaydedildi.",
+    "removeKey": "Kayıtlı anahtarı kaldır",
+    "removeKeyConfirm": "Kayıtlı API anahtarı kaldırılsın mı? Yenisi kaydedilene kadar asistan yanıt vermez.",
+    "keyRemoved": "Kayıtlı anahtar kaldırıldı.",
+    "supertenantOnly": "Model sağlayıcısı tüm örneğe hizmet eder ve platform işletmecisi tarafından yönetilir.",
+    "testOk": "{model} yanıtladı: {reply}",
+    "state": {
+      "ready": "Yanıt veriyor",
+      "off": "Kapalı",
+      "incomplete": "Henüz kullanılamaz",
+      "unknown": "Bilinmiyor"
+    },
+    "provider": {
+      "title": "Model sağlayıcısı"
+    },
+    "fields": {
+      "enabled": "Asistanı etkinleştir",
+      "enabledHint": "Varsayılan olarak kapalı. Bu açılmadan model sağlayıcısına hiçbir şey gönderilmez.",
+      "provider": "Protokol",
+      "providerHint": "Sağlayıcı değil, protokol: openai aynı zamanda vLLM, Ollama, LiteLLM ve uyumlu her ağ geçidini kapsar.",
+      "baseUrl": "Temel URL",
+      "baseUrlHint": "Sağlayıcının kendi adresi için boş bırakın. http:// veya https:// ile başlamalıdır.",
+      "model": "Model",
+      "modelHint": "Sağlayıcınızın yazdığı biçimde yazın. Varsayılanı yoktur: hem faturayı hem kaliteyi bu belirler.",
+      "turnsPerMinute": "Hesap başına dakikadaki tur",
+      "turnsPerMinuteHint": "Maliyet denetimi değil, döngü kırıcıdır. Bir insan bu sınıra yazarak ulaşamaz; döngüye giren bir ajan hemen ulaşır.",
+      "apiKey": "API anahtarı",
+      "apiKeyHint": "FILEX_SECRET_KEY ile şifrelenerek saklanır ve bir daha gösterilmez.",
+      "apiKeyStored": "Bir anahtar saklanıyor. Korumak için boş bırakın, değiştirmek için yenisini yazın."
+    },
+    "sessions": {
+      "title": "Sohbetler",
+      "subtitle": "Her hesabın ne kadar geçmiş tuttuğu. Bir sohbeti silebilirsiniz; okuyamazsınız — mesajlarını döndüren bir uç nokta yoktur.",
+      "none": "Henüz sohbet yok.",
+      "unnamed": "Henüz adlandırılmadı",
+      "delete": "Bu sohbeti sil",
+      "deleteConfirm": "{email} hesabına ait bu sohbet silinsin mi? Geri alınamaz.",
+      "deleted": "Sohbet silindi.",
+      "fields": {
+        "owner": "Hesap",
+        "name": "Ad",
+        "messages": "Mesaj",
+        "lastActive": "Son etkinlik"
+      }
+    }
+  },
   "authProviders": {
     "title": "Kimlik sağlayıcılar",
     "subtitle": "Kullanıcıların nasıl giriş yapacağını yapılandır",
@@ -402,17 +463,44 @@
     "testFail": "Sağlayıcı kontrolü başarısız"
   },
   "grants": {
-    "title": "İzinler",
-    "subtitle": "Dosya/klasör bazlı tüm yetkiler — kime, nerede, ne. İstediğini geri al.",
-    "search": "Kullanıcı, yol, depo ara…",
+    "title": "Erişim",
+    "subtitle": "Hangi depoların yetki denetimi yaptığı ve var olan tüm yetkiler — bir hesap veya bir grup için.",
+    "search": "Yetkili, yol, depo ara…",
     "user": "Kullanıcı",
     "storage": "Depo",
     "path": "Yol",
     "level": "Seviye",
     "revoke": "Geri al",
-    "revokeConfirm": "{email} kullanıcısının {path} erişimi geri alınsın mı?",
+    "revokeConfirm": "{principal} için {path} erişimi geri alınsın mı?",
     "revokedOk": "Yetki geri alındı",
-    "empty": "Henüz izin yok."
+    "empty": "Henüz izin yok.",
+    "principal": "Yetkili",
+    "principalAll": "Tüm yetkililer",
+    "principalUsers": "Yalnızca kullanıcılar",
+    "principalGroups": "Yalnızca gruplar",
+    "storagesTitle": "Depolar",
+    "storagesHint": "Bir yetki, yalnızca RBAC açık olan bir depoda geçerlidir. RBAC kapalıyken depo, kimliği doğrulanmış her hesaba açıktır.",
+    "rbac": "RBAC",
+    "rbacSavedOk": "{name} için RBAC güncellendi",
+    "noStorages": "Henüz depo yok.",
+    "newTitle": "Yeni yetki",
+    "pathHint": "Depo kökine göreli. Kökün kendisi için boş bırakın.",
+    "isDir": "Klasör",
+    "isDirHint": "Klasör ve altındaki her şey için açık, tek bir dosya için kapalı.",
+    "principalKind": "Yetki verilecek",
+    "pickUser": "Hesap",
+    "pickGroup": "Grup",
+    "searchUsers": "Hesap ara…",
+    "searchGroups": "Grup ara…",
+    "create": "Erişim ver",
+    "createdOk": "Yetki oluşturuldu",
+    "levelChangedOk": "Seviye değiştirildi",
+    "group": "Grup",
+    "levels": {
+      "viewer": "İzleyici",
+      "editor": "Düzenleyici",
+      "owner": "Sahip"
+    }
   },
   "apiMcp": {
     "title": "API / MCP",
@@ -514,8 +602,14 @@
     "deleteConfirm": "Bu paylaşım kalıcı olarak silinsin mi?",
     "revokedOk": "Paylaşım iptal edildi",
     "deletedOk": "Paylaşım silindi",
-    "noResults": "Aktif paylaşım yok",
-    "linkCopied": "Paylaşım linki panoya kopyalandı"
+    "noResults": "Paylaşım bulunamadı",
+    "linkCopied": "Paylaşım linki panoya kopyalandı",
+    "revoked": "iptal edildi",
+    "expired": "süresi doldu",
+    "scope": {
+      "active": "Yalnızca etkin",
+      "all": "Tüm bağlantılar"
+    }
   },
   "search": {
     "title": "Arama indeksi",
@@ -598,6 +692,8 @@
     "loading": "Yükleniyor…",
     "noStorage": "Henüz depo eklenmedi.",
     "noAccess": "Seninle henüz hiçbir şey paylaşılmadı. Erişim için sunucuyu yönetene sor.",
+    "loadFailed": "Depoların yüklenemedi. Bağlantını kontrol edip yeniden dene.",
+    "retry": "Yeniden dene",
     "addStorage": "Depo ekle",
     "gotoAdmin": "Admin paneli",
     "root": "Kök",
@@ -914,6 +1010,7 @@
       "file_infected": "Virüs bulundu — tarama dosyayı işaretledi ve çöpe karantinaya aldı",
       "file_deleted": "Dosya kalıcı olarak silindi",
       "file_trashed": "Dosya çöpe taşındı",
+      "file_restored": "Dosya çöpten geri yüklendi",
       "file_moved": "Dosya taşındı veya yeniden adlandırıldı",
       "share_created": "Paylaşım bağlantısı oluşturuldu",
       "drop_received": "Herkese açık istek bağlantısından dosya alındı",
@@ -1190,6 +1287,147 @@
     "signature": {
       "label": "İmza",
       "required": "Bu kurulum yalnızca imzalı eklenti kabul eder: ikili dosyanın SHA-256 özeti üzerine, işletmecinin güvendiği bir anahtarla üretilmiş ayrık imzayı (hex ya da base64) yapıştırın. İmza olmadan kurulum reddedilir."
+    }
+  },
+  "quotas": {
+    "title": "Kotalar",
+    "subtitle": "Her hesap için tek bir varsayılan ve elle tanımladığınız istisnalar.",
+    "supertenantOnly": "Kotalar tüm kurulum için tek bir ayardır ve platform işletmecisine aittir.",
+    "defaults": {
+      "title": "Tüm hesaplar için varsayılanlar",
+      "subtitle": "Kendine ait bir istisnası olmayan hesabın aldığı değerler. 0 sınırsız demektir.",
+      "storage": "Depolama limiti (GB)",
+      "files": "Dosya limiti (adet)",
+      "upload": "Pencere başına yükleme limiti (GB)",
+      "window": "Yükleme penceresi (saat)",
+      "windowHint": "1 ile 720 saat arasında.",
+      "zeroUnlimited": "0 = sınırsız",
+      "errInvalid": "Sıfır veya daha büyük bir değer ve 1–720 saat arası bir pencere girin.",
+      "savedOk": "Varsayılanlar kaydedildi"
+    },
+    "accounts": {
+      "title": "Hesaplar",
+      "search": "E-posta veya isim ara…",
+      "empty": "Eşleşen hesap yok.",
+      "account": "Hesap",
+      "storage": "Depolama",
+      "files": "Dosyalar",
+      "upload": "Penceredeki yükleme",
+      "default": "varsayılan",
+      "override": "istisna",
+      "recompute": "Yeniden hesapla",
+      "recomputeOk": "{email} için kullanım yeniden hesaplandı",
+      "savedOk": "{email} için kota güncellendi"
+    },
+    "editor": {
+      "title": "{email} için kota",
+      "storage": "Depolama limiti",
+      "files": "Dosya limiti",
+      "upload": "Pencere başına yükleme limiti",
+      "inherit": "Varsayılanı kullan ({value})",
+      "unlimited": "Sınırsız",
+      "custom": "Özel",
+      "customGb": "Gigabayt",
+      "customCount": "Dosya adedi",
+      "errCustom": "Özel limit sıfırdan büyük olmalıdır."
+    }
+  },
+  "roles": {
+    "title": "Roller",
+    "subtitle": "Her rolün dosyalarla neler yapabileceği. Yöneticilerde her zaman tüm yetkiler vardır.",
+    "empty": "Sunucu hiç rol döndürmedi.",
+    "operation": "İşlem",
+    "adminHint": "her zaman tüm yetkiler",
+    "unsaved": "Kaydedilmedi",
+    "savedOk": "{name} kaydedildi",
+    "groups": {
+      "write": "Yazma",
+      "organise": "Düzenleme",
+      "share": "Paylaşım",
+      "read": "Okuma"
+    },
+    "ops": {
+      "files": {
+        "upload": {
+          "label": "Dosya yükle",
+          "hint": "Bir klasöre yeni dosya ekler."
+        },
+        "mkdir": {
+          "label": "Klasör oluştur",
+          "hint": "Yeni bir klasör açar."
+        },
+        "rename": {
+          "label": "Yeniden adlandır",
+          "hint": "Bir dosyanın veya klasörün adını değiştirir."
+        },
+        "move": {
+          "label": "Taşı",
+          "hint": "Bir dosyayı veya klasörü başka bir yere taşır."
+        },
+        "copy": {
+          "label": "Kopyala",
+          "hint": "Bir dosyayı veya klasörü çoğaltır."
+        },
+        "delete": {
+          "label": "Sil",
+          "hint": "Bir dosyayı veya klasörü çöp kutusuna gönderir."
+        },
+        "purge": {
+          "label": "Kalıcı olarak sil",
+          "hint": "Bir ögeyi çöp kutusundan tamamen kaldırır."
+        },
+        "restore": {
+          "label": "Geri yükle",
+          "hint": "Bir ögeyi çöp kutusundan geri getirir."
+        },
+        "download": {
+          "label": "İndir",
+          "hint": "Dosya içeriğini okur ve indirir."
+        },
+        "share": {
+          "label": "Paylaşım bağlantıları",
+          "hint": "Herkese açık bağlantı oluşturur ve geri alır."
+        },
+        "grant": {
+          "label": "Erişim yetkisi ver",
+          "hint": "Başka bir hesaba bir yol için erişim verir."
+        },
+        "tags": {
+          "label": "Etiketler",
+          "hint": "Etiket ekler ve kaldırır."
+        },
+        "star": {
+          "label": "Yıldızlar",
+          "hint": "Ögeleri favori olarak işaretler."
+        }
+      }
+    }
+  },
+  "groups": {
+    "title": "Gruplar",
+    "subtitle": "Kurum genelindeki kullanıcı grupları. Bir grup, tıpkı bir hesap gibi RBAC yetkisi taşıyabilir.",
+    "empty": "Henüz grup yok.",
+    "search": "Grup ara…",
+    "addNew": "Yeni grup",
+    "newTitle": "Yeni grup",
+    "editTitle": "Grubu düzenle",
+    "createdOk": "Grup oluşturuldu",
+    "updatedOk": "Grup kaydedildi",
+    "deletedOk": "Grup silindi",
+    "deleteConfirm": "“{name}” grubu silinsin mi?",
+    "deleteHint": "Üyelerin hesapları kalır; bu gruba verilmiş tüm yetkiler grupla birlikte kaldırılır.",
+    "members": "Üyeler",
+    "membersTitle": "Üyeler",
+    "noMembers": "Bu grubun henüz üyesi yok.",
+    "addMember": "Üye ekle",
+    "searchUsers": "Hesap ara…",
+    "noCandidates": "Eşleşen hesap yok.",
+    "memberAddedOk": "Üye eklendi",
+    "memberRemovedOk": "Üye kaldırıldı",
+    "removeMemberConfirm": "{email} bu gruptan çıkarılsın mı?",
+    "fields": {
+      "name": "İsim",
+      "description": "Açıklama"
     }
   }
 }

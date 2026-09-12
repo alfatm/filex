@@ -67,7 +67,9 @@ func TestShareBrowse_ThumbServesCachedThumbnail(t *testing.T) {
 		PathHash: mutTestPathHash(st.ID, "album"), Type: model.NodeTypeDirectory,
 	})
 	require.NoError(t, err)
-	mkfileNode(t, store, st, "album/a.gif", int64(len(browseTestGif)))
+	// Catalogued above thumb.SmallImageBytes: a smaller image is its own tile
+	// and the pipeline renders nothing for it.
+	mkfileNode(t, store, st, "album/a.gif", thumb.SmallImageBytes)
 
 	svc := share.NewService(store)
 	sh, err := svc.Create(ctx, share.CreateOpts{NodeID: dir.ID})
@@ -210,7 +212,7 @@ func TestShare_FolderThumbsWarmOnCreate(t *testing.T) {
 
 	dir := mkdirNode(t, store, st, root, "album")
 	require.NoError(t, drv.Write(ctx, "album/pic.gif", strings.NewReader(browseTestGif), int64(len(browseTestGif))))
-	pic := mkfileNode(t, store, st, "album/pic.gif", int64(len(browseTestGif)))
+	pic := mkfileNode(t, store, st, "album/pic.gif", thumb.SmallImageBytes)
 
 	pipe := thumb.New(store, t.TempDir(), thumb.Capabilities{Image: true})
 	pipe.AttachStorage(st.ID, drv)

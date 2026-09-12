@@ -25,12 +25,16 @@ const (
 
 // Node is the canonical representation of a file or directory in DB cache.
 type Node struct {
-	ID           int64      `json:"id"`
-	StorageID    int64      `json:"storage_id"`
-	ParentID     *int64     `json:"parent_id,omitempty"`
-	Name         string     `json:"name"`
-	Path         string     `json:"path"`
-	PathHash     string     `json:"path_hash"`
+	ID        int64  `json:"id"`
+	StorageID int64  `json:"storage_id"`
+	ParentID  *int64 `json:"parent_id,omitempty"`
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	PathHash  string `json:"path_hash"`
+	// OwnerID is the account that put the bytes there — written by quota
+	// accounting on every upload and save. Nil for anything a storage sync
+	// found rather than a person uploading it.
+	OwnerID      *int64     `json:"owner_id,omitempty"`
 	StorageKey   string     `json:"storage_key,omitempty"`
 	Type         NodeType   `json:"type"`
 	Size         int64      `json:"size"`
@@ -58,6 +62,20 @@ type Node struct {
 	// multi-storage mode cannot build the `name://path` it needs to open one —
 	// so the recently-opened tray listed files that did nothing when clicked.
 	Storage string `json:"storage,omitempty"`
+	// OwnerName is the display name behind OwnerID, filled per listing page by
+	// the handlers that return nodes outside a folder listing. The id alone is
+	// not enough: an owner column that renders a number is a column nobody
+	// reads, and without this the client had nothing to print and fell back to
+	// naming the CALLER as the owner of every row.
+	OwnerName string `json:"owner_name,omitempty"`
+	// Shared reports that a public link to this node exists and still opens.
+	// Filled per listing page, because a share lives in its own table and a
+	// node row cannot know about it.
+	Shared bool `json:"shared,omitempty"`
+	// ItemCount is how many entries a folder holds, counted the way the listing
+	// counts them. A pointer, because "not counted" and "empty" are different
+	// statements and a folder nobody counted must not render as "0 items".
+	ItemCount *int64 `json:"item_count,omitempty"`
 }
 
 // Thumbnail references a generated thumbnail asset.
@@ -80,4 +98,10 @@ type NodeVersion struct {
 	Size       int64     `json:"size"`
 	Etag       string    `json:"etag,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
+	// CreatedBy is who wrote this revision, when filex was told. Nil for every
+	// revision taken before the column existed and for anything a background job
+	// snapshotted with no principal on its context.
+	CreatedBy *int64 `json:"created_by,omitempty"`
+	// AuthorName is filled by the API layer from CreatedBy, never persisted.
+	AuthorName string `json:"author_name,omitempty"`
 }

@@ -2,8 +2,10 @@
 /bin/
 /goreleaser-dist/
 /backend/dist/
+/backend/data/
 /backend/embed/web/
 /backend/embed/admin/
+/backend/embed/app/
 /packages/*/dist/
 /web/dist/
 /web/dev-dist/
@@ -52,6 +54,7 @@ yarn-error.log*
 *.swp
 *.swo
 *~
+.claude
 
 # --- Env ---
 .env
@@ -69,6 +72,7 @@ config.local.yaml
 *.db-wal
 /data/
 /storage-data/
+/backend/.dev-data/
 
 # --- OS ---
 .DS_Store

@@ -200,7 +200,7 @@ export const en: Record<string, string> = {
   'empty.search.title': 'No files match your search',
   'empty.search.hint': 'Try a different search term',
   'empty.trash.title': 'Trash is empty',
-  'error.title': 'Could not load this folder',
+  'error.title': 'Could not load this listing',
   'error.retry': 'Try again',
   'toast.undo': 'Undo',
   'toast.undone': 'Undone',

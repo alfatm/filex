@@ -3,8 +3,10 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/brf-tech/filex/backend/internal/auth"
+	authlocal "github.com/brf-tech/filex/backend/internal/auth/drivers/local"
 	"github.com/brf-tech/filex/backend/internal/auth/drivers/multioidc"
 	"github.com/brf-tech/filex/backend/internal/capability"
 	"github.com/brf-tech/filex/backend/internal/db"
@@ -59,7 +61,6 @@ func (h *Capabilities) Get(w http.ResponseWriter, r *http.Request) {
 	const mb = int64(1024 * 1024)
 	flat := map[string]any{
 		"ffmpeg":       c.Thumbs.Video,
-		"imagemagick":  c.Thumbs.ImageMagick,
 		"ghostscript":  c.Thumbs.PDF,
 		"libreoffice":  c.Thumbs.Office,
 		"max_chunk_mb": int64(0),
@@ -137,6 +138,13 @@ func (h *Capabilities) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	merged["caller_kind"] = callerKind
 
+	// What this CALLER's role may do (internal/perm, migration 00044).
+	// Expanded — an admin gets the whole catalogue rather than `["*"]`, so the
+	// client tests membership and never has to know the wildcard exists.
+	// Anonymous (the login screen, the public share/drop pages) gets an empty
+	// list: there is no role to report, and an empty list is the honest answer.
+	merged["permissions"] = h.callerPermissions(r)
+
 	/* wiring:e2 — say plainly whether this installation holds a second key.
 	 * Fixed at install (FILEX_INSTALLATION_E2E_ESCROW_KEY) and immutable
 	 * afterwards, so this answer never changes for a running installation. */
@@ -151,4 +159,89 @@ func (h *Capabilities) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	merged["e2e_escrow"] = esc
 	writeJSON(w, http.StatusOK, merged)
+}
+
+// callerPermissions resolves the operation list of whoever is asking.
+//
+// ⚠ This route is PUBLIC (see routes.go): it carries auth.AnnotateToken only,
+// which names the token but never resolves a user, precisely so a disabled
+// account's stale cookie cannot 403 the login screen's own probe. So the role
+// is read from what is ALREADY on the request — the context user, the session
+// the cookie names, or the annotated API token's owner — with READ-ONLY store
+// lookups and never by running the driver chain.
+//
+// Calling auth.Enabled()[i].Authenticate(r) here was wrong twice over: the
+// drivers are not side-effect free (apitoken writes TouchAPIToken, so a public
+// probe billed a token as used; proxyheader AUTO-PROVISIONS an account, so a
+// GET on a public route could create a user), and they do not check u.Enabled
+// — that is the middleware's job, and this route has no middleware — so a
+// disabled account got its full permission list back. Anonymous, unresolvable
+// and disabled all answer the empty list, which is the documented answer.
+func (h *Capabilities) callerPermissions(r *http.Request) []string {
+	ctx := r.Context()
+	svc := PermServiceFrom(ctx)
+	if svc == nil {
+		return []string{}
+	}
+	u := h.callerUser(r)
+	// ⚠ u.Enabled is checked HERE, not by a middleware this route does not
+	// have: a disabled account's stale cookie must read as anonymous rather
+	// than get its old role's permission list back.
+	if u == nil || !u.Enabled {
+		return []string{}
+	}
+	role := u.Role
+	if role == "" {
+		return []string{}
+	}
+	ops, err := svc.Permissions(ctx, role)
+	if err != nil || ops == nil {
+		return []string{}
+	}
+	return ops
+}
+
+// sessionToken is the session the request presents, however it presents it —
+// the cookie, or a Bearer header, exactly the two the local driver reads. An
+// empty string means no session was offered.
+func sessionToken(r *http.Request) string {
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, authlocal.BearerPrefix) {
+		return strings.TrimSpace(h[len(authlocal.BearerPrefix):])
+	}
+	if c, err := r.Cookie(authlocal.SessionCookieName); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
+// callerUser identifies the requester with reads only: the context user if an
+// earlier chain resolved one, else the account behind the session cookie, else
+// the annotated API token's owner. nil means "anonymous as far as this route is
+// concerned", which is a legitimate answer here and never an error.
+//
+// The session is looked up straight from the store rather than through the
+// local driver so that nothing in the driver chain runs; GetSessionByToken
+// already refuses an expired token. The token is checked last because a request
+// carrying both is a person using the panel.
+func (h *Capabilities) callerUser(r *http.Request) *model.User {
+	ctx := r.Context()
+	if u := auth.UserFrom(ctx); u != nil {
+		return u
+	}
+	if h.Store == nil {
+		return nil
+	}
+	if sessTok := sessionToken(r); sessTok != "" {
+		if sess, serr := h.Store.GetSessionByToken(ctx, sessTok); serr == nil && sess != nil {
+			if u, uerr := h.Store.GetUser(ctx, sess.UserID); uerr == nil {
+				return u
+			}
+		}
+	}
+	if tok := auth.TokenFrom(ctx); tok != nil && tok.UserID > 0 {
+		if u, err := h.Store.GetUser(ctx, tok.UserID); err == nil {
+			return u
+		}
+	}
+	return nil
 }

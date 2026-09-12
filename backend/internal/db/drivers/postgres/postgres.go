@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -343,6 +345,50 @@ func (s *Store) ListNodesByParent(ctx context.Context, storageID int64, parentID
 		out = append(out, n)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListNodesByParentFiltered(ctx context.Context, storageID int64, parentID *int64, f db.NodeFacets) ([]*model.Node, error) {
+	args := []any{storageID}
+	bind := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+	where := []string{"storage_id=$1", "deleted_at IS NULL"}
+	if parentID == nil {
+		where = append(where, "parent_id IS NULL")
+	} else {
+		where = append(where, "parent_id="+bind(*parentID))
+	}
+	where = append(where, f.Where("", "backend_mtime", bind)...)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+nodeColumns()+
+		` FROM nodes WHERE `+strings.Join(where, " AND ")+` ORDER BY type DESC, name`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*model.Node
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CountNodesByParent(ctx context.Context, storageID int64, parentID *int64) (int, error) {
+	q := `SELECT COUNT(*) FROM nodes WHERE storage_id=$1 AND deleted_at IS NULL AND parent_id `
+	args := []any{storageID}
+	if parentID == nil {
+		q += `IS NULL`
+	} else {
+		q += `=$2`
+		args = append(args, *parentID)
+	}
+	var n int
+	err := s.db.QueryRowContext(ctx, q, args...).Scan(&n)
+	return n, err
 }
 
 func (s *Store) AggNodes(ctx context.Context, storageID int64) ([]db.NodeAgg, error) {
@@ -814,6 +860,79 @@ func (s *Store) ListDuplicateNodes(ctx context.Context, minSize int64) ([]db.Dup
 	return out, rows.Err()
 }
 
+// ListNodeIDsMatching resolves the facet half of a search — see db.NodeFacets.
+//
+// Extensions are matched with LIKE on the name rather than a column, because
+// there is none: the name is the only place a node's extension lives, and a
+// derived column would have to be backfilled and kept in step with every rename
+// for a predicate this cheap.
+func (s *Store) ListNodeIDsMatching(ctx context.Context, storageID int64, f db.NodeFacets, limit int) ([]int64, error) {
+	if limit <= 0 || limit > facetIDMax {
+		limit = facetIDMax
+	}
+	args := []any{storageID}
+	bind := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+	where := append([]string{"storage_id = $1 AND deleted_at IS NULL"}, f.Where("", "backend_mtime", bind)...)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM nodes WHERE `+strings.Join(where, " AND ")+` ORDER BY id LIMIT `+bind(limit), args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: facet ids: %w", err)
+	}
+	defer rows.Close()
+	out := make([]int64, 0, 128)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// ListNodesMatching lists the facet-matching node rows themselves, newest
+// first — see db.Store. The id breaks the mtime tie so paging has a total
+// order and no row can slip between two pages.
+func (s *Store) ListNodesMatching(ctx context.Context, storageID int64, f db.NodeFacets, limit, offset int) ([]*model.Node, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	args := []any{storageID}
+	bind := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+	where := append([]string{"storage_id = $1 AND deleted_at IS NULL"}, f.Where("", "backend_mtime", bind)...)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+nodeColumns()+` FROM nodes WHERE `+strings.Join(where, " AND ")+
+			` ORDER BY backend_mtime DESC, id DESC LIMIT `+bind(limit)+` OFFSET `+bind(offset), args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: facet listing: %w", err)
+	}
+	defer rows.Close()
+	out := make([]*model.Node, 0, limit)
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// facetIDMax caps the set one facet query may produce. It is the ceiling `tag:`
+// filtering already uses, for the same reason: the ids become a boolean query
+// inside the index, so an unbounded set turns one search into a
+// hundred-thousand-clause query. A truncated set is reported, not absorbed.
+const facetIDMax = 10000
+
 func (s *Store) SearchNodes(ctx context.Context, storageID int64, like string, limit int) ([]*model.Node, error) {
 	if limit <= 0 {
 		limit = 100
@@ -849,7 +968,8 @@ const userCols = `id, email, COALESCE(display_name,''), COALESCE(password_hash,'
 	`COALESCE(totp_secret,''), COALESCE(totp_pending_secret,''), COALESCE(totp_enabled,FALSE), ` +
 	`COALESCE(totp_recovery_codes_json::text,'[]'), locale, timezone, created_at, updated_at, last_login_at, ` +
 	`provider_id, COALESCE(oidc_subject,''), COALESCE(quota_bytes,0), COALESCE(usage_bytes,0), COALESCE(enabled,TRUE), ` +
-	`COALESCE(avatar_url,''), COALESCE(username,'')`
+	`COALESCE(avatar_url,''), COALESCE(username,''), COALESCE(full_name,''), COALESCE(job_title,''), ` +
+	`COALESCE(quota_files,0), COALESCE(quota_upload_bytes,0), COALESCE(usage_files,0)`
 
 func (s *Store) CreateUser(ctx context.Context, email, hash, role, locale, tz string) (*model.User, error) {
 	// New users default to the always-present "default" provider (the
@@ -961,6 +1081,37 @@ func (s *Store) TouchLastLogin(ctx context.Context, id int64) error {
 	return err
 }
 
+// GetRolePermissions reads roles.permissions_json (JSONB here, so it comes
+// back as bytes). A malformed value is an error, not an empty list.
+func (s *Store) GetRolePermissions(ctx context.Context, role string) ([]string, error) {
+	var raw []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT permissions_json FROM roles WHERE name=$1`, role).Scan(&raw); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return nil, nil
+	}
+	var out []string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("roles.permissions_json for %q: %w", role, err)
+	}
+	return out, nil
+}
+
+// SetRolePermissions replaces the allow-list of an EXISTING role. Validation of
+// the operation names belongs to internal/perm.
+func (s *Store) SetRolePermissions(ctx context.Context, role string, ops []string) error {
+	if ops == nil {
+		ops = []string{}
+	}
+	raw, err := json.Marshal(ops)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE roles SET permissions_json=$1::jsonb WHERE name=$2`, string(raw), role)
+	return err
+}
+
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE id=$1`, id)
 	return err
@@ -986,6 +1137,47 @@ func (s *Store) GetSessionByToken(ctx context.Context, token string) (*model.Ses
 		return nil, err
 	}
 	return out, nil
+}
+
+// ListSessionsForUser lists the user's unexpired sessions, newest first. The token rides
+// along because the caller has to be able to tell which row is the one it is calling from;
+// model.Session never serializes it.
+func (s *Store) ListSessionsForUser(ctx context.Context, userID int64) ([]*model.Session, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, user_id, token, expires_at, COALESCE(ip,''), COALESCE(user_agent,''), created_at
+		   FROM sessions WHERE user_id=$1 AND expires_at > NOW() ORDER BY created_at DESC`,
+		userID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []*model.Session
+	for rows.Next() {
+		sess := &model.Session{}
+		if err := rows.Scan(&sess.ID, &sess.UserID, &sess.Token, &sess.ExpiresAt, &sess.IP, &sess.UserAgent, &sess.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+// DeleteUserSession ends one of that user's sessions.
+func (s *Store) DeleteUserSession(ctx context.Context, userID, sessionID int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id=$1 AND user_id=$2`, sessionID, userID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// UpdateUserProfileFields writes the two optional profile fields.
+func (s *Store) UpdateUserProfileFields(ctx context.Context, id int64, fullName, jobTitle string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET full_name=$1, job_title=$2, updated_at=NOW() WHERE id=$3`,
+		fullName, jobTitle, id)
+	return err
 }
 
 func (s *Store) DeleteSession(ctx context.Context, token string) error {
@@ -1449,11 +1641,11 @@ func (s *Store) CreateShare(ctx context.Context, sh *model.Share) (*model.Share,
 }
 
 func (s *Store) GetShareByToken(ctx context.Context, token string) (*model.Share, error) {
-	return scanShare(s.db.QueryRowContext(ctx, `SELECT id, node_id, token, COALESCE(pin_hash,''), expires_at, max_downloads, download_count, created_by, COALESCE(created_via,''), created_at, COALESCE(kind,'download'), max_uploads, upload_count, drop_settings FROM shares WHERE token=$1`, token))
+	return scanShare(s.db.QueryRowContext(ctx, `SELECT id, node_id, token, COALESCE(pin_hash,''), expires_at, revoked_at, max_downloads, download_count, created_by, COALESCE(created_via,''), created_at, COALESCE(kind,'download'), max_uploads, upload_count, drop_settings FROM shares WHERE token=$1`, token))
 }
 
 func (s *Store) ListSharesByNode(ctx context.Context, nodeID int64) ([]*model.Share, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, node_id, token, COALESCE(pin_hash,''), expires_at, max_downloads, download_count, created_by, COALESCE(created_via,''), created_at, COALESCE(kind,'download'), max_uploads, upload_count, drop_settings FROM shares WHERE node_id=$1 ORDER BY created_at DESC`, nodeID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, node_id, token, COALESCE(pin_hash,''), expires_at, revoked_at, max_downloads, download_count, created_by, COALESCE(created_via,''), created_at, COALESCE(kind,'download'), max_uploads, upload_count, drop_settings FROM shares WHERE node_id=$1 ORDER BY created_at DESC`, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -1657,6 +1849,38 @@ func (s *Store) ListIdleStagedUploads(ctx context.Context, before time.Time, lim
 	return out, rows.Err()
 }
 
+func (s *Store) ActiveStagedUploadForTarget(ctx context.Context, storageID int64, storageKey string, since time.Time, excludeID string) (*model.StagedUpload, error) {
+	u, err := scanStagedUpload(s.db.QueryRowContext(ctx,
+		`SELECT `+stagedUploadColumns+` FROM staged_uploads
+		 WHERE storage_id=$1 AND storage_key=$2 AND id<>$3
+		   AND (state='committing' OR (state='staging' AND updated_at >= $4))
+		 ORDER BY updated_at DESC LIMIT 1`,
+		storageID, storageKey, excludeID, since.UTC()))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return u, err
+}
+
+func (s *Store) ClaimStagedUploadCommit(ctx context.Context, id string, since time.Time) (bool, error) {
+	// See the sqlite twin: the check and the claim are one statement on purpose.
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE staged_uploads u SET state='committing', error='', updated_at=CURRENT_TIMESTAMP
+		 WHERE u.id=$1 AND u.state IN ('staging','failed')
+		   AND NOT EXISTS (
+		     SELECT 1 FROM staged_uploads o
+		      WHERE o.id<>u.id
+		        AND o.storage_id=u.storage_id
+		        AND o.storage_key=u.storage_key
+		        AND (o.state='committing' OR (o.state='staging' AND o.updated_at >= $2)))`,
+		id, since.UTC())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 func (s *Store) SumOpenStagedUploadBytes(ctx context.Context, userID int64) (int64, error) {
 	if userID <= 0 {
 		return 0, nil
@@ -1665,7 +1889,7 @@ func (s *Store) SumOpenStagedUploadBytes(ctx context.Context, userID int64) (int
 	// int64. Cast it back explicitly.
 	var total sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(total_size),0)::bigint FROM staged_uploads WHERE user_id=$1 AND state IN ('staging','committing')`,
+		`SELECT COALESCE(SUM(total_size),0)::bigint FROM staged_uploads WHERE user_id=$1 AND state='staging'`,
 		userID).Scan(&total)
 	if err != nil {
 		return 0, err
@@ -1880,6 +2104,45 @@ func (s *Store) DeleteThumbnail(ctx context.Context, nodeID int64) error {
 	return err
 }
 
+// PurgeThumbnails reads the ids first and deletes with a set-based statement
+// rather than feeding them back as placeholders: the caller's scope can be the
+// whole installation, and the extended protocol tops out at 65535 parameters.
+func (s *Store) PurgeThumbnails(ctx context.Context, storageID int64) ([]int64, error) {
+	sel := `SELECT node_id FROM thumbnails`
+	del := `DELETE FROM thumbnails`
+	var args []any
+	if storageID > 0 {
+		sel = `SELECT t.node_id FROM thumbnails t JOIN nodes n ON n.id = t.node_id WHERE n.storage_id = $1`
+		del = `DELETE FROM thumbnails WHERE node_id IN (SELECT id FROM nodes WHERE storage_id = $1)`
+		args = []any{storageID}
+	}
+	rows, err := s.db.QueryContext(ctx, sel, args...)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if _, err := s.db.ExecContext(ctx, del, args...); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
 // ExistingNodeIDs batches the lookup so a large thumbnail cache cannot exceed
 // the 65535-parameter ceiling of the extended protocol.
 func (s *Store) ExistingNodeIDs(ctx context.Context, ids []int64) (map[int64]bool, error) {
@@ -1921,8 +2184,8 @@ func (s *Store) ExistingNodeIDs(ctx context.Context, ids []int64) (map[int64]boo
 func (s *Store) CreateNodeVersion(ctx context.Context, v *model.NodeVersion) (*model.NodeVersion, error) {
 	var id int64
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO node_versions (node_id, version_n, storage_key, size, etag) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-		v.NodeID, v.VersionN, v.StorageKey, v.Size, v.Etag).Scan(&id)
+		`INSERT INTO node_versions (node_id, version_n, storage_key, size, etag, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+		v.NodeID, v.VersionN, v.StorageKey, v.Size, v.Etag, v.CreatedBy).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
@@ -1932,7 +2195,7 @@ func (s *Store) CreateNodeVersion(ctx context.Context, v *model.NodeVersion) (*m
 }
 
 func (s *Store) ListNodeVersions(ctx context.Context, nodeID int64) ([]*model.NodeVersion, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, node_id, version_n, COALESCE(storage_key,''), size, COALESCE(etag,''), created_at FROM node_versions WHERE node_id=$1 ORDER BY version_n DESC`, nodeID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, node_id, version_n, COALESCE(storage_key,''), size, COALESCE(etag,''), created_at, created_by FROM node_versions WHERE node_id=$1 ORDER BY version_n DESC`, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -1940,7 +2203,7 @@ func (s *Store) ListNodeVersions(ctx context.Context, nodeID int64) ([]*model.No
 	var out []*model.NodeVersion
 	for rows.Next() {
 		v := &model.NodeVersion{}
-		if err := rows.Scan(&v.ID, &v.NodeID, &v.VersionN, &v.StorageKey, &v.Size, &v.Etag, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.NodeID, &v.VersionN, &v.StorageKey, &v.Size, &v.Etag, &v.CreatedAt, &v.CreatedBy); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
@@ -1955,12 +2218,12 @@ type rowScanner interface {
 }
 
 func nodeColumns() string {
-	return `id, storage_id, parent_id, name, path, path_hash, COALESCE(storage_key,''), type, size, COALESCE(mime,''), COALESCE(etag,''), backend_mtime, db_mtime, sync_state, COALESCE(transfer_state,'stored'), seen_at, deleted_at, created_at, updated_at`
+	return `id, storage_id, parent_id, name, path, path_hash, COALESCE(storage_key,''), type, size, COALESCE(mime,''), COALESCE(etag,''), backend_mtime, db_mtime, sync_state, COALESCE(transfer_state,'stored'), seen_at, deleted_at, created_at, updated_at, owner_id`
 }
 
 func scanNode(r rowScanner) (*model.Node, error) {
 	n := &model.Node{}
-	err := r.Scan(&n.ID, &n.StorageID, &n.ParentID, &n.Name, &n.Path, &n.PathHash, &n.StorageKey, &n.Type, &n.Size, &n.Mime, &n.Etag, &n.BackendMtime, &n.DBMtime, &n.SyncState, &n.TransferState, &n.SeenAt, &n.DeletedAt, &n.CreatedAt, &n.UpdatedAt)
+	err := r.Scan(&n.ID, &n.StorageID, &n.ParentID, &n.Name, &n.Path, &n.PathHash, &n.StorageKey, &n.Type, &n.Size, &n.Mime, &n.Etag, &n.BackendMtime, &n.DBMtime, &n.SyncState, &n.TransferState, &n.SeenAt, &n.DeletedAt, &n.CreatedAt, &n.UpdatedAt, &n.OwnerID)
 	if err != nil {
 		return nil, err
 	}
@@ -2004,7 +2267,7 @@ func scanUser(r rowScanner) (*model.User, error) {
 	u := &model.User{}
 	var recoveryJSON string
 	var providerID sql.NullInt64
-	if err := r.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.Role, &u.TOTPSecret, &u.TOTPPendingSecret, &u.TOTPEnabled, &recoveryJSON, &u.Locale, &u.Timezone, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt, &providerID, &u.OIDCSubject, &u.QuotaBytes, &u.UsageBytes, &u.Enabled, &u.AvatarURL, &u.Username); err != nil {
+	if err := r.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.Role, &u.TOTPSecret, &u.TOTPPendingSecret, &u.TOTPEnabled, &recoveryJSON, &u.Locale, &u.Timezone, &u.CreatedAt, &u.UpdatedAt, &u.LastLoginAt, &providerID, &u.OIDCSubject, &u.QuotaBytes, &u.UsageBytes, &u.Enabled, &u.AvatarURL, &u.Username, &u.FullName, &u.JobTitle, &u.QuotaFiles, &u.QuotaUploadBytes, &u.UsageFiles); err != nil {
 		return nil, err
 	}
 	if recoveryJSON != "" {
@@ -2019,7 +2282,7 @@ func scanUser(r rowScanner) (*model.User, error) {
 
 func scanShare(r rowScanner) (*model.Share, error) {
 	sh := &model.Share{}
-	if err := r.Scan(&sh.ID, &sh.NodeID, &sh.Token, &sh.PinHash, &sh.ExpiresAt, &sh.MaxDownloads, &sh.DownloadCount, &sh.CreatedBy, &sh.CreatedVia, &sh.CreatedAt, &sh.Kind, &sh.MaxUploads, &sh.UploadCount, &sh.DropSettings); err != nil {
+	if err := r.Scan(&sh.ID, &sh.NodeID, &sh.Token, &sh.PinHash, &sh.ExpiresAt, &sh.RevokedAt, &sh.MaxDownloads, &sh.DownloadCount, &sh.CreatedBy, &sh.CreatedVia, &sh.CreatedAt, &sh.Kind, &sh.MaxUploads, &sh.UploadCount, &sh.DropSettings); err != nil {
 		return nil, err
 	}
 	sh.HasPin = sh.PinHash != ""
@@ -2142,6 +2405,52 @@ func (s *Store) ClearTotp(ctx context.Context, id int64) error {
 		`UPDATE users SET totp_secret=NULL, totp_pending_secret=NULL, totp_enabled=FALSE, totp_recovery_codes_json='[]'::jsonb, updated_at=NOW() WHERE id=$1`,
 		id)
 	return err
+}
+
+// ConsumeTotpRecoveryCode removes one recovery code matching `code` and
+// reports whether it did. Both sides go through model.NormalizeRecoveryCode,
+// so "abcde-fghij" and "ABCDE FGHIJ" are the same code.
+//
+// Read-modify-write under `FOR UPDATE`: the row stays locked until commit, so
+// two logins racing on the same code serialise here and the second reads the
+// list with the code already gone.
+func (s *Store) ConsumeTotpRecoveryCode(ctx context.Context, userID int64, code string) (bool, error) {
+	want := model.NormalizeRecoveryCode(code)
+	if want == "" {
+		return false, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("postgres: consume recovery code: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var raw string
+	err = tx.QueryRowContext(ctx,
+		`SELECT COALESCE(totp_recovery_codes_json::text,'[]') FROM users WHERE id=$1 FOR UPDATE`, userID).Scan(&raw)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("postgres: consume recovery code: %w", err)
+	}
+	var codes []string
+	if err := json.Unmarshal([]byte(raw), &codes); err != nil {
+		return false, fmt.Errorf("postgres: consume recovery code: %w", err)
+	}
+	idx := slices.IndexFunc(codes, func(c string) bool { return model.NormalizeRecoveryCode(c) == want })
+	if idx < 0 {
+		return false, nil
+	}
+	remaining, _ := json.Marshal(slices.Delete(codes, idx, idx+1))
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE users SET totp_recovery_codes_json=$1::jsonb, updated_at=NOW() WHERE id=$2`,
+		string(remaining), userID); err != nil {
+		return false, fmt.Errorf("postgres: consume recovery code: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("postgres: consume recovery code: %w", err)
+	}
+	return true, nil
 }
 
 // ─────────────────── Counters needed by dashboard / metrics ───────────────────
@@ -2316,19 +2625,22 @@ func (s *Store) UpdateUserAvatar(ctx context.Context, id int64, avatarURL string
 // GetShareByID looks up a share by its row ID.
 func (s *Store) GetShareByID(ctx context.Context, id int64) (*model.Share, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, node_id, token, COALESCE(pin_hash,''), expires_at, max_downloads, download_count, created_by, COALESCE(created_via,''), created_at, COALESCE(kind,'download'), max_uploads, upload_count, drop_settings FROM shares WHERE id=$1`, id)
+		`SELECT id, node_id, token, COALESCE(pin_hash,''), expires_at, revoked_at, max_downloads, download_count, created_by, COALESCE(created_via,''), created_at, COALESCE(kind,'download'), max_uploads, upload_count, drop_settings FROM shares WHERE id=$1`, id)
 	return scanShare(row)
 }
 
-// RevokeShare soft-revokes by setting expires_at = NOW (audit trail intact).
+// RevokeShare soft-revokes: expires_at = NOW kills the link, revoked_at
+// records that a person closed it rather than a TTL lapsing (audit trail
+// intact). Re-revoking keeps the first revocation time.
 func (s *Store) RevokeShare(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE shares SET expires_at=NOW() WHERE id=$1`, id)
+	_, err := s.db.ExecContext(ctx, `UPDATE shares SET expires_at=NOW(), revoked_at=COALESCE(revoked_at, NOW()) WHERE id=$1`, id)
 	return err
 }
 
 // ListAllShares returns the admin overview of every share. `creatorID`
-// nil means all users; activeOnly excludes expired/revoked rows.
-func (s *Store) ListAllShares(ctx context.Context, creatorID *int64, activeOnly bool, limit, offset int) ([]*db.ShareWithMeta, int64, error) {
+// nil means all users; `q` matches token, node path or creator email
+// (empty = no filter); activeOnly excludes expired/revoked rows.
+func (s *Store) ListAllShares(ctx context.Context, creatorID *int64, q string, activeOnly bool, limit, offset int) ([]*db.ShareWithMeta, int64, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -2340,14 +2652,28 @@ func (s *Store) ListAllShares(ctx context.Context, creatorID *int64, activeOnly 
 		args = append(args, *creatorID)
 		idx++
 	}
+	if q = strings.TrimSpace(q); q != "" {
+		conds = append(conds, fmt.Sprintf("(s.token ILIKE $%d OR n.path ILIKE $%d OR u.email ILIKE $%d)", idx, idx+1, idx+2))
+		like := "%" + q + "%"
+		args = append(args, like, like, like)
+		idx += 3
+	}
 	if activeOnly {
+		conds = append(conds, "s.revoked_at IS NULL")
 		conds = append(conds, "(s.expires_at IS NULL OR s.expires_at > NOW())")
 		conds = append(conds, "(s.max_downloads IS NULL OR s.download_count < s.max_downloads)")
 	}
 	whereSQL := strings.Join(conds, " AND ")
 
+	// The count carries the same joins as the page: `q` filters on the joined
+	// node path and creator email, so a bare `FROM shares` would not parse.
+	const joins = `FROM shares s
+		LEFT JOIN users u     ON u.id = s.created_by
+		LEFT JOIN nodes n     ON n.id = s.node_id
+		LEFT JOIN storages st ON st.id = n.storage_id`
+
 	var total int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM shares s WHERE `+whereSQL, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) `+joins+` WHERE `+whereSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	limPlaceholder := fmt.Sprintf("$%d", idx)
@@ -2356,12 +2682,9 @@ func (s *Store) ListAllShares(ctx context.Context, creatorID *int64, activeOnly 
 	args = append(args, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.id, s.node_id, s.token, COALESCE(s.pin_hash,''), s.expires_at, s.max_downloads, s.download_count, s.created_by, COALESCE(s.created_via,''), s.created_at,
+		SELECT s.id, s.node_id, s.token, COALESCE(s.pin_hash,''), s.expires_at, s.revoked_at, s.max_downloads, s.download_count, s.created_by, COALESCE(s.created_via,''), s.created_at,
 		       COALESCE(u.email,''), COALESCE(n.path,''), COALESCE(st.name,'')
-		FROM shares s
-		LEFT JOIN users u     ON u.id = s.created_by
-		LEFT JOIN nodes n     ON n.id = s.node_id
-		LEFT JOIN storages st ON st.id = n.storage_id
+		`+joins+`
 		WHERE `+whereSQL+`
 		ORDER BY s.id DESC LIMIT `+limPlaceholder+` OFFSET `+offPlaceholder, args...)
 	if err != nil {
@@ -2373,7 +2696,7 @@ func (s *Store) ListAllShares(ctx context.Context, creatorID *int64, activeOnly 
 	for rows.Next() {
 		sh := &model.Share{}
 		row := &db.ShareWithMeta{Share: sh}
-		if err := rows.Scan(&sh.ID, &sh.NodeID, &sh.Token, &sh.PinHash, &sh.ExpiresAt, &sh.MaxDownloads, &sh.DownloadCount, &sh.CreatedBy, &sh.CreatedAt, &row.CreatorEmail, &row.NodePath, &row.StorageName); err != nil {
+		if err := rows.Scan(&sh.ID, &sh.NodeID, &sh.Token, &sh.PinHash, &sh.ExpiresAt, &sh.RevokedAt, &sh.MaxDownloads, &sh.DownloadCount, &sh.CreatedBy, &sh.CreatedVia, &sh.CreatedAt, &row.CreatorEmail, &row.NodePath, &row.StorageName); err != nil {
 			return nil, 0, err
 		}
 		sh.HasPin = sh.PinHash != ""
@@ -2470,9 +2793,9 @@ func (s *Store) ListConflictsByStorage(ctx context.Context, storageID int64, lim
 // GetNodeVersion looks up a single version row by id.
 func (s *Store) GetNodeVersion(ctx context.Context, id int64) (*model.NodeVersion, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, node_id, version_n, COALESCE(storage_key,''), size, COALESCE(etag,''), created_at FROM node_versions WHERE id=$1`, id)
+		`SELECT id, node_id, version_n, COALESCE(storage_key,''), size, COALESCE(etag,''), created_at, created_by FROM node_versions WHERE id=$1`, id)
 	v := &model.NodeVersion{}
-	if err := row.Scan(&v.ID, &v.NodeID, &v.VersionN, &v.StorageKey, &v.Size, &v.Etag, &v.CreatedAt); err != nil {
+	if err := row.Scan(&v.ID, &v.NodeID, &v.VersionN, &v.StorageKey, &v.Size, &v.Etag, &v.CreatedAt, &v.CreatedBy); err != nil {
 		return nil, err
 	}
 	return v, nil
@@ -2500,7 +2823,7 @@ func (s *Store) DeleteOldNodeVersions(ctx context.Context, nodeID int64, keep in
 		keep = 0
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, node_id, version_n, COALESCE(storage_key,''), size, COALESCE(etag,''), created_at
+		`SELECT id, node_id, version_n, COALESCE(storage_key,''), size, COALESCE(etag,''), created_at, created_by
 		 FROM node_versions
 		 WHERE node_id=$1
 		 ORDER BY version_n DESC
@@ -2512,7 +2835,7 @@ func (s *Store) DeleteOldNodeVersions(ctx context.Context, nodeID int64, keep in
 	var doomed []*model.NodeVersion
 	for rows.Next() {
 		v := &model.NodeVersion{}
-		if err := rows.Scan(&v.ID, &v.NodeID, &v.VersionN, &v.StorageKey, &v.Size, &v.Etag, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.NodeID, &v.VersionN, &v.StorageKey, &v.Size, &v.Etag, &v.CreatedAt, &v.CreatedBy); err != nil {
 			return nil, err
 		}
 		doomed = append(doomed, v)
@@ -2603,6 +2926,174 @@ func (s *Store) RecomputeUserUsage(ctx context.Context, userID int64) (int64, er
 	return total.Int64, nil
 }
 
+// GetUserLimits reads the three tri-state override columns as stored
+// (0 = inherit the default, -1 = unlimited, N = this user's limit).
+func (s *Store) GetUserLimits(ctx context.Context, userID int64) (int64, int64, int64, error) {
+	var bytes, files, upload int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(quota_bytes,0), COALESCE(quota_files,0), COALESCE(quota_upload_bytes,0) FROM users WHERE id=$1`,
+		userID).Scan(&bytes, &files, &upload)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return bytes, files, upload, nil
+}
+
+// SetUserLimits writes only the overrides the caller named. See the SQLite
+// driver's copy — in particular, -1 is legal here and is NOT clamped.
+func (s *Store) SetUserLimits(ctx context.Context, userID int64, quotaBytes, quotaFiles, quotaUploadBytes *int64) error {
+	sets := make([]string, 0, 3)
+	args := make([]any, 0, 4)
+	add := func(col string, v *int64) {
+		if v == nil {
+			return
+		}
+		args = append(args, *v)
+		sets = append(sets, fmt.Sprintf("%s=$%d", col, len(args)))
+	}
+	add("quota_bytes", quotaBytes)
+	add("quota_files", quotaFiles)
+	add("quota_upload_bytes", quotaUploadBytes)
+	if len(sets) == 0 {
+		return nil
+	}
+	args = append(args, userID)
+	_, err := s.db.ExecContext(ctx,
+		fmt.Sprintf(`UPDATE users SET %s WHERE id=$%d`, strings.Join(sets, ", "), len(args)), args...)
+	return err
+}
+
+// GetUserFileUsage returns usage_files.
+func (s *Store) GetUserFileUsage(ctx context.Context, userID int64) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(usage_files,0) FROM users WHERE id=$1`, userID).Scan(&n)
+	return n, err
+}
+
+// IncrementUserFileUsage adjusts usage_files, clamped at 0.
+func (s *Store) IncrementUserFileUsage(ctx context.Context, userID int64, delta int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET usage_files = GREATEST(0, COALESCE(usage_files,0) + $1) WHERE id=$2`, delta, userID)
+	return err
+}
+
+// RecomputeUserFileUsage rebuilds usage_files from the node rows.
+//
+// ⚠ TRASHED ROWS ARE INCLUDED — see the SQLite driver's copy.
+func (s *Store) RecomputeUserFileUsage(ctx context.Context, userID int64) (int64, error) {
+	var total sql.NullInt64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM nodes WHERE owner_id=$1 AND type='file'`, userID).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE users SET usage_files=$1 WHERE id=$2`, total.Int64, userID); err != nil {
+		return 0, err
+	}
+	return total.Int64, nil
+}
+
+// SearchUsers pages the admin quota table; q matches email or display name.
+// providerID confines the page to one tenant (nil = every tenant), and a NULL
+// provider_id row is outside every tenant, as in the sqlite driver.
+func (s *Store) SearchUsers(ctx context.Context, q string, providerID *int64, limit, offset int) ([]*model.User, int64, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	conds, args := []string{}, []any{}
+	if providerID != nil {
+		args = append(args, *providerID)
+		conds = append(conds, `provider_id=$`+strconv.Itoa(len(args)))
+	}
+	if q = strings.TrimSpace(q); q != "" {
+		args = append(args, "%"+strings.ToLower(q)+"%")
+		n := strconv.Itoa(len(args))
+		conds = append(conds, `(LOWER(email) LIKE $`+n+` OR LOWER(COALESCE(display_name,'')) LIKE $`+n+`)`)
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+	var total int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.QueryContext(ctx,
+		fmt.Sprintf(`SELECT %s FROM users%s ORDER BY id ASC LIMIT $%d OFFSET $%d`,
+			userCols, where, len(args)+1, len(args)+2),
+		append(args, limit, offset)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []*model.User{}
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, u)
+	}
+	return out, total, rows.Err()
+}
+
+// ─────────────────── Upload rate ledger ───────────────────
+
+// InsertUploadLedger records one COMPLETED upload. stagedUploadID is the
+// idempotency key for a retryable staged commit — see the sqlite twin for why
+// it exists. Here it can be one statement: ON CONFLICT is native.
+func (s *Store) InsertUploadLedger(ctx context.Context, userID int64, bytes int64, stagedUploadID string) error {
+	if userID <= 0 || bytes <= 0 {
+		return nil
+	}
+	if stagedUploadID == "" {
+		_, err := s.db.ExecContext(ctx,
+			`INSERT INTO upload_ledger (user_id, bytes) VALUES ($1,$2)`, userID, bytes)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO upload_ledger (user_id, bytes, staged_upload_id) VALUES ($1,$2,$3)
+		 ON CONFLICT (staged_upload_id) DO NOTHING`,
+		userID, bytes, stagedUploadID)
+	return err
+}
+
+// SumUploadLedger returns the bytes uploaded since `since` plus the timestamp
+// of the oldest row still inside the window (zero when there are none).
+func (s *Store) SumUploadLedger(ctx context.Context, userID int64, since time.Time) (int64, time.Time, error) {
+	if userID <= 0 {
+		return 0, time.Time{}, nil
+	}
+	var total sql.NullInt64
+	var oldest sql.NullTime
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(bytes),0), MIN(created_at) FROM upload_ledger WHERE user_id=$1 AND created_at >= $2`,
+		userID, since.UTC()).Scan(&total, &oldest)
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	var at time.Time
+	if oldest.Valid {
+		at = oldest.Time
+	}
+	return total.Int64, at, nil
+}
+
+// SweepUploadLedger drops rows that have fallen out of every window.
+func (s *Store) SweepUploadLedger(ctx context.Context, before time.Time) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM upload_ledger WHERE created_at < $1`, before.UTC())
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // ─────────────────── Node owner ───────────────────
 
 // SetNodeOwner updates the owner_id column for one node.
@@ -2623,6 +3114,424 @@ func (s *Store) GetNodeOwner(ctx context.Context, nodeID int64) (*int64, error) 
 	}
 	v := owner.Int64
 	return &v, nil
+}
+
+// NodeOwners resolves a whole listing's owners in one query, joined to the
+// account name the UI actually shows. Nodes nobody owns — anything a storage
+// sync found rather than a person uploading it — are absent from the answer.
+func (s *Store) NodeOwners(ctx context.Context, nodeIDs []int64) ([]db.NodeOwner, error) {
+	if len(nodeIDs) == 0 {
+		return nil, nil
+	}
+	args := make([]any, 0, len(nodeIDs))
+	marks := make([]string, 0, len(nodeIDs))
+	for i, id := range nodeIDs {
+		args = append(args, id)
+		marks = append(marks, "$"+strconv.Itoa(i+1))
+	}
+	rows, err := s.db.QueryContext(ctx,
+		// ⚠ The display name ONLY, never the e-mail behind it. An owner column
+		// is drawn for anybody who may see the listing, so falling back to the
+		// address published every colleague's e-mail to everyone with read
+		// access. An account that has set no display name comes back with an
+		// empty name and the client prints who it is in the reader's language.
+		`SELECT n.id, u.id, COALESCE(u.display_name, '')
+		   FROM nodes n JOIN users u ON u.id = n.owner_id
+		  WHERE n.id IN (`+strings.Join(marks, ",")+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: node owners: %w", err)
+	}
+	defer rows.Close()
+	out := make([]db.NodeOwner, 0, len(nodeIDs))
+	for rows.Next() {
+		var o db.NodeOwner
+		if err := rows.Scan(&o.NodeID, &o.OwnerID, &o.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// inMarks renders `$1,$2,$3` for an IN clause and the args to go with it.
+func inMarks(ids []int64) (string, []any) {
+	marks := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		marks[i] = "$" + strconv.Itoa(i+1)
+		args[i] = id
+	}
+	return strings.Join(marks, ","), args
+}
+
+// ChildCounts excludes model.ReservedNames — see the SQLite driver's copy of
+// this query and model.IsReservedPath for why the list is shared.
+func (s *Store) ChildCounts(ctx context.Context, parentIDs []int64) (map[int64]int64, error) {
+	if len(parentIDs) == 0 {
+		return nil, nil
+	}
+	marks, args := inMarks(parentIDs)
+	hidden := make([]string, len(model.ReservedNames))
+	for i, name := range model.ReservedNames {
+		hidden[i] = "$" + strconv.Itoa(len(args)+i+1)
+		args = append(args, name)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT parent_id, COUNT(*) FROM nodes
+		  WHERE deleted_at IS NULL AND parent_id IN (`+marks+`)
+		    AND name NOT IN (`+strings.Join(hidden, ",")+`)
+		  GROUP BY parent_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: child counts: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64]int64, len(parentIDs))
+	for rows.Next() {
+		var parent, n int64
+		if err := rows.Scan(&parent, &n); err != nil {
+			return nil, err
+		}
+		out[parent] = n
+	}
+	return out, rows.Err()
+}
+
+// ─────────────────── Assistant sessions ───────────────────
+
+const assistantSessionCols = `id, user_id, title, title_manual, message_count, last_active_at, created_at`
+
+func scanAssistantSession(row interface{ Scan(...any) error }) (*model.AssistantSession, error) {
+	a := &model.AssistantSession{}
+	if err := row.Scan(&a.ID, &a.UserID, &a.Title, &a.TitleManual, &a.MessageCount, &a.LastActiveAt, &a.CreatedAt); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+func (s *Store) CreateAssistantSession(ctx context.Context, a *model.AssistantSession) (*model.AssistantSession, error) {
+	var id int64
+	var lastActive, created time.Time
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO assistant_sessions (user_id, title, title_manual) VALUES ($1,$2,$3) RETURNING id, last_active_at, created_at`,
+		a.UserID, a.Title, a.TitleManual).Scan(&id, &lastActive, &created)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: create assistant session: %w", err)
+	}
+	a.ID, a.LastActiveAt, a.CreatedAt = id, lastActive, created
+	return a, nil
+}
+
+func (s *Store) ListAssistantSessions(ctx context.Context, userID int64, limit int) ([]*model.AssistantSession, error) {
+	if limit <= 0 {
+		limit = model.MaxAssistantSessions
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+assistantSessionCols+` FROM assistant_sessions WHERE user_id=$1 ORDER BY last_active_at DESC, id DESC LIMIT $2`,
+		userID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list assistant sessions: %w", err)
+	}
+	defer rows.Close()
+	out := []*model.AssistantSession{}
+	for rows.Next() {
+		a, serr := scanAssistantSession(rows)
+		if serr != nil {
+			return nil, serr
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetAssistantSession(ctx context.Context, id int64) (*model.AssistantSession, error) {
+	return scanAssistantSession(s.db.QueryRowContext(ctx,
+		`SELECT `+assistantSessionCols+` FROM assistant_sessions WHERE id=$1`, id))
+}
+
+func (s *Store) SetAssistantSessionTitle(ctx context.Context, id int64, title string, manual bool) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE assistant_sessions SET title=$1, title_manual=$2 WHERE id=$3`, title, manual, id)
+	return err
+}
+
+func (s *Store) DeleteAssistantSession(ctx context.Context, id int64) error {
+	// All three children, explicitly, and in one transaction — see the sqlite
+	// driver for why: the FKs cascade, but the explicit delete is the guard
+	// against a deployment where they do not, and the read grants are the
+	// person's consent to open named files, which must not outlive the
+	// conversation any more than the messages do.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("postgres: delete assistant session: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, stmt := range []string{
+		`DELETE FROM assistant_messages WHERE session_id=$1`,
+		`DELETE FROM assistant_read_grants WHERE session_id=$1`,
+		`DELETE FROM assistant_plans WHERE session_id=$1`,
+		`DELETE FROM assistant_sessions WHERE id=$1`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt, id); err != nil {
+			return fmt.Errorf("postgres: delete assistant session: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) EvictAssistantSessions(ctx context.Context, userID int64, keep int) (int, error) {
+	if keep < 0 {
+		keep = 0
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM assistant_sessions WHERE user_id=$1 ORDER BY last_active_at DESC, id DESC OFFSET $2`,
+		userID, keep)
+	if err != nil {
+		return 0, fmt.Errorf("postgres: evict assistant sessions: %w", err)
+	}
+	var doomed []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		doomed = append(doomed, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, id := range doomed {
+		if err := s.DeleteAssistantSession(ctx, id); err != nil {
+			return 0, err
+		}
+	}
+	return len(doomed), nil
+}
+
+func (s *Store) AppendAssistantMessage(ctx context.Context, m *model.AssistantMessage) (*model.AssistantMessage, error) {
+	payload := m.PayloadJSON
+	if payload == "" {
+		payload = "{}"
+	}
+	// One transaction, because the interface promises one call — see the sqlite
+	// driver for what the count and the activity stamp are load-bearing for.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: append assistant message: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var id int64
+	var created time.Time
+	if err := tx.QueryRowContext(ctx,
+		`INSERT INTO assistant_messages (session_id, role, content, payload_json, aborted, secret_notice)
+		 VALUES ($1,$2,$3,$4::jsonb,$5,$6) RETURNING id, created_at`,
+		m.SessionID, m.Role, m.Content, payload, m.Aborted, m.SecretNotice).Scan(&id, &created); err != nil {
+		return nil, fmt.Errorf("postgres: append assistant message: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE assistant_sessions SET message_count = message_count + 1, last_active_at = NOW() WHERE id = $1`, m.SessionID); err != nil {
+		return nil, fmt.Errorf("postgres: append assistant message: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("postgres: append assistant message: %w", err)
+	}
+	// Written back only once it is durable: a caller that got an error must not
+	// be holding a message that claims an id.
+	m.ID, m.PayloadJSON, m.CreatedAt = id, payload, created
+	return m, nil
+}
+
+func (s *Store) ListAssistantMessages(ctx context.Context, sessionID int64) ([]*model.AssistantMessage, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, session_id, role, content, payload_json::text, aborted, secret_notice, created_at
+		   FROM assistant_messages WHERE session_id=$1 ORDER BY id`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list assistant messages: %w", err)
+	}
+	defer rows.Close()
+	out := []*model.AssistantMessage{}
+	for rows.Next() {
+		m := &model.AssistantMessage{}
+		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &m.Content, &m.PayloadJSON, &m.Aborted, &m.SecretNotice, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) CountAssistantSessions(ctx context.Context, userID int64) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM assistant_sessions WHERE user_id=$1`, userID).Scan(&n)
+	return n, err
+}
+
+// CreateAssistantPlan stores proposed work, pending the person's decision.
+func (s *Store) CreateAssistantPlan(ctx context.Context, p *model.AssistantPlan) (*model.AssistantPlan, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx,
+		`INSERT INTO assistant_plans (session_id, kind, summary, items_json, status, result_json)
+		 VALUES ($1, $2, $3, $4, $5, '{}') RETURNING id`,
+		p.SessionID, p.Kind, p.Summary, p.ItemsJSON, model.PlanPending).Scan(&id)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetAssistantPlan(ctx, id)
+}
+
+func (s *Store) GetAssistantPlan(ctx context.Context, id int64) (*model.AssistantPlan, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, session_id, kind, summary, items_json, status, result_json, created_at, decided_at
+		 FROM assistant_plans WHERE id=$1`, id)
+	return scanAssistantPlan(row)
+}
+
+func (s *Store) ListAssistantPlans(ctx context.Context, sessionID int64) ([]*model.AssistantPlan, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, session_id, kind, summary, items_json, status, result_json, created_at, decided_at
+		 FROM assistant_plans WHERE session_id=$1 ORDER BY id`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*model.AssistantPlan{}
+	for rows.Next() {
+		p, err := scanAssistantPlan(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ClaimAssistantPlan takes a pending, unclaimed plan for execution — see the
+// note on the interface for why the claim, and not the closing update, is what
+// makes a plan run once.
+func (s *Store) ClaimAssistantPlan(ctx context.Context, id int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE assistant_plans SET decided_at=NOW() WHERE id=$1 AND status=$2 AND decided_at IS NULL`,
+		id, model.PlanPending)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// FinishAssistantPlan closes a plan, and only from `pending` — see the note on
+// the interface for why the WHERE clause is the whole point.
+func (s *Store) FinishAssistantPlan(ctx context.Context, id int64, status, resultJSON string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE assistant_plans SET status=$1, result_json=$2, decided_at=NOW() WHERE id=$3 AND status=$4`,
+		status, resultJSON, id, model.PlanPending)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// scanAssistantPlan reads one row from either a QueryRow or a Rows cursor.
+func scanAssistantPlan(row interface{ Scan(...any) error }) (*model.AssistantPlan, error) {
+	var p model.AssistantPlan
+	var decided sql.NullTime
+	if err := row.Scan(&p.ID, &p.SessionID, &p.Kind, &p.Summary, &p.ItemsJSON, &p.Status, &p.ResultJSON, &p.CreatedAt, &decided); err != nil {
+		return nil, err
+	}
+	if decided.Valid {
+		t := decided.Time
+		p.DecidedAt = &t
+	}
+	return &p, nil
+}
+
+// GrantAssistantRead records consent for one file in one conversation. ON
+// CONFLICT DO NOTHING makes a repeat approval a no-op — approving the same file
+// twice is one permission.
+func (s *Store) GrantAssistantRead(ctx context.Context, sessionID int64, path string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO assistant_read_grants (session_id, path) VALUES ($1, $2)
+		 ON CONFLICT (session_id, path) DO NOTHING`, sessionID, path)
+	return err
+}
+
+// AssistantReadGranted matches the path EXACTLY. Nothing looser: a prefix match
+// would turn approval of one file into approval of its siblings.
+func (s *Store) AssistantReadGranted(ctx context.Context, sessionID int64, path string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM assistant_read_grants WHERE session_id=$1 AND path=$2`,
+		sessionID, path).Scan(&n)
+	return n > 0, err
+}
+
+func (s *Store) ListAssistantReadGrants(ctx context.Context, sessionID int64) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT path FROM assistant_read_grants WHERE session_id=$1 ORDER BY id`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		out = append(out, path)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) StorageUsage(ctx context.Context, storageIDs []int64) (map[int64]int64, error) {
+	if len(storageIDs) == 0 {
+		return nil, nil
+	}
+	marks, args := inMarks(storageIDs)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT storage_id, COALESCE(SUM(size),0) FROM nodes
+		  WHERE type='file' AND storage_id IN (`+marks+`)
+		  GROUP BY storage_id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: storage usage: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[int64]int64, len(storageIDs))
+	for rows.Next() {
+		var id, used int64
+		if err := rows.Scan(&id, &used); err != nil {
+			return nil, err
+		}
+		out[id] = used
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SharedNodeIDs(ctx context.Context, nodeIDs []int64) ([]int64, error) {
+	if len(nodeIDs) == 0 {
+		return nil, nil
+	}
+	marks, args := inMarks(nodeIDs)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT node_id FROM shares
+		  WHERE node_id IN (`+marks+`)
+		    AND (expires_at IS NULL OR expires_at > NOW())
+		    AND (max_downloads IS NULL OR download_count < max_downloads)
+		    AND (max_uploads IS NULL OR upload_count < max_uploads)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: shared node ids: %w", err)
+	}
+	defer rows.Close()
+	out := make([]int64, 0, len(nodeIDs))
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // ─────────────────── Trash retention ───────────────────
@@ -2658,7 +3567,7 @@ func (s *Store) RestoreNode(ctx context.Context, id int64) error {
 }
 
 // ListTrashed returns paginated soft-deleted rows (storage filter optional).
-func (s *Store) ListTrashed(ctx context.Context, storageID *int64, limit, offset int) ([]*model.Node, int, error) {
+func (s *Store) ListTrashed(ctx context.Context, storageID *int64, topLevelOnly bool, f db.NodeFacets, limit, offset int) ([]*model.Node, int, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
@@ -2666,10 +3575,26 @@ func (s *Store) ListTrashed(ctx context.Context, storageID *int64, limit, offset
 		offset = 0
 	}
 	args := []any{}
+	bind := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
 	where := `WHERE deleted_at IS NOT NULL`
 	if storageID != nil {
-		where += ` AND storage_id = $1`
-		args = append(args, *storageID)
+		where += ` AND storage_id = ` + bind(*storageID)
+	}
+	// "modified" on a trash row is the deletion instant — that is the date the
+	// listing shows and orders by, so it is the one the date window has to test.
+	for _, clause := range f.Where("", "deleted_at", bind) {
+		where += ` AND ` + clause
+	}
+	// A node dragged into the trash with its folder is not a trash entry of
+	// its own: it comes back when the folder does. "Top level" is therefore
+	// "my parent is not trashed too" rather than "I have no parent" — a node
+	// the sync poller soft-deleted because it vanished from the storage keeps
+	// its live parent, and still belongs in the listing.
+	if topLevelOnly {
+		where += ` AND NOT EXISTS (SELECT 1 FROM nodes p WHERE p.id = nodes.parent_id AND p.deleted_at IS NOT NULL)`
 	}
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes `+where, args...).Scan(&total); err != nil {
@@ -2678,9 +3603,12 @@ func (s *Store) ListTrashed(ctx context.Context, storageID *int64, limit, offset
 	args = append(args, limit, offset)
 	limPlace := fmt.Sprintf("$%d", len(args)-1)
 	offPlace := fmt.Sprintf("$%d", len(args))
+	// id DESC is the tie-break — see the sqlite driver: a bulk delete stamps one
+	// deleted_at across every row it touches, and without a unique second key
+	// paging through it duplicates some rows and loses others.
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+nodeColumns()+` FROM nodes `+where+
-			` ORDER BY deleted_at DESC LIMIT `+limPlace+` OFFSET `+offPlace, args...)
+			` ORDER BY deleted_at DESC, id DESC LIMIT `+limPlace+` OFFSET `+offPlace, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -2827,17 +3755,23 @@ func (s *Store) ListUserNodeMetaForNode(ctx context.Context, userID, nodeID int6
 }
 
 // ListNodesByUserMeta returns the nodes flagged with (key) for the given user.
-func (s *Store) ListNodesByUserMeta(ctx context.Context, userID int64, key string, limit int) ([]*model.Node, error) {
+func (s *Store) ListNodesByUserMeta(ctx context.Context, userID int64, key string, f db.NodeFacets, limit int) ([]*model.Node, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 50
 	}
+	args := []any{userID, key}
+	bind := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+	where := append([]string{"m.user_id=$1 AND m.key=$2 AND n.deleted_at IS NULL"}, f.Where("n.", "backend_mtime", bind)...)
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT n.id, n.storage_id, n.parent_id, n.name, n.path, n.path_hash, COALESCE(n.storage_key,''), n.type, n.size, COALESCE(n.mime,''), COALESCE(n.etag,''), n.backend_mtime, n.db_mtime, n.sync_state, COALESCE(n.transfer_state,'stored'), n.seen_at, n.deleted_at, n.created_at, n.updated_at
+		`SELECT n.id, n.storage_id, n.parent_id, n.name, n.path, n.path_hash, COALESCE(n.storage_key,''), n.type, n.size, COALESCE(n.mime,''), COALESCE(n.etag,''), n.backend_mtime, n.db_mtime, n.sync_state, COALESCE(n.transfer_state,'stored'), n.seen_at, n.deleted_at, n.created_at, n.updated_at, n.owner_id
 		 FROM user_node_meta m
 		 INNER JOIN nodes n ON n.id = m.node_id
-		 WHERE m.user_id=$1 AND m.key=$2 AND n.deleted_at IS NULL
+		 WHERE `+strings.Join(where, " AND ")+`
 		 ORDER BY m.updated_at DESC
-		 LIMIT $3`, userID, key, limit)
+		 LIMIT `+bind(limit), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -2849,6 +3783,38 @@ func (s *Store) ListNodesByUserMeta(ctx context.Context, userID int64, key strin
 			return nil, err
 		}
 		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// UserNodeMetaTimes returns updated_at per node for one (user, key) — the very
+// column ListNodesByUserMeta orders by, so a caller can hand the date out with
+// the row instead of leaving the client to guess it from the file's mtime.
+func (s *Store) UserNodeMetaTimes(ctx context.Context, userID int64, key string, nodeIDs []int64) (map[int64]time.Time, error) {
+	out := map[int64]time.Time{}
+	if len(nodeIDs) == 0 {
+		return out, nil
+	}
+	args := []any{userID, key}
+	marks := make([]string, len(nodeIDs))
+	for i, id := range nodeIDs {
+		args = append(args, id)
+		marks[i] = "$" + strconv.Itoa(len(args))
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT node_id, updated_at FROM user_node_meta
+		 WHERE user_id=$1 AND key=$2 AND node_id IN (`+strings.Join(marks, ",")+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: user node meta times: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var at time.Time
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		out[id] = at.UTC()
 	}
 	return out, rows.Err()
 }
@@ -2957,7 +3923,7 @@ func (s *Store) ListNodesByTag(ctx context.Context, tag string, limit int) ([]*m
 		limit = 500
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT n.id, n.storage_id, n.parent_id, n.name, n.path, n.path_hash, COALESCE(n.storage_key,''), n.type, n.size, COALESCE(n.mime,''), COALESCE(n.etag,''), n.backend_mtime, n.db_mtime, n.sync_state, COALESCE(n.transfer_state,'stored'), n.seen_at, n.deleted_at, n.created_at, n.updated_at
+		`SELECT n.id, n.storage_id, n.parent_id, n.name, n.path, n.path_hash, COALESCE(n.storage_key,''), n.type, n.size, COALESCE(n.mime,''), COALESCE(n.etag,''), n.backend_mtime, n.db_mtime, n.sync_state, COALESCE(n.transfer_state,'stored'), n.seen_at, n.deleted_at, n.created_at, n.updated_at, n.owner_id
 		 FROM node_meta m
 		 INNER JOIN nodes n ON n.id = m.node_id
 		 WHERE m.key=$1 AND n.deleted_at IS NULL
@@ -2998,15 +3964,53 @@ func (s *Store) InsertNotification(ctx context.Context, n *model.NotificationInp
 	if n.UserID != nil {
 		userID = *n.UserID
 	}
+	var nodeStorage any
+	if n.NodeStorageID != nil {
+		nodeStorage = *n.NodeStorageID
+	}
+	var nodePath any
+	if n.NodePath != "" {
+		nodePath = n.NodePath
+	}
 	var id int64
 	if err := s.db.QueryRowContext(ctx,
-		`INSERT INTO notifications (event, severity, title, body, meta_json, user_id, webhook_status)
-		 VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7) RETURNING id`,
-		n.Event, n.Severity, n.Title, n.Body, string(meta), userID, "pending",
+		`INSERT INTO notifications (event, severity, title, body, meta_json, user_id, webhook_status,
+		                            node_storage_id, node_path)
+		 VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9) RETURNING id`,
+		n.Event, n.Severity, n.Title, n.Body, string(meta), userID, "pending", nodeStorage, nodePath,
 	).Scan(&id); err != nil {
 		return 0, fmt.Errorf("postgres: insert notification: %w", err)
 	}
 	return id, nil
+}
+
+// ListNodeEvents returns what has happened to ONE file, newest first. See the
+// sqlite driver's copy for why it is keyed by path and what that costs after a
+// rename.
+func (s *Store) ListNodeEvents(ctx context.Context, storageID int64, path string, limit int) ([]*model.Notification, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, event, severity, title, body, meta_json::text,
+		        user_id, read_at, webhook_status, COALESCE(webhook_error,''), created_at
+		   FROM notifications
+		  WHERE node_storage_id = $1 AND node_path = $2
+		  ORDER BY created_at DESC, id DESC
+		  LIMIT $3`, storageID, path, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list node events: %w", err)
+	}
+	defer rows.Close()
+	out := []*model.Notification{}
+	for rows.Next() {
+		n, err := scanNotificationPg(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
 }
 
 // GetNotification returns a single row by id.
@@ -3625,7 +4629,7 @@ func (s *Store) CreateNodeComment(ctx context.Context, c *model.NodeComment) (*m
 func (s *Store) GetNodeComment(ctx context.Context, id int64) (*model.NodeComment, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT c.id, c.node_id, c.user_id, c.body, c.created_at, c.updated_at,
-		        COALESCE(NULLIF(u.display_name, ''), u.email)
+		        COALESCE(u.display_name, '')
 		 FROM node_comments c
 		 LEFT JOIN users u ON u.id = c.user_id
 		 WHERE c.id=$1 AND c.deleted_at IS NULL`, id)
@@ -3633,12 +4637,18 @@ func (s *Store) GetNodeComment(ctx context.Context, id int64) (*model.NodeCommen
 }
 
 // ListNodeComments returns the live comments of one node in chronological
-// order (oldest first), each carrying the author's display name (falling
-// back to the author's email).
+// order (oldest first), each carrying the author's display name.
+//
+// ⚠ The display name ONLY, never the e-mail behind it. A comment thread is
+// drawn for anybody who may open the file, so falling back to the address
+// published the e-mail of every colleague who had written on it. An account
+// that has set no display name comes back with an empty name and the client
+// prints who it is in the reader's language — the same rule the version
+// authors, the activity actors and the owner column already follow.
 func (s *Store) ListNodeComments(ctx context.Context, nodeID int64) ([]*model.NodeComment, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT c.id, c.node_id, c.user_id, c.body, c.created_at, c.updated_at,
-		        COALESCE(NULLIF(u.display_name, ''), u.email)
+		        COALESCE(u.display_name, '')
 		 FROM node_comments c
 		 LEFT JOIN users u ON u.id = c.user_id
 		 WHERE c.node_id=$1 AND c.deleted_at IS NULL
@@ -3701,7 +4711,7 @@ func pgScanNodeComment(rs interface {
 
 // ─────────────────── Storage plugins (migration 00029) ───────────────────
 
-const pluginCols = `id, name, kind, binary, sha256, address, token_sealed, enabled, version, driver, last_error, created_at, updated_at`
+const pluginCols = `id, name, kind, "binary", sha256, address, token_sealed, enabled, version, driver, last_error, created_at, updated_at`
 
 func scanPlugin(r rowScanner) (*model.Plugin, error) {
 	p := &model.Plugin{}
@@ -3715,7 +4725,7 @@ func scanPlugin(r rowScanner) (*model.Plugin, error) {
 func (s *Store) CreatePlugin(ctx context.Context, p *model.Plugin) (*model.Plugin, error) {
 	var id int64
 	err := s.db.QueryRowContext(ctx,
-		`INSERT INTO plugins (name, kind, binary, sha256, address, token_sealed, enabled, version, driver, last_error)
+		`INSERT INTO plugins (name, kind, "binary", sha256, address, token_sealed, enabled, version, driver, last_error)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
 		p.Name, p.Kind, p.Binary, p.SHA256, p.Address, p.TokenSealed, p.Enabled, p.Version, p.Driver, p.LastError).Scan(&id)
 	if err != nil {
@@ -3751,7 +4761,7 @@ func (s *Store) ListPlugins(ctx context.Context) ([]*model.Plugin, error) {
 
 func (s *Store) UpdatePlugin(ctx context.Context, p *model.Plugin) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE plugins SET kind=$1, binary=$2, sha256=$3, address=$4, token_sealed=$5, enabled=$6, version=$7, driver=$8, last_error=$9, updated_at=NOW()
+		`UPDATE plugins SET kind=$1, "binary"=$2, sha256=$3, address=$4, token_sealed=$5, enabled=$6, version=$7, driver=$8, last_error=$9, updated_at=NOW()
 		 WHERE id=$10`,
 		p.Kind, p.Binary, p.SHA256, p.Address, p.TokenSealed, p.Enabled, p.Version, p.Driver, p.LastError, p.ID)
 	return err

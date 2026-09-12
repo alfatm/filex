@@ -7,6 +7,409 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A new end-user app, and it is now what filex answers with.** The file
+  surface people actually work in — My files, Recent, Starred, Shared with me,
+  Trash, search, the details panel, the preview modal, the assistant panel —
+  written from scratch as its own Vue workspace package, `app/`, in English,
+  Russian and Turkish. It is embedded in the binary (`backend/embed` carries the
+  admin SPA, the embed widget and now the app) and mounted at the apex, so `/`
+  is the drive and `/admin/` stays the operator console; a binary built without
+  the bundle redirects `/` there instead. The image builds it by default and
+  `BUILD_APP=0` leaves it out.
+  A production build of the app refuses to start without `VITE_FILEX_API`, and
+  in a real build the mock repository is aliased out of the bundle rather than
+  left to tree-shaking, so a shipped app cannot quietly serve demo data. The
+  demo itself has to be asked for by name: `vite build --mode demo`.
+- **Per-role operation permissions.** `roles.permissions_json` has existed since
+  the first migration and nothing ever read it: the four values it held were
+  documentation while enforcement came entirely from the role string plus item
+  grants. It is now the live allow-list of thirteen operations — `files.upload`,
+  `mkdir`, `rename`, `move`, `copy`, `delete`, `purge`, `restore`, `tags`,
+  `download`, `star`, `share`, `grant` — checked at every HTTP write and
+  download surface (`internal/perm`, migration `00044`), IN ADDITION to the
+  per-item ACL, never instead of it. `admin` keeps `*` and is not editable;
+  `user` gets every operation and `viewer` gets `files.download` + `files.star`,
+  so no installation changes behaviour on upgrade. `files.download` is separate
+  from viewing (preview and thumbnails stay open) and `files.purge` is separate
+  from `files.delete`, so "may move things to the trash but not empty it" is a
+  real setting. A refusal is a 403 carrying `{"code":"ROLE_FORBIDDEN","op":…}`
+  so a client can say which switch stopped it. Operators edit the grid at `GET`
+  / `PUT /api/admin/roles`; `GET /api/files/capabilities` now carries the
+  caller's own expanded `permissions` so the explorer can hide what the server
+  would refuse. ⚠ The protocol gateways (WebDAV/SFTP/FTPS/NFS/S3) are NOT wired
+  to it in this release — see `docs/RBAC.md`.
+- **User groups, and grants addressed to them.** Sharing a folder with a team
+  meant one grant per person, and taking somebody off the team meant finding
+  every one of those rows again. A group is now a first-class principal
+  (migration `00043`: `groups`, `group_members`, `file_group_grants`): grant a
+  path to the group once and access follows membership — add somebody and they
+  have it, remove them and it is gone, with nothing to revoke. Group grants are
+  merged with personal ones rather than replacing them, so the effective level
+  is the highest of the two and the account-role ceiling still caps the result.
+  Every row the permissions panel and the admin overview return now says which
+  kind it is (`principal: "user" | "group"`), `POST /api/files/permissions` and
+  `/invite` take a `group_id` where they took a `user_id`, and `PATCH`/`DELETE`
+  take `?principal=group` because the two tables have their own id spaces.
+  Admins manage groups at `/api/admin/groups` (CRUD plus membership replace/add/
+  remove, tenant-scoped like users) and can now create and relevel any grant
+  from `/api/admin/grants` instead of only revoking one. Shared-with-me rows
+  reached through a team carry `via_group`, each drive carries `via_groups`, and
+  an invite always reports its `mode` — including the case where the address had
+  no account and a public link was minted instead, which now says so. See
+  `docs/RBAC.md`.
+- **Two more quota ceilings, and instance defaults behind all three.** A per-user
+  byte ceiling was the only limit filex had, so an account could hold a million
+  empty files or move a terabyte a day without crossing it. There are now three:
+  storage bytes, a **file count** (`users.quota_files` / `users.usage_files`) and
+  an **upload rate** — bytes per sliding window, kept in a new `upload_ledger`
+  table with one row per completed upload (migration `00042`). Every per-user
+  column became a tri-state override — `0` inherits the instance default, `-1` is
+  unlimited for that account, `N` is a limit — which is why the upgrade changes
+  no behaviour: every existing row is `0` and every default starts unlimited.
+  The defaults are live-editable settings seeded once from
+  `FILEX_QUOTA_DEFAULT_BYTES`, `FILEX_QUOTA_DEFAULT_FILES`,
+  `FILEX_QUOTA_DEFAULT_UPLOAD_BYTES` and `FILEX_QUOTA_UPLOAD_WINDOW_HOURS`, and
+  operators edit them at `GET|PATCH /api/admin/quotas` with the account table at
+  `GET /api/admin/quotas/users` and one account's overrides at
+  `GET|PATCH /api/admin/users/{id}/quota`. Refusals are honest about which
+  resource ran out: `413 FILE_LIMIT_EXCEEDED` carries the limit and the count,
+  and the rate limit answers **`429 UPLOAD_RATE_LIMITED`** with a `Retry-After`
+  computed from the moment the oldest ledger row leaves the window — not a 413,
+  because the same request will succeed later. An **overwrite claims no new file
+  slot**, so an account at its file ceiling can still replace a file it already
+  owns, and a refused, aborted or failed upload spends no allowance at all. The
+  ledger is trimmed by the staged-upload sweeper. ⚠ WebDAV and the
+  S3/SFTP/FTP/NFS gateways enforce the two storage ceilings only — see
+  `docs/QUOTAS.md`.
+- **Four operator pages for the things access was already made of.** Quotas is
+  one card of instance defaults (storage, file count, upload bytes per window,
+  the window itself) over a paged account table that shows used-against-limit
+  for all three and labels every cell `default` or `override`, because the
+  per-account value is tri-state on the wire — `0` inherits the default, `-1` is
+  unlimited for that account, anything above zero is a limit — and an operator
+  who cannot tell an inherited limit from a deliberate exception cannot audit
+  one. Roles is the thirteen-operation grid against the roles, with the admin
+  column checked and disabled and one Save per column. Groups are tenant-scoped
+  user groups with their own page and membership editor, and Permissions became
+  Access: the RBAC switch for every storage (a grant is inert on a storage with
+  RBAC off, so the switch belongs where the grants are), a form that issues one
+  to an account **or to a group**, and a table that says which of the two each
+  row is and lets the level be changed in place.
+- **Access is granted to groups, and roles gate the app's own menus.** The
+  access modal takes a People | Group toggle: a group is found with a debounced
+  type-ahead over `GET /api/files/permissions/groups` and granted by id, group
+  rows show the group mark and their member count, and the role select and
+  Remove work for both principals (`?principal=group` on the grant's `PATCH` and
+  `DELETE`). `owner` is offered as a level to whoever may manage access; the
+  invite carries the NODE's own `is_dir` rather than a hard-coded `true`; an
+  address with no account behind it answers `mode: "shared"` and the modal shows
+  the public link filex minted instead of adding a row; a drive with access
+  rules switched off says who can switch them on. Alongside it, `GET
+  /api/files/capabilities` now reports the caller's role permissions, and every
+  menu, the selection bar, the trash banner, the New menu, the details panel's
+  share button and drag-and-drop consult them in addition to the driver
+  snapshot — with "Your role may not do this" where the role is the reason and
+  "Not available on this server" where the server is. A server that reports no
+  permissions is read as granting all of them, so nothing disappears on an app
+  that ships ahead of its backend. The Owner column on a drive reached through
+  groups names the group rather than the mount.
+- **Quotas say which ceiling was met.** `GET /api/files/quota/me` carries the
+  file count and the rolling upload window beside the byte total, so the sidebar
+  keeps its bar and adds a line ("1,240 / 5,000 files · 2.1 GB of 10 GB this
+  24 h") and Settings → Storage & uploads repeats all three read-only. An upload
+  refused with 413 `FILE_LIMIT_EXCEEDED` fails naming the ceiling; one refused
+  with 429 `UPLOAD_RATE_LIMITED` is not a failure at all — the row says how long
+  the server asked for and goes out again by itself when the window frees up.
+- **The folder listing and shared-with-me take the filter chips.** `GET
+  /api/files/manager?q=index` and `/api/files/manager/shared-with-me` accept
+  the facets the flat listings already did — `ext`, `modified_after`,
+  `size_min`, `size_max`, `owner_id` — plus `name`, a case-insensitive
+  substring of the file name, and the search handler's Go-side predicate is
+  now `NodeFacets.Matches` next to the SQL it mirrors. The folder listing
+  answers `total`, the folder's unfiltered entry count, so a narrowed answer
+  can be told from an empty folder; shared-with-me filters before it pages, so
+  its `total` counts the filtered set, and a row synthesised from a grant the
+  indexer never walked — nothing there for a chip to test — is dropped by any
+  chip.
+- **The app sends its filter chips to the server, and sieves in memory only
+  where that is free.** A folder listing goes out with the chips and the name
+  box as facets; when the answer's `total` says the folder has fewer than 1000
+  entries the app holds it whole and every chip change is answered from memory
+  without a request, and from 1000 up each change is a request (the name box
+  waits 250 ms for the typing to pause). Shared-with-me is filtered by the
+  server too. The `narrow()` sieve in `HttpRepository` is gone.
+- **An upload that would overwrite a file asks in a modal, with the server's
+  answer behind it.** Every transfer goes out with `if_exists`, so whether a
+  name is taken is what the server said at `begin` — or at `commit`, for a file
+  that appeared meanwhile — rather than a folder listing read in advance. Under
+  "ask" the question is one dialog at a time, about the first row waiting
+  (Replace / Keep both / Skip; Esc is Skip), with an "apply to all" box while
+  more rows of the batch are still to come; a Replace after a commit-time
+  refusal re-commits the staged session without sending a byte again. A target
+  another session is uploading to at that moment gets its own question — Retry
+  (the row goes out again after five seconds), Keep both or Skip. The three
+  inline buttons in the upload tray are gone; the row says it is waiting.
+- **A new, empty file from the explorer.** `POST /api/files/manager?q=newfile`
+  with `{"path":"main://dir","name":"notes.md"}` writes a zero-byte file and
+  answers with the parent listing, exactly as `newfolder` does. Same rules too:
+  ≥editor on the folder, `400` for a name with a slash, `409` when a file OR a
+  folder already holds the name — `Write` overwrites, so without that guard a
+  "new" file would have truncated an old one to nothing. The row is typed from
+  the extension, owned by whoever created it, and costs no quota.
+- **A TOTP recovery code is accepted at login — and used up.** The ten codes
+  shown at enrollment were stored and never read back: a lost phone meant a
+  locked account. Now a code typed into the `totp` field signs in when the
+  authenticator code does not, in any spelling (case, hyphen, spaces), and is
+  removed from the list atomically so it cannot serve twice. `POST
+  /api/auth/totp/disable` takes one in `code` for the same reason. Only input
+  shaped like a recovery code (ten letters/digits) is looked up, so a mistyped
+  six-digit TOTP never touches the list; a use is logged and audited as
+  `totp.recovery_used`.
+- **Download a selection, or a whole folder, as one zip.**
+  `GET /api/files/download/zip?path=…&path=…` streams `archive/zip` built on the
+  fly from any mix of files and folders. A GET, because the download has to be a
+  navigation for the browser to own the save dialog and the disk write; every
+  root is stat'ed and authorised before the first byte, since a failure after
+  that point can only be a truncated file. Roots whose basenames collide are
+  de-duplicated (`report (2).txt`) instead of writing two members under one name
+  and letting the unpacker keep whichever it saw last.
+- **A person can empty their own trash, and delete one item from it for good.**
+  `DELETE /api/files/manager/trash/{id}` and
+  `POST /api/files/manager/trash/empty`, both scoped to what the caller could
+  have deleted in the first place — confinement on the entry's ORIGINAL path and
+  ≥editor there — where purging had been an admin-only action. Until now a
+  user's trash was a room they could put things into and never take anything out
+  of: items sat there until the retention sweep, and the app had to keep "Delete
+  forever" and "Empty trash" switched off. An entry the caller may not purge is
+  skipped rather than refused, so somebody else's deletion on a shared drive
+  cannot make "empty my trash" fail altogether.
+- **What has happened to ONE file.** `GET /api/files/activity?path=…` answers
+  the details panel's Activity tab, which had no endpoint behind it and rendered
+  empty. The events were being recorded already — as bell entries scoped to
+  whoever acted, with the file buried in `meta_json` — so migration 00034 adds
+  the two indexed columns that make them findable per node. Readable by whoever
+  may read the file (≥viewer), keyed by path, and with no backfill: history
+  starts at the upgrade. The queue's worker now writes the submitter's id on the
+  ops it runs, so a queued move or delete no longer reports "somebody" as its
+  actor.
+- **Search facets on `POST /api/files/search`**: `path_prefix`, `ext`,
+  `modified_after`, `size_min`, `size_max`, `owner_id` and `dirs_only`. The
+  index knows a document's name, path, mime and type and nothing else, so every
+  other filter the advanced form offers had been applied to the ANSWER — the
+  first 100 hits, minus what did not fit — and a file ranked past that window
+  was invisible in a way no client could tell from "there are none". They are
+  resolved against the node table and pushed into the index as a restriction, so
+  the count is a count of the filtered set. A fully quoted query is a phrase
+  search inside files, which is what the form's "whole phrase" box always meant.
+- **The drive list is an endpoint.** `GET /api/files/storages` answers with the
+  drives the caller may see (same RBAC filter as a folder listing) plus
+  `used_bytes` per drive, so a client can draw its drive switcher before picking
+  a drive and each drive card reports for itself instead of repeating the
+  ACCOUNT's figure under every one. The ceiling stays the account's, because
+  that is the only ceiling filex has.
+- **An account can see and end its own sign-ins.** `GET /api/auth/sessions` and
+  `DELETE /api/auth/sessions/{id}`. filex has recorded a row per sign-in since
+  its first migration and had never shown it to the person who made it; the
+  session the request itself is made with is marked and cannot be ended, because
+  that is what signing out is. `ip` and `user_agent` were also never WRITTEN —
+  both login drivers passed empty strings — so they are filled from now on and
+  older rows read as an unknown device.
+- **Long lists leave the chat as a report card.** The assistant may name at
+  most 20 files in an answer; a folder's contents, everything a search found or
+  a written report go through the new `write_report` tool instead. The person
+  gets a card with the title and the count, can open it in full, and can
+  download it as text or CSV — both built in the browser from the rows the
+  server resolved, so a path the model misremembered is reported back to it as
+  missing rather than written into the file. The tool changes nothing and needs
+  no approval. The turn stream carries it as a `report` frame; it is stored
+  with the answer and comes back as `reports` on the message.
+- **The server decides upload conflicts.** `if_exists` on `upload/begin`, on
+  `upload/{id}/commit` and on the multipart `?action=upload`: `replace` is the
+  default and what every client already got, `fail` answers `409 EXISTS` before
+  a byte is written or a snapshot taken, and a commit refused that way keeps its
+  session so the same upload can be committed again with `replace`. Two
+  sessions aimed at one file used to race at commit and the last transfer to
+  finish silently won; now the target answers `409 UPLOAD_IN_PROGRESS` while
+  another session is moving its bytes to the driver, or has taken a chunk within
+  the last 30 seconds — a session silent longer than that is stalled, not
+  uploading, and blocks nobody. Migration 00041 indexes the target.
+
+- **The assistant panel can be resized, and it comes back the way it was
+  left.** Drag its left edge (or focus the handle and use ←/→) between 320 and
+  720 px. Width, open/closed state and the conversation on screen are
+  remembered in the browser, so a reload or a new tab returns to the same chat;
+  a remembered chat that was deleted or evicted is forgotten and the panel
+  opens empty.
+- **The assistant sees what is on screen.** The app sends the page, the open
+  folder, the selected rows and — on the search page — the query, its settings,
+  the count and the first hits with every question (`context` on the turn), so
+  "these files" and "this folder" mean what the person is looking at. Appended
+  to that one question only, like the mode chip; never stored or replayed.
+- **`plan_move`: the assistant can propose moving files and folders into one
+  folder**, creating the folder first as its own line of the plan. Same-drive
+  only, never overwrites (a name already taken in the destination is skipped as
+  `taken`, checked against the driver rather than the cache), and like every
+  plan it runs only after the person approves it in the panel. The listing on
+  screen is re-read once a plan has done something, so a move shows without a
+  reload. A long plan scrolls inside its card, and a button on the card opens
+  it in a modal with the room to read it and the same Approve / Don't buttons.
+- **The assistant proposes a plan on the first ask.** The standing instructions
+  used to describe a "write the plan, wait for a yes, then act" protocol, which
+  the model followed literally — the plan came out as prose, the person had to
+  say yes in the chat, and only then was the card offered; between the two it
+  could claim the work was done. The instructions now say what is true: the
+  plan tool call IS the plan, the card IS the approval, and nothing may be
+  reported as done until the interface says what happened.
+- **New → File.** The app's New menu and the listing's context menu can create
+  an empty file in the open folder (`POST /api/files/manager?q=newfile`), the
+  way they create a folder: the offered name is highlighted up to its extension
+  so typing replaces "Untitled" and keeps the ".txt", a taken name is refused
+  under the field, and the new file is selected and can be undone. The entry
+  had been a "coming soon" placeholder.
+- **Two-factor authentication from the app's own Settings → Security.** On a
+  local account the row opens in place, like the password form: turning it on
+  shows the server-drawn QR (on white, so it scans in the dark theme), the
+  secret to type by hand with a Copy button, and asks for the first code before
+  anything is switched on; the ten recovery codes are then shown once, with
+  "Copy all". Turning it off asks for the current password and an authenticator
+  or recovery code, and says which of the two was wrong. An account whose second
+  step belongs to its provider keeps the read-only row.
+
+### Changed
+
+- **LibreOffice is out of the image; office thumbnails come from a service.**
+  It was the single most expensive thing filex shipped — 558 MB, plus the 172 MB
+  OpenJDK 17 JRE its xlsx/docx pipeline needs — which is why the `full` image
+  had grown to 1.28 GB, more than twice what its own documentation claimed. And
+  it was the wrong shape regardless: a whole office suite forked per document,
+  inside the API container, with no memory limit of its own.
+  Office documents now convert over HTTP against a
+  [Gotenberg](https://gotenberg.dev)-compatible service —
+  `FILEX_LIBREOFFICE_URL`, or the new `libreoffice` profile in
+  `docker-compose.yml` — which makes it an entry in `external_services` named
+  `libreoffice`, alongside OnlyOffice and drawio: configurable from
+  *Settings → External services* with **no restart**, with a Test button, and
+  reported on `/api/files/capabilities` as `thumbs.office`. A host that already
+  has `libreoffice` or `soffice` installed keeps using it with no configuration
+  at all; the remote converter wins when both exist.
+  ⚠ **Upgrade note:** an install that relied on the bundled LibreOffice stops
+  rendering office thumbnails until a service is configured. Those documents
+  land `state=skipped` with the reason `no office converter (set
+  FILEX_LIBREOFFICE_URL, or install libreoffice)`, and
+  `filex thumb backfill --retry-skipped` picks them up once one exists. Nothing
+  else regressed: office text still reaches the **search index** and the
+  assistant through the pure-Go OOXML extractors, which never used LibreOffice.
+- **The assistant panel never goes blank while a turn is running.** The
+  activity line says "Thinking…" from the question until the first word or
+  tool arrives; a turn that says nothing for a minute is dropped and the answer
+  says so ("No answer came for a minute…"), instead of a spinner that never
+  stops. Failures the person cannot fix by retrying get their own line: the
+  provider account being out of credit, and an assistant that is gone. The turn
+  stream's `error` frame now carries `code: quota | unavailable` for those.
+- **Permission to read a file is an interrupt, not a conversation.** The
+  assistant asks by calling the read tool; the Allow / Deny card appears, the
+  turn stands still at it, and the button answers it — the same turn goes on
+  with the contents or a refusal, and nothing is typed into the chat. Before,
+  the model explained in prose that it would need permission, the click sent
+  "You may read `…`" as a message, and a second model round re-asked for the
+  file. A card that nobody answers in five minutes expires and the model goes
+  on without the file; reopened conversations show how each request ended.
+- **The assistant reads PDF, DOCX, XLSX and PPTX** through the same text
+  extractors the search index uses, instead of refusing them as "not a text
+  file".
+- **The assistant can read pictures, two ways.** `read_image_text` extracts
+  the words on a screenshot or a scanned page by OCR (needs `tesseract` on the
+  server, and says so when it is missing). `view_image` shows the model the
+  picture itself — scaled to fit, as JPEG — so it can describe a photo or read
+  a chart; it needs a model that accepts images. Both ask permission per file,
+  exactly as reading a text file does.
+- **The Filename / Content / Tags chips bind the search** rather than hinting
+  at it: Filename consults names only, Tags reads every word as a tag. Each
+  chip says what it does in a tooltip.
+- **The assistant's intro line is the empty log's placeholder**: it goes away
+  with the first message instead of staying above the conversation.
+- **The `main` drive is no longer listed under Storages.** It is the system
+  drive holding the users' own files — their home — and "My files" is how it
+  is reached, so the sidebar section and the Home page cards now show only the
+  drives mounted beside it, and disappear when there are none. `/files` with no
+  drive in the address opens `main` regardless of the order the server lists
+  drives in. Where it is still named as a drive (the quota block, the Move/Copy
+  destination select) it reads "main — home folder".
+- **The plan card is redrawn after the new mockup:** a tinted card with the
+  assistant's mark, a 40px picture per line (the image itself where the file is
+  one), the name in front with size, folder and action under it, a check that
+  turns green as each item is done, and a Play on "Approve and run". The plan
+  can also be copied as text, one `address — action` line per item.
+
+### Removed
+
+- The two canned prompts under the assistant's mode chips ("Find contracts
+  from July", "Search by tag: design"): they fit no real drive.
+
+### Fixed
+
+- **Turning 2FA off from Admin → Profile could never work.** The admin SPA
+  posted `{code}` alone to `/api/auth/totp/disable`, while the server wants the
+  current password too and checks it first — so every attempt was answered 401
+  "password incorrect" before the code was looked at. The dialog now asks for
+  the password as well and sends both.
+
+### Security
+
+- **Any signed-in account could read and roll back another person's file
+  versions.** The three routes under `/api/files/versions` took a numeric
+  `node_id` and asserted nothing about it, so guessing an integer was enough to
+  read a stranger's revision history — every author and size of every write —
+  and to restore an older revision over their live bytes. They are guarded now:
+  ≥viewer to list a timeline, ≥editor to snapshot or to restore, plus the same
+  tenant-root confinement every other file route applies. An unknown id answers
+  404 rather than an empty timeline, which was itself an answer about whether
+  that id names a file.
+- **A zip of a storage root carried filex's internal buckets.** The archive
+  walks the storage DRIVER, which is below the listing projections that hide
+  `.filex-trash/`, `.versions/`, `.thumbs/` and the e2e marker — so "download
+  this folder" on a drive root packed up every account's deleted files and every
+  snapshot ever taken of every file, for anyone holding viewer on the root. The
+  walk drops those buckets by path component now, at the root or nested.
+- **The per-file activity feed handed out public-link tokens.** `meta_json` is a
+  bell payload and carries whatever the emitting surface put there;
+  `share.created` puts the share's TOKEN in it. The feed stripped `actor` and
+  `node` and passed the rest through, so the credential for a public link —
+  anonymous drop links included — reached every account with viewer on the file.
+  It is a whitelist now (`from`, `to`, `origin`), which also cannot leak
+  whatever a future emitter adds.
+- **The assistant's trash tools showed the WHOLE installation's trash.**
+  `trash.Service.List` takes no user and filters nothing — it is the
+  administrator's listing — and both `list_trash` and `plan_empty_trash` were
+  handing it straight to the model, so other people's deleted file names, paths
+  and sizes went to the model provider, and `plan_empty_trash` counted its
+  50-item ceiling over all of them. Both apply the same two passes the trash page
+  applies (confinement, then ≥viewer on the entry's original path) before the
+  model sees a row, and the reported total counts what survives them.
+- **An approved plan could be run twice.** The status moved out of `pending` in
+  the statement that RECORDED the outcome, so two approvals racing — a double
+  click, a retried request, two tabs — both passed the check and both executed
+  the work; for `create_share` that meant a second public link whose URL was
+  never shown to anybody. The row is claimed before any work starts, and
+  execution then runs on a context detached from the request, so a client that
+  hangs up mid-plan can no longer leave the plan half-done and still approvable.
+- **Emptying your own trash silently emptied nothing.** `POST
+  /api/files/manager/trash/empty` judged the first page of a listing ordered by
+  deletion time across every account, so with 500 other people's deletions in
+  front of the caller's own, every request answered `purged: 0, skipped: 500` —
+  and the app, which stops asking as soon as a round purges nothing, reported a
+  trash it had emptied and had not. It now steps over pages that purged nothing
+  until one produces a result or the listing runs out.
+- **A tenant admin could revoke another tenant's grants by id.** `DELETE
+  /api/admin/grants/{id}` resolved the row by bare integer and deleted it, so
+  enumerating dense grant ids was enough to strip access on a storage the caller
+  cannot reach — and the tenant it belonged to saw only that access had
+  vanished. Both mutations now load the grant, load its storage and answer 404
+  when the caller's scope cannot reach it, for the user and the group principal
+  alike.
+
 ## [0.34.0] - 2026-09-06
 
 ### Upgrade notes

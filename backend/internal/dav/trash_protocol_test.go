@@ -21,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/notify"
 	"github.com/brf-tech/filex/backend/internal/storage"
@@ -142,7 +143,7 @@ func TestDeleteOnUntrashableDriverIsPermanentAndSaysSo(t *testing.T) {
 	require.True(t, os.IsNotExist(err), "bytes are gone — this driver cannot trash")
 
 	// No phantom trash row: nothing may claim to be restorable.
-	entries, _, err := trash.New(ha.store, ha.resolver, nil).List(context.Background(), &st.ID, 100, 0)
+	entries, _, err := trash.New(ha.store, ha.resolver, nil).List(context.Background(), &st.ID, false, db.NodeFacets{}, 100, 0)
 	require.NoError(t, err)
 	require.Empty(t, entries, "a permanent delete must not leave a restorable-looking trash entry")
 }
@@ -174,7 +175,7 @@ func TestDeleteOnCopyOnlyDriverLandsInTrash(t *testing.T) {
 	require.Equal(t, "önemli", string(data))
 
 	// And it is restorable through the same trash service the web UI uses.
-	entries, _, lerr := trash.New(ha.store, ha.resolver, nil).List(ctx, &st.ID, 100, 0)
+	entries, _, lerr := trash.New(ha.store, ha.resolver, nil).List(ctx, &st.ID, false, db.NodeFacets{}, 100, 0)
 	require.NoError(t, lerr)
 	require.Len(t, entries, 1)
 	require.Equal(t, "/rapor.txt", entries[0].Path)

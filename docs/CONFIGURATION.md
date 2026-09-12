@@ -336,7 +336,8 @@ labels them.
 | `FILEX_ONLYOFFICE_URL` | OnlyOffice Document Server URL (see [ONLYOFFICE.md](ONLYOFFICE.md)) |
 | `FILEX_ONLYOFFICE_JWT` | Shared JWT secret — must match the Document Server |
 | `FILEX_DRAWIO_URL` | Drawio embed URL (diagram editing) |
-| `FILEX_CONVERT_URL` | External universal converter URL |
+| `FILEX_CONVERT_URL` | External universal converter URL (in-browser, for the Convert action) |
+| `FILEX_LIBREOFFICE_URL` | Office→PDF conversion service for thumbnails, Gotenberg-compatible (server-side). See [thumbnails.md](thumbnails.md#the-office-conversion-service) |
 
 > **Mermaid needs no service.** Mermaid diagrams render entirely client‑side in
 > the browser via a bundled `mermaid` library — there is nothing to deploy and no
@@ -457,6 +458,25 @@ work on every driver. See [UPLOADS.md](UPLOADS.md).
 > ⚠ The whole object passes through the staging directory — put it on a
 > filesystem with room for the largest upload you expect. `begin` refuses when
 > less than `size × 1.2` is free.
+
+---
+
+## Quotas
+
+Three per-user ceilings — storage bytes, file count and upload rate — each a
+tri-state override over an instance default (`0` inherit, `-1` unlimited, `N` a
+limit). See [QUOTAS.md](QUOTAS.md).
+
+⚠ These four live in the **database**, edited on the admin quota page
+(`GET|PATCH /api/admin/quotas`). The environment variables below are a **seed**:
+they apply on a boot where the setting has no stored row yet, and never again.
+
+| Env var | Setting | Default | Description |
+|---|---|---|---|
+| `FILEX_QUOTA_DEFAULT_BYTES` | `quota.default_bytes` | `0` (unlimited) | Storage ceiling for a user with no byte override. |
+| `FILEX_QUOTA_DEFAULT_FILES` | `quota.default_files` | `0` (unlimited) | File-count ceiling. Bytes are not the only finite resource: a million empty files costs almost no disk and still makes listings, scans and backups unusable. |
+| `FILEX_QUOTA_DEFAULT_UPLOAD_BYTES` | `quota.default_upload_bytes` | `0` (unlimited) | Bytes one account may upload within the window below. Deleting an upload does **not** give the allowance back — the transfer already happened. |
+| `FILEX_QUOTA_UPLOAD_WINDOW_HOURS` | `quota.upload_window_hours` | `24` | How far back the upload ledger is summed. 1–720. |
 
 ---
 
@@ -643,7 +663,7 @@ regenerable, and a single folder-share archive can be tens of gigabytes.
 
 | Env var | Default | Description |
 |---|---|---|
-| `FILEX_THUMBS_ENABLED` | `true` | Master switch. |
+| `FILEX_THUMBS_ENABLED` | `true` | Master switch. Off = nothing is rendered (and no `thumbnails` row is written), `thumbs.*` in `/api/capabilities` all report `false`, and the admin reset endpoints answer 503. Read at boot; a change needs a restart. |
 | `FILEX_THUMB_BACKFILL_ON_BOOT` | — | Set `once` to backfill missing thumbnails on startup. |
 | `FILEX_THUMBS_SWEEP_INTERVAL` | `6h` | How often cached thumbnails whose node no longer exists are deleted (also once at boot). `0` disables it. |
 
@@ -666,6 +686,87 @@ only (`thumbs.cache_dir`, `thumbs.formats`). See [thumbnails.md](thumbnails.md).
 
 Index path is `config.yaml` only (`search.index_path`, default
 `<data_dir>/search.bleve`). See [SEARCH.md](SEARCH.md).
+
+---
+
+## AI assistant
+
+The file assistant in the end-user app. Off unless an operator configures a
+model provider — filex ships with no default provider and no key, and an
+installation that has not configured one reports no assistant at all, so the
+panel is never drawn.
+
+All five settings live in the database and are **seeded** from these variables
+on first boot only (see [Zero-touch seeding](#zero-touch-seeding)): once a row
+exists, the variable is inert and the value is edited in the admin panel under
+**AI assistant** (or through `PUT /api/admin/assistant/provider`). That screen
+also holds the Test button — one real call to the provider, which is the only
+thing that tells an operator the model name and the key actually work — and the
+conversation list as metadata.
+
+| Env var | Where it lives now | Default | Description |
+|---|---|---|---|
+| `FILEX_ASSISTANT_ENABLED` | **seed → database** (`assistant.enabled`) | off | The operator's switch. Off on a fresh install on purpose: nothing should start talking to a model provider because a key happened to be in the environment. |
+| `FILEX_ASSISTANT_PROVIDER` | **seed → database** (`assistant.provider`) | `openai` | The wire protocol, not the vendor: `openai` is OpenAI *and* every openai-compatible server (vLLM, Ollama, LiteLLM, a gateway) — point `BASE_URL` at yours. `anthropic` is the Messages API. |
+| `FILEX_ASSISTANT_BASE_URL` | **seed → database** (`assistant.base_url`) | unset | Absolute `http(s)` endpoint. Empty means the provider's own (`https://api.openai.com/v1`, `https://api.anthropic.com/v1`). A bare host is refused when you save it, not discovered at the first question. |
+| `FILEX_ASSISTANT_MODEL` | **seed → database** (`assistant.model`) | unset | The model name, spelled the way your provider spells it. There is no default: it decides both the bill and the quality, and no software can guess it for you. |
+| `FILEX_ASSISTANT_TURNS_PER_MINUTE` | **seed → database** (`assistant.turns_per_minute`) | `20` | The loop-breaker, per account. A person cannot type past it; an agent that has talked itself into a circle reaches it at once. Not a cost control. One turn at a time per account is enforced separately and is not configurable — a second concurrent turn would interleave two answers in one conversation. |
+| `FILEX_ASSISTANT_API_KEY` | **seed → database, sealed** (`assistant.api_key`) | unset | The provider credential. It is encrypted with `FILEX_SECRET_KEY` before it is written and is never read back by any endpoint — the admin surface reports only *that* a key is stored. |
+
+> ⚠⚠ **`FILEX_SECRET_KEY` is required to configure the assistant.** Without it
+> the key cannot be sealed, and filex refuses to store it rather than writing a
+> billable third-party credential into the database in the clear. The seed is
+> skipped with a warning naming the variable. Rotating `FILEX_SECRET_KEY` makes
+> the stored key unreadable; the admin surface then says so and asks for it to
+> be re-entered, instead of reporting "not configured" next to a page that
+> visibly holds one.
+
+### What it can do
+
+The full picture — every tool, the read gate, the plan mechanism and what the
+assistant can never do at all — is its own page: **[AI assistant](ASSISTANT.md)**.
+What an operator deciding whether to switch this on needs to know:
+
+- **It looks, and it proposes.** It can list drives, list a folder, search by
+  name and content, and list a file's versions, its public links and the trash.
+- **Reading a file's CONTENTS needs the person's permission for that exact
+  file**, given through a card in the panel and scoped to that one conversation.
+  There is no wildcard and no "approve everything" — the schema has no column
+  that could express one.
+- **The model holds no tool that changes anything.** Its `plan_*` tools only
+  write a plan — every item resolved to a node id and fingerprinted as it is at
+  that moment — which the person reads and approves. The SERVER then executes
+  what the stored plan says, without consulting the model again, so a prompt
+  injection that talks the model into "delete everything" produces at worst a
+  plan the person is looking at and can refuse.
+- **Six kinds of plan exist and no others**: apply tags, move files into a
+  folder, restore a version, create a public link, revoke a public link, empty
+  the trash. The list with what approving each one does, and whether it can be
+  undone, is kept in exactly one place —
+  [what a plan may contain](ASSISTANT.md#what-a-plan-may-contain) — so that the
+  two pages cannot drift apart. Two of the six are worth an operator's attention
+  before switching this on: `move` rearranges live files (it never overwrites —
+  a name already taken in the destination is skipped) and `create_share` mints a
+  link anyone holding it can open **without an account**. Both are proposed only
+  on a direct request, and both still go through the same plan card the person
+  has to approve.
+- **What is absent rather than gated** — no tool and no plan kind writes,
+  renames or deletes a live file, uploads anything, changes anyone's
+  permissions, or touches another account's anything:
+  [what it cannot do at all](ASSISTANT.md#what-it-cannot-do-at-all).
+
+Listing and searching are not gated: they return names, sizes and dates, which
+is what the person already sees in their own file list.
+
+One turn may call tools at most 8 times before it has to answer. That ceiling is
+not configurable and is separate from `turns_per_minute`: this one stops a
+single turn from going round in circles, the other stops a client from starting
+turns in a loop.
+
+Conversations are stored per account: private to their owner (an administrator
+may see how many an account holds and delete one, and can read no line of any),
+capped at 100 per account, and the least recently *active* one is evicted when
+the cap is reached.
 
 ---
 

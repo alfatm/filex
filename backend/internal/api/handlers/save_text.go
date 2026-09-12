@@ -62,7 +62,10 @@ import (
 	"github.com/brf-tech/filex/backend/internal/db"
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/pathkey"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/protocolsync"
+	"github.com/brf-tech/filex/backend/internal/quota"
+	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/realtime"
 	"github.com/brf-tech/filex/backend/internal/search"
 	"github.com/brf-tech/filex/backend/internal/storage"
@@ -83,7 +86,15 @@ type SaveText struct {
 	ACL             *acl.Resolver
 	// Index keeps the saved text searchable. Optional; nil skips indexing.
 	Index *search.Index
+	// Quota enforces the per-user ceilings. The editor is a write surface like
+	// any other: a person at their limit must not be able to get past it by
+	// creating documents in the browser instead of uploading them. nil
+	// disables enforcement.
+	Quota *quota.Service
 }
+
+// AttachQuota wires the ceiling checks.
+func (h *SaveText) AttachQuota(q *quota.Service) { h.Quota = q }
 
 // AttachSearchIndex wires the search index. ⚠ Without it an edit saved from
 // the built-in editor never reaches Bleve: the file keeps whatever text it had
@@ -120,6 +131,12 @@ type saveTextReq struct {
 // bytes immediately, and a future versions endpoint can snapshot the
 // previous payload before the write if requested.
 func (h *SaveText) Save(w http.ResponseWriter, r *http.Request) {
+	// The editor writes bytes like any other upload surface, so it answers to
+	// the same files.upload. A role that may not upload must not be able to
+	// reach the same result by opening the file in the code editor instead.
+	if !requirePerm(w, r, perm.OpUpload) {
+		return
+	}
 	if h.StorageResolver == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "storage offline"})
 		return
@@ -203,6 +220,48 @@ func (h *SaveText) Save(w http.ResponseWriter, r *http.Request) {
 	if n, err := h.Store.GetNodeByPath(r.Context(), storageID, hash); err == nil {
 		existing = n
 	}
+	// The ceilings, before the destructive write.
+	//
+	// A CREATE claims a file slot and all of its bytes; an OVERWRITE claims
+	// only the DELTA and no slot — the file and its old bytes are already
+	// this account's, and refusing an edit that makes a document SHORTER
+	// would be absurd. Only a create spends the upload-window allowance: a
+	// document being edited is not a transfer, and charging every Ctrl+S
+	// against the window would exhaust it in a morning's writing.
+	if h.Quota != nil {
+		addBytes := int64(len(req.Content))
+		addFiles := int64(1)
+		if existing != nil {
+			addFiles = 0
+			if addBytes -= existing.Size; addBytes < 0 {
+				addBytes = 0
+			}
+		}
+		owner := quotastore.OwnerFrom(r.Context())
+		// ⚠ CheckCanStore on an overwrite, CheckCanWrite on a create — because
+		// only a create RECORDS against the window (see the create branch
+		// below), and a check the record does not match is a limit nobody can
+		// get out from under. An overwrite was measured against the window and
+		// never charged to it, so a user sitting near their rate limit could
+		// not lengthen a document at all: the check refused the delta forever,
+		// and no ledger row was ever written for the edit to age out of.
+		//
+		// The two STORAGE ceilings still apply to the delta, which is the half
+		// of the check that describes something real — the bytes stay on disk.
+		var qerr error
+		if existing != nil {
+			qerr = h.Quota.CheckCanStore(r.Context(), owner, addBytes, addFiles)
+		} else {
+			qerr = h.Quota.CheckCanWrite(r.Context(), owner, addBytes, addFiles)
+		}
+		if qerr != nil {
+			if writeQuotaRefusal(r.Context(), w, h.Quota, owner, qerr) {
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": qerr.Error()})
+			return
+		}
+	}
 	// This call predates writehook.BeforeOverwrite and still snapshots
 	// directly through h.Versions, because it already has the node row in
 	// hand. What it no longer does is proceed past a failure: it used to log
@@ -284,6 +343,11 @@ func (h *SaveText) Save(w http.ResponseWriter, r *http.Request) {
 				slog.String("path", clean), slog.String("err", cerr.Error()))
 		} else {
 			sy.IndexNode(r.Context(), created)
+			if h.Quota != nil {
+				if lerr := h.Quota.RecordUpload(r.Context(), quotastore.OwnerFrom(r.Context()), int64(len(body))); lerr != nil {
+					slog.Warn("quota: record upload", slog.String("path", clean), slog.String("err", lerr.Error()))
+				}
+			}
 			writehook.EmitWritten(r.Context(), storageID, created, writehook.OriginManager, writehook.Created,
 				map[string]any{"editor": true})
 			// CREATE → scan now, exactly like an upload. This branch is the

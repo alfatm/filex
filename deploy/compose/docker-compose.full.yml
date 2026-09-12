@@ -8,7 +8,7 @@
 # Every add-on is a Compose *profile*. Turn one on/off in your .env by editing
 # COMPOSE_PROFILES (comma list) together with the matching FILEX_*_URL:
 #
-#   COMPOSE_PROFILES=onlyoffice,drawio,minio,clamav   # (convert left out → off)
+#   COMPOSE_PROFILES=onlyoffice,libreoffice,drawio,minio,clamav  # (convert off)
 #
 # To drop OnlyOffice tomorrow: remove `onlyoffice` from COMPOSE_PROFILES and
 # blank FILEX_ONLYOFFICE_URL, then:
@@ -27,7 +27,7 @@
 
 services:
   filex:
-    image: ghcr.io/brf-tech/filex:latest       # full image (thumbnails included)
+    image: ${FILEX_IMAGE:-${FILEX_IMAGE_BASE:-ghcr.io/brf-tech}/filex:latest}   # full image (thumbnails included)
     environment:
       FILEX_PUBLIC_URL: https://${FILEX_DOMAIN}
       FILEX_DB_DRIVER: postgres
@@ -107,6 +107,9 @@ services:
       FILEX_ONLYOFFICE_JWT: ${ONLYOFFICE_JWT_SECRET:-}
       FILEX_DRAWIO_URL: ${FILEX_DRAWIO_URL:-}
       FILEX_CONVERT_URL: ${FILEX_CONVERT_URL:-}
+      # Office→PDF for thumbnails. Server-side only, so the in-network address
+      # is the right value; turn on the `libreoffice` profile with it.
+      FILEX_LIBREOFFICE_URL: ${FILEX_LIBREOFFICE_URL:-}
       # ── Zero-touch config (seeded on first boot; fill in .env) ──────────
       # SSO: set FILEX_AUTH_DRIVERS=local,oidc + the FILEX_OIDC_* vars.
       FILEX_AUTH_DRIVERS: ${FILEX_AUTH_DRIVERS:-local}
@@ -229,11 +232,27 @@ services:
       DRAWIO_SELF_CONTAINED: "1"
     restart: unless-stopped
 
+  # Named for the engine, not the image in front of it — see docker-compose.yml.
+  libreoffice:
+    # Office thumbnails. LibreOffice lives HERE and not in the filex image,
+    # where it cost ~730 MB with the JRE it needs. Gotenberg wraps it in an HTTP
+    # API; filex posts to /forms/libreoffice/convert and nothing else, so the
+    # Chromium routes are switched off. Not proxied by Caddy — no browser ever
+    # talks to it. Set FILEX_LIBREOFFICE_URL=http://libreoffice:3000.
+    image: ${LIBREOFFICE_IMAGE:-gotenberg/gotenberg:8}
+    profiles: ["libreoffice"]
+    restart: unless-stopped
+    command:
+      - gotenberg
+      - --api-port=3000
+      - --api-timeout=120s
+      - --chromium-disable-routes=true
+
   convert:
     # filex embeds the p2r3/convert universal converter (GPL-2.0, in-browser
     # WASM) in a hidden iframe. This is our fork with the embed bridge; see
     # docs/CONVERT-INTEGRATION.md. Caddy serves it under /convert.
-    image: ${CONVERT_IMAGE:-ghcr.io/brf-tech/converter-filex:latest}
+    image: ${CONVERT_IMAGE:-${FILEX_IMAGE_BASE:-ghcr.io/brf-tech}/converter-filex:latest}
     profiles: ["convert"]
     restart: unless-stopped
 

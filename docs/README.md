@@ -67,6 +67,11 @@ New here? Start with [Installation](INSTALLATION.md), then add a storage
   matching (separators, several words in any order, folders, typos), VS
   Code-style subsequence scoring, ranked results, `tag:` filters, and an index
   that rebuilds itself after an upgrade without going dark
+- [AI assistant](ASSISTANT.md) — the chat panel in the end-user app: what it may
+  look at, why reading a file needs permission for that one file, and the part
+  worth reading even if you never enable it — the model holds no tool that
+  changes anything, it writes a plan, and the **server** executes the stored
+  plan without consulting the model again
 - [Realtime updates & presence](REALTIME.md) — the WebSocket an open explorer
   runs on: the ticket, the change and presence frames, how a burst is
   coalesced (and why a plain trailing debounce starves), and the 12 s polling

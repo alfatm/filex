@@ -31,6 +31,9 @@ type Worker struct {
 	// avScan, when set, enqueues an antivirus scan for a file the walk has
 	// just catalogued or whose content drifted. See AttachAntivirus.
 	avScan func(ctx context.Context, n *model.Node)
+	// thumbs, when set, asks for a thumbnail of a file the walk has just
+	// catalogued or whose content drifted. See AttachThumbs.
+	thumbs func(ctx context.Context, n *model.Node)
 	// fallback is the global poll cadence for storages with no interval of
 	// their own (FILEX_SYNC_INTERVAL).
 	fallback time.Duration
@@ -90,6 +93,16 @@ func (w *Worker) AttachIndex(idx *search.Index) {
 // leaves the walk byte for byte as it was.
 func (w *Worker) AttachAntivirus(fn func(ctx context.Context, n *model.Node)) {
 	w.avScan = fn
+}
+
+// AttachThumbs wires the thumbnail enqueue so files that arrive ON a storage
+// get a preview the way uploads do. Every write through filex dispatches the
+// pipeline from its handler; a file the walk discovers has no handler, so
+// until this hook its tile stayed a placeholder until somebody ran
+// `thumb backfill`. Same rule as the antivirus hook: newly catalogued or
+// content drifted, never merely "seen again". nil leaves the walk as it was.
+func (w *Worker) AttachThumbs(fn func(ctx context.Context, n *model.Node)) {
+	w.thumbs = fn
 }
 
 // Start launches one syncer per enabled storage. ctx is the parent
@@ -187,6 +200,7 @@ func (w *Worker) startOne(parent context.Context, st *model.Storage) {
 		store:    w.store,
 		index:    w.index,
 		avScan:   w.avScan,
+		thumbs:   w.thumbs,
 		storage:  st,
 		driver:   driver,
 		ctx:      ctx,
@@ -209,6 +223,7 @@ type storageSyncer struct {
 	store   db.Store
 	index   *search.Index
 	avScan  func(ctx context.Context, n *model.Node)
+	thumbs  func(ctx context.Context, n *model.Node)
 	storage *model.Storage
 	driver  storage.Driver
 	ctx     context.Context

@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS plugins (
     id           BIGSERIAL PRIMARY KEY,
     name         TEXT NOT NULL UNIQUE,
     kind         TEXT NOT NULL DEFAULT 'binary',
-    binary       TEXT NOT NULL DEFAULT '',
+    "binary"     TEXT NOT NULL DEFAULT '',
     sha256       TEXT NOT NULL DEFAULT '',
     address      TEXT NOT NULL DEFAULT '',
     token_sealed TEXT NOT NULL DEFAULT '',

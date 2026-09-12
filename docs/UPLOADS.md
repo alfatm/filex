@@ -100,12 +100,13 @@ so pausing a laptop mid-transfer costs the current chunk and nothing else.
 ## The protocol
 
 ```
-POST   /api/files/upload/begin        {path, name, size, mime?, hash?, chunk_size?}
+POST   /api/files/upload/begin        {path, name, size, mime?, hash?, chunk_size?, if_exists?}
                                       → 200 {id, chunk_size, offset, total_size, expires_at}
 PUT    /api/files/upload/{id}         Content-Range: bytes A-B/total   + the chunk body
                                       → 200 {offset, received, total_size, state}
 GET    /api/files/upload/{id}         → 200 {offset, received, state, parts, complete, error?}
-POST   /api/files/upload/{id}/commit  → 202 {op_id, node_id, transfer_state:"staged"}
+POST   /api/files/upload/{id}/commit  {if_exists?}   (body optional)
+                                      → 202 {op_id, node_id, transfer_state:"staged"}
 DELETE /api/files/upload/{id}         → 200 {ok:true}   (abort + delete staging)
 ```
 
@@ -127,11 +128,15 @@ without a translation layer.
 | `mime` | optional. Advisory only — the mime actually stored is sniffed from the bytes, as on the direct path |
 | `hash` | optional `sha256:<hex>` or `md5:<hex>`, verified at commit |
 | `chunk_size` | optional. The server's answer is binding — use the `chunk_size` it returns |
+| `if_exists` | optional. `replace` (the default, and what every client got before the field existed) overwrites an existing file, taking a version snapshot first; `fail` refuses with `409 EXISTS` when a **file** is already at the target. Anything else is `400` |
 
 Refusals worth knowing:
 
 * `403` — no write permission on the destination, or the storage is read-only.
 * `409` — a folder already exists with that name.
+* `409 EXISTS` — a file already exists with that name and `if_exists` is `fail`.
+* `409 UPLOAD_IN_PROGRESS` — another session is uploading to that name right
+  now; see *Concurrent uploads* below.
 * `413 QUOTA_EXCEEDED` — quota is **reserved at begin**, see below.
 * `507 NO_DISK_SPACE` — the staging filesystem has less than `size × 1.2` free.
 * `501` — the driver cannot write at all, or staging is not configured.
@@ -155,6 +160,12 @@ state (tab closed, process restarted, app reinstalled) asks here and continues
 from that byte. See *the offset contract* below for what it is not.
 
 ### commit
+
+The body is optional JSON:
+
+| Field | Meaning |
+|---|---|
+| `if_exists` | `replace` (default) or `fail`, same meaning as at begin. The session does not remember the begin-time value and the target may have appeared since, so the client re-states its choice here. `fail` on a taken name answers `409 EXISTS` and the session stays `staging` — commit it again with `replace` (or abort it) |
 
 Verifies the size (and the hash, when one was declared), then:
 
@@ -181,6 +192,46 @@ server log while the user was looking at a finished upload (GitHub #16).
 
 Deletes the staging directory and the session row. Refused with `409` while a
 transfer is running; wait for the op or let it fail.
+
+### Concurrent uploads
+
+Two sessions aimed at one file would race at commit, and whichever transfer
+finished last would silently win. So the target is **locked while bytes are
+actually flowing**: `begin`, `commit` and the multipart fast path
+(`POST /api/files/manager?action=upload`) all answer `409 UPLOAD_IN_PROGRESS`
+when another session on the same `(storage, path)` is either `committing` (its
+bytes are moving to the driver, at any age) or `staging` with a chunk accepted
+within the last **30 seconds**. A session silent for longer than that is
+stalled — a closed tab never sends abort — and does not block anyone; if it
+resumes and commits while a newer session holds the target, *it* gets the
+`409`, keeps its row, and can commit once the other one is done. The fast path
+takes the same optional `if_exists` query/form field, checks every file of the
+batch before writing any of them, and names the offending file in the `EXISTS`
+error.
+
+**What the lock does not cover.** Three gaps, deliberate rather than
+discovered — write them down before relying on the guarantee:
+
+* **`begin` narrows the race; `commit` closes it.** Commit takes the target with
+  the state change itself — one statement that moves the session to `committing`
+  only while no other session holds the target — so of two commits on one file
+  exactly one proceeds, whatever the timing and however long both have been
+  quiet. `begin` still looks the holder up and then inserts, two statements, so
+  two clients starting at the same instant can both open a session; they are
+  serialised at commit instead, where it matters, and the loser keeps its bytes
+  and can commit once the winner is done.
+* **The multipart fast path is checked but never registers.** `vfUpload` asks
+  whether a staged session holds the target, and refuses if one does; it writes
+  no `staged_uploads` row of its own, so a staged `begin` is never blocked by an
+  in-flight multipart write, and two concurrent multipart POSTs to one name
+  still overwrite each other. Protection runs one way.
+* **MySQL keeps the window in local time.** The freshness test compares
+  `updated_at` against a UTC timestamp, but the column is stamped by
+  `CURRENT_TIMESTAMP`, which on MySQL follows the session time zone. On a MySQL
+  server that is not on UTC the window is either always open or always shut
+  (SQLite and Postgres are unaffected). The sweeper has always had this, but the
+  lock makes it visible to a person, so on MySQL set the session time zone to
+  UTC.
 
 ---
 

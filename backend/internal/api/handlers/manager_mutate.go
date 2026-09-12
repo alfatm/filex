@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	stdmime "mime"
 	"net/http"
 	"os"
 	"path"
@@ -20,7 +21,7 @@ import (
 	"github.com/brf-tech/filex/backend/internal/e2e" /* wiring:e2 */
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/pathkey"
-	"github.com/brf-tech/filex/backend/internal/quota"
+	"github.com/brf-tech/filex/backend/internal/perm"
 	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/realtime"
 	"github.com/brf-tech/filex/backend/internal/storage"
@@ -33,7 +34,7 @@ import (
 var cryptoRead = crand.Read
 
 // Mutate handles the POST verbs the FileExplorer SFC fires from its
-// toolbar: newfolder, rename, move, delete, upload.
+// toolbar: newfolder, newfile, rename, move, delete, upload.
 //
 // All bodies use the @brftech/filex-core wire format (adapter://path).
 // On success each verb re-renders the parent dir via vfIndex so the
@@ -58,16 +59,43 @@ func (h *Manager) Mutate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-role operation permissions (internal/perm). Gated here rather than
+	// inside each verb because this dispatcher is their ONLY caller, and one
+	// switch that already names every verb is a better place to see the whole
+	// mapping than six separate first lines. The per-item ACL checks inside
+	// each verb are untouched and still run.
 	switch action {
 	case "newfolder":
+		if !requirePerm(w, r, perm.OpMkdir) {
+			return
+		}
 		h.vfNewFolder(w, r)
+	case "newfile":
+		// A new empty file is a write of bytes, so it shares files.upload —
+		// one switch for "may this role put content here", not two.
+		if !requirePerm(w, r, perm.OpUpload) {
+			return
+		}
+		h.vfNewFile(w, r)
 	case "rename":
+		if !requirePerm(w, r, perm.OpRename) {
+			return
+		}
 		h.vfRename(w, r)
 	case "move":
+		if !requirePerm(w, r, perm.OpMove) {
+			return
+		}
 		h.vfMove(w, r)
 	case "delete":
+		if !requirePerm(w, r, perm.OpDelete) {
+			return
+		}
 		h.vfDelete(w, r)
 	case "upload":
+		if !requirePerm(w, r, perm.OpUpload) {
+			return
+		}
 		h.vfUpload(w, r)
 	default:
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "action not implemented: " + action})
@@ -90,7 +118,7 @@ func (h *Manager) vfNewFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Name = strings.TrimSpace(body.Name)
-	if body.Name == "" || strings.ContainsAny(body.Name, "/\\") {
+	if !validEntryName(body.Name) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad folder name"})
 		return
 	}
@@ -119,6 +147,13 @@ func (h *Manager) vfNewFolder(w http.ResponseWriter, r *http.Request) {
 	// A folder opened on top of an existing file name is the same collision
 	// from the other side (storage.ErrKindConflict).
 	if err := storage.EnsureDirTarget(r.Context(), drv, fullRel); err != nil {
+		writeJSON(w, mapDriverErr(err), map[string]string{"error": err.Error()})
+		return
+	}
+	// EnsureDirTarget passes an existing FOLDER through, and Mkdir is
+	// MkdirAll, so without this the caller gets 200 and the client adopts
+	// somebody else's folder as the one it just created.
+	if err := ensureNameFree(r.Context(), drv, fullRel, ""); err != nil {
 		writeJSON(w, mapDriverErr(err), map[string]string{"error": err.Error()})
 		return
 	}
@@ -164,6 +199,121 @@ func (h *Manager) vfNewFolder(w http.ResponseWriter, r *http.Request) {
 	h.vfIndex(w, r, current, parentRel, storageNames, false)
 }
 
+// vfNewFileBody is POST /api/files/manager?action=newfile — same shape as
+// newfolder.
+type vfNewFileBody struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+}
+
+// vfNewFile creates an EMPTY file `name` under `path`'s adapter+dir, mirrors
+// the row into the DB cache, and re-renders the parent listing. It is the
+// "new document" verb of the explorer: the bytes come later, through the
+// editor's save.
+func (h *Manager) vfNewFile(w http.ResponseWriter, r *http.Request) {
+	var body vfNewFileBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad json"})
+		return
+	}
+	body.Name = strings.TrimSpace(body.Name)
+	if !validEntryName(body.Name) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad file name"})
+		return
+	}
+
+	current, parentRel, storageNames, ok := h.resolveAdapterDir(w, r, body.Path)
+	if !ok {
+		return
+	}
+	if current.ReadOnly {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "storage is read-only"})
+		return
+	}
+
+	drv, err := h.StorageResolver(current.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "no driver: " + err.Error()})
+		return
+	}
+	wr, ok := drv.(storage.Writer)
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "driver does not support write"})
+		return
+	}
+
+	fullRel := path.Join(parentRel, body.Name)
+	// A file on top of an existing folder name is a kind conflict; a file on
+	// top of an existing file would silently truncate it to nothing — Write
+	// overwrites, so the name has to be free for this to be a "new" file.
+	if err := storage.EnsureFileTarget(r.Context(), drv, fullRel); err != nil {
+		writeJSON(w, mapDriverErr(err), map[string]string{"error": err.Error()})
+		return
+	}
+	if err := ensureNameFree(r.Context(), drv, fullRel, ""); err != nil {
+		writeJSON(w, mapDriverErr(err), map[string]string{"error": err.Error()})
+		return
+	}
+	// Zero bytes, so nothing to charge against the byte ceiling or the upload
+	// window — but this IS a new file, and the file-count ceiling exists
+	// precisely because empty files are not free. ensureNameFree above has
+	// already established that the name is new.
+	if err := h.checkQuota(r.Context(), 0, 1); err != nil {
+		if writeQuotaRefusal(r.Context(), w, h.Quota, quotastore.OwnerFrom(r.Context()), err) {
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := wr.Write(r.Context(), fullRel, bytes.NewReader(nil), 0); err != nil {
+		writeJSON(w, mapDriverErr(err), map[string]string{"error": "write: " + err.Error()})
+		return
+	}
+
+	// Mime from the extension: there are no bytes to sniff.
+	mime := stdmime.TypeByExtension(path.Ext(body.Name))
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+	parentID, err := h.lookupDirID(r.Context(), current.ID, parentRel)
+	if err != nil {
+		slog.Warn("manager: newfile parent lookup",
+			slog.String("path", parentRel),
+			slog.String("err", err.Error()))
+	} else {
+		clean := normalizeDBPath(fullRel)
+		hash := pathkey.Hash(current.ID, clean)
+		if existing, _ := h.Store.GetNodeByPath(r.Context(), current.ID, hash); existing == nil {
+			n := &model.Node{
+				StorageID:  current.ID,
+				ParentID:   parentID,
+				Name:       body.Name,
+				Path:       clean,
+				PathHash:   hash,
+				StorageKey: clean,
+				Type:       model.NodeTypeFile,
+				Size:       0,
+				Mime:       mime,
+				SyncState:  model.SyncStateSynced,
+			}
+			if created, err := h.Store.CreateNode(r.Context(), n); err != nil {
+				slog.Warn("manager: newfile db create",
+					slog.String("path", clean),
+					slog.String("err", err.Error()))
+			} else {
+				h.indexNode(r.Context(), created)
+				// The event without the antivirus enqueue: nothing to scan in
+				// an empty file. The save that fills it takes the scan.
+				writehook.EmitWritten(r.Context(), current.ID, created, writehook.OriginManager, writehook.Created)
+			}
+		}
+	}
+
+	// Live: a file appeared in this directory — refresh everyone viewing it.
+	emitFolderChange(current.ID, parentRel, realtime.ChangeEvent{Action: "create", Name: body.Name})
+	h.vfIndex(w, r, current, parentRel, storageNames, false)
+}
+
 // vfRenameBody is POST /api/files/manager?action=rename.
 type vfRenameBody struct {
 	Path string `json:"path"`
@@ -180,7 +330,7 @@ func (h *Manager) vfRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Name = strings.TrimSpace(body.Name)
-	if body.Name == "" || strings.ContainsAny(body.Name, "/\\") {
+	if !validEntryName(body.Name) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad new name"})
 		return
 	}
@@ -223,6 +373,14 @@ func (h *Manager) vfRename(w http.ResponseWriter, r *http.Request) {
 	if dstRel == srcRel {
 		// No-op rename — just re-render.
 		h.vfIndex(w, r, current, parentRel, storageNames, false)
+		return
+	}
+	// No driver refuses an occupied destination for us: os.Rename on Linux
+	// silently REPLACES the file already sitting there, and the object stores
+	// overwrite the key. Renaming onto a taken name has to be a 409 here or it
+	// is data loss on the main UI path.
+	if err := ensureNameFree(r.Context(), drv, dstRel, srcRel); err != nil {
+		writeJSON(w, mapDriverErr(err), map[string]string{"error": "rename: " + err.Error()})
 		return
 	}
 	if err := mv.Move(r.Context(), srcRel, dstRel); err != nil {
@@ -296,6 +454,27 @@ func (h *Manager) vfMove(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := e2e.GuardTransfer(r.Context(), lk, current.ID, rels, current.ID, destRel); err != nil {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
+	// A move keeps the basename, so it lands on whatever already holds that
+	// name in the destination — and no driver refuses an occupied destination
+	// for us: os.Rename SILENTLY REPLACES it, the object stores overwrite the
+	// key. The same defect vfRename had. Checked up front over the whole batch
+	// for the same reason as the guard above: a mid-loop refusal would leave
+	// the first half moved and the second half not.
+	for _, it := range body.Items {
+		_, srcRel := splitAdapterPath(it.Path)
+		if srcRel == "" || pathHasDotDot(srcRel) {
+			continue // the move loop below answers 400 for these
+		}
+		dstRel := path.Join(destRel, path.Base(srcRel))
+		if dstRel == srcRel {
+			continue // moving into its own directory is a no-op, not a collision
+		}
+		if err := ensureNameFree(r.Context(), drv, dstRel, srcRel); err != nil {
+			writeJSON(w, mapDriverErr(err), map[string]string{"error": "move: " + err.Error()})
 			return
 		}
 	}
@@ -595,29 +774,16 @@ func (h *Manager) vfUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no files in upload"})
 		return
 	}
+	// Same field and semantics as the staged protocol's begin/commit.
+	ifExists, ifExistsOK := parseIfExists(r.FormValue("if_exists"))
+	if !ifExistsOK {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad if_exists: want replace or fail"})
+		return
+	}
 
-	// The ceiling applies here too. Large uploads reach the staged path, which
-	// checks at `begin`; this is the small-file path, and without a check a
-	// user could sail past their quota a few megabytes at a time. Checked once
-	// for the whole batch — refusing halfway through would leave some files
-	// written and some not.
 	var batch int64
 	for _, fh := range files {
 		batch += fh.Size
-	}
-	if err := h.checkQuota(r.Context(), batch); err != nil {
-		if errors.Is(err, quota.ErrQuotaExceeded) {
-			slog.Info("upload refused: quota",
-				slog.Int64("user", quotastore.OwnerFrom(r.Context())),
-				slog.Int64("size", batch))
-			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{
-				"error": "quota exceeded",
-				"code":  "QUOTA_EXCEEDED",
-			})
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
 	}
 
 	drv, err := h.StorageResolver(current.ID)
@@ -628,6 +794,82 @@ func (h *Manager) vfUpload(w http.ResponseWriter, r *http.Request) {
 	wr, ok := drv.(storage.Writer)
 	if !ok {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "driver does not support write"})
+		return
+	}
+
+	// Conflict and lock checks for the WHOLE batch before the first byte is
+	// written, for the same reason quota is: a refusal halfway through would
+	// leave some files written and some not.
+	//
+	// newNames counts the parts that will claim a NEW file slot. An overwrite
+	// costs bytes but no slot, so a user at their file-count limit can still
+	// re-upload a file they already own.
+	//
+	// ⚠ Answering "does this name exist" costs a driver stat per part, and on
+	// an object store that is a network round trip. It is therefore only paid
+	// for when it is going to be read: when if_exists=fail needs the answer
+	// anyway, or when the file ceiling is actually in force. With no ceiling
+	// newNames stays 0 and CheckCanWrite ignores it.
+	countNew := false
+	if h.Quota != nil {
+		if lim, lerr := h.Quota.Limits(r.Context(), quotastore.OwnerFrom(r.Context())); lerr == nil && lim.Files > 0 {
+			countNew = true
+		}
+	}
+	var newNames int64
+	// Two parts of ONE batch can carry the same filename — a browser folder
+	// upload with a duplicate, or a client retrying a part into the same
+	// request. They land on one path and cost one slot, so the name is counted
+	// once; without this the batch was charged 2 for 1 and a user one file
+	// below their ceiling was refused a two-part upload that fits.
+	counted := make(map[string]bool, len(files))
+	for _, fh := range files {
+		name, nameOK := sanitizeUploadName(fh.Filename)
+		if !nameOK {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad upload filename"})
+			return
+		}
+		fullRel := path.Join(destRel, name)
+		exists := false
+		if ifExists == ifExistsFail || countNew {
+			var terr error
+			if exists, terr = targetHasFile(r.Context(), h.Store, drv, current.ID, fullRel, nil); terr != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "target check: " + terr.Error()})
+				return
+			}
+			if !exists && countNew && !counted[fullRel] {
+				newNames++
+			}
+			counted[fullRel] = true
+		}
+		if ifExists == ifExistsFail && exists {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "a file with this name already exists: " + name,
+				"code":  "EXISTS",
+			})
+			return
+		}
+		holder, err := activeUploadOnTarget(r.Context(), h.Store, current.ID, fullRel, "")
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "lock check: " + err.Error()})
+			return
+		}
+		if holder != nil {
+			writeUploadInProgress(w, current.ID, fullRel, holder)
+			return
+		}
+	}
+
+	// The ceilings apply here too. Large uploads reach the staged path, which
+	// checks at `begin`; this is the small-file path, and without a check a
+	// user could sail past their quota a few megabytes at a time. Checked once
+	// for the WHOLE batch — refusing halfway through would leave some files
+	// written and some not.
+	if err := h.checkQuota(r.Context(), batch, newNames); err != nil {
+		if writeQuotaRefusal(r.Context(), w, h.Quota, quotastore.OwnerFrom(r.Context()), err) {
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 
@@ -651,7 +893,7 @@ func (h *Manager) vfUpload(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Sniff the first 512 bytes for mime detection, then rewind. ZIP-based
-		// office formats get refined via storage.RefineOfficeMime so
+		// office formats get refined via storage.RefineMime so
 		// pptx/docx/odt don't end up tagged "application/zip" — see
 		// internal/storage/mime.go for the OnlyOffice mismatch story.
 		//
@@ -663,7 +905,7 @@ func (h *Manager) vfUpload(w http.ResponseWriter, r *http.Request) {
 		n, _ := io.ReadFull(src, sniff[:])
 		mime := ""
 		if n > 0 {
-			mime = storage.RefineOfficeMime(http.DetectContentType(sniff[:n]), name)
+			mime = storage.RefineMime(http.DetectContentType(sniff[:n]), name)
 		}
 		if _, err := src.Seek(0, io.SeekStart); err != nil {
 			_ = src.Close()
@@ -717,6 +959,10 @@ func (h *Manager) vfUpload(w http.ResponseWriter, r *http.Request) {
 		// silently under-report every small one.
 		throughput.Observe(current.ID, throughput.Write, fh.Size, time.Since(started))
 		_ = src.Close()
+		// One ledger row per file that actually landed — the batch was checked
+		// as a whole, but a batch that failed on its third part has only spent
+		// the allowance of the two that succeeded.
+		h.recordUpload(r.Context(), fh.Size)
 
 		if parentLookupErr != nil {
 			/* bag:b3 event — DB mirror unavailable; the bytes ARE on
@@ -952,7 +1198,16 @@ func (h *Manager) applyDBMove(ctx context.Context, storageID int64, srcRel, dstR
 		return
 	}
 
-	parentID, err := h.lookupDirID(ctx, storageID, path.Dir(strings.TrimPrefix(dstClean, "/")))
+	// ⚠ path.Dir of the SLASHED path. Stripping the leading slash first turned
+	// "/Alpha" into "Alpha", whose Dir is "." — a directory that is in no index,
+	// so every move INTO A STORAGE ROOT fell into the soft-delete below: the
+	// bytes arrived at the root and the row was flagged deleted, which took the
+	// folder out of every listing and put a phantom row in the trash that
+	// Restore could not undo (its bytes were never in `.filex-trash`). Measured
+	// 2026-09-07 on a queued move; the synchronous `?q=move` shares this helper
+	// and was breaking in exactly the same way. "/Alpha" has Dir "/", which
+	// lookupDirID reads as the root — the same reading ensureDirChain relies on.
+	parentID, err := h.lookupDirID(ctx, storageID, path.Dir(dstClean))
 	if err != nil {
 		// Soft-delete the stale row so a future index lists the new
 		// path under whichever parent the sync finds.
@@ -974,6 +1229,51 @@ func (h *Manager) applyDBMove(ctx context.Context, storageID int64, srcRel, dstR
 	if fresh, _ := h.Store.GetNode(ctx, existing.ID); fresh != nil {
 		h.indexNode(ctx, fresh)
 	}
+}
+
+// ensureNameFree reports os.ErrExist — a 409 through mapDriverErr — when the
+// target name is already taken, whatever kind of entry holds it.
+//
+// Stat is the check, because Stat is the one call in the base Driver interface:
+// local, s3, sftp, smb, webdav and ftp all answer it, and none of them refuses
+// an occupied destination on its own.
+//
+// It fails open exactly like the kind guards in internal/storage: any error
+// that is not a clean ErrNotFound leaves the verdict unreachable, and a backend
+// too unwell to answer Stat must not start refusing renames. The write it
+// guards is about to fail anyway.
+//
+// src is the path about to be renamed or moved ("" when there is none, as for
+// newfolder). It exists because a case-only change — "a.txt" → "A.txt" — lands
+// on a destination that a case-INSENSITIVE backend (SMB, WebDAV) resolves back
+// to the source itself: Stat(dst) succeeds and the guard would answer a 409
+// against the very file the caller is renaming. What settles it is identity,
+// not string case: when dst and src differ only in case, Stat BOTH and compare
+// the two Objects on Kind+Size+Mtime+Etag. Equal means one entry answering
+// under two spellings, so the write is allowed; different means a case-
+// sensitive backend really does hold another file at that name, and the 409
+// stands. The second Stat runs only inside the EqualFold branch, so the
+// ordinary path still costs exactly one Stat.
+func ensureNameFree(ctx context.Context, d storage.Driver, dst, src string) error {
+	if d == nil || dst == "" {
+		return nil
+	}
+	dstObj, err := d.Stat(ctx, dst)
+	if err != nil {
+		if !errors.Is(err, storage.ErrNotFound) {
+			slog.Debug("manager: name guard stat inconclusive, allowing write",
+				slog.String("path", dst), slog.String("err", err.Error()))
+		}
+		return nil
+	}
+	if src != "" && strings.EqualFold(dst, src) {
+		if srcObj, srcErr := d.Stat(ctx, src); srcErr == nil &&
+			dstObj.Kind == srcObj.Kind && dstObj.Size == srcObj.Size &&
+			dstObj.Mtime.Equal(srcObj.Mtime) && dstObj.Etag == srcObj.Etag {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %q", os.ErrExist, dst)
 }
 
 // mapDriverErr normalizes driver errors into HTTP statuses for the
@@ -1020,6 +1320,22 @@ func mapDriverErr(err error) int {
 // would escape the destination directory once path.Join'ed. ".." is refused
 // explicitly: path.Base("..") is ".." and joining it walks OUT of the target
 // folder — the earlier inline copies of this check did not cover it.
+// validEntryName says whether `name` names an ENTRY in a directory, which is
+// what newfolder, newfile and rename are given.
+//
+// "." and ".." address a directory rather than something in one, and path.Join
+// folds them away: `mkdir ".."` resolved to the PARENT folder, which of course
+// already exists, so the caller was told the name was taken — a sentence about
+// the wrong thing entirely. sanitizeUploadName has refused both on the upload
+// path all along; these three verbs checked only for empty and separators.
+func validEntryName(name string) bool {
+	switch name {
+	case "", ".", "..":
+		return false
+	}
+	return !strings.ContainsAny(name, "/\\")
+}
+
 func sanitizeUploadName(raw string) (string, bool) {
 	name := path.Base(raw)
 	switch name {
@@ -1059,10 +1375,33 @@ func (h *Manager) IngestFile(ctx context.Context, st *model.Storage, destRel, fi
 		return nil, storage.ErrUnsupported
 	}
 	fullRel := path.Join(destRel, name)
-	// The ceiling, before a byte is written. For the public drop link the
+	// The ceilings, before a byte is written. For the public drop link the
 	// account measured is the LINK CREATOR (quotastore.OwnerFrom), because
 	// theirs is the disk being filled — the uploader has no account at all.
-	if err := h.checkQuota(ctx, size); err != nil {
+	//
+	// addFiles is 0 when the name is already a file: an overwrite adds bytes,
+	// not a slot. The existence check is paid for only when the file ceiling is
+	// in force (see vfUpload for the same rule and the same reason).
+	addFiles := int64(1)
+	if h.Quota != nil {
+		if lim, lerr := h.Quota.Limits(ctx, quotastore.OwnerFrom(ctx)); lerr == nil && lim.Files > 0 {
+			// ⚠ The error is PROPAGATED, not swallowed. `terr == nil && exists`
+			// left addFiles at 1 on a failed target check, so a momentary
+			// driver or DB hiccup turned an overwrite the user is entitled to
+			// into a 413 FILE_LIMIT_EXCEEDED — refusing them the one write
+			// they must always be able to make. vfUpload's twin (see the
+			// batch loop above) has always answered 500 here; these two now
+			// agree.
+			exists, terr := targetHasFile(ctx, h.Store, drv, st.ID, fullRel, nil)
+			if terr != nil {
+				return nil, fmt.Errorf("target check: %w", terr)
+			}
+			if exists {
+				addFiles = 0
+			}
+		}
+	}
+	if err := h.checkQuota(ctx, size, addFiles); err != nil {
 		return nil, err
 	}
 	// A file named exactly like an existing subfolder would leave `X` and `X/…`
@@ -1077,7 +1416,11 @@ func (h *Manager) IngestFile(ctx context.Context, st *model.Storage, destRel, fi
 	// ops queue) falls through to the synchronous write below, so an instance
 	// without staging behaves exactly as it did before.
 	if h.Staged.ShouldStage(size) {
-		node, serr := h.Staged.IngestStream(ctx, st.ID, fullRel, src, size, currentUserID(ctx), "")
+		// uploadIdentity, not currentUserID: the account billed has to be the
+		// one the ceilings were just checked against a dozen lines up, and for
+		// the public drop link that is the LINK CREATOR — who has no session
+		// here at all.
+		node, serr := h.Staged.IngestStream(ctx, st.ID, fullRel, src, size, uploadIdentity(ctx), "")
 		if serr == nil {
 			return node, nil
 		}
@@ -1105,7 +1448,7 @@ func (h *Manager) IngestFile(ctx context.Context, st *model.Storage, destRel, fi
 	n, _ := io.ReadFull(src, sniff[:])
 	mime := ""
 	if n > 0 {
-		mime = storage.RefineOfficeMime(http.DetectContentType(sniff[:n]), name)
+		mime = storage.RefineMime(http.DetectContentType(sniff[:n]), name)
 	}
 	body := io.Reader(io.MultiReader(bytes.NewReader(sniff[:n]), src))
 	if s, ok := src.(io.Seeker); ok && n > 0 {
@@ -1125,6 +1468,7 @@ func (h *Manager) IngestFile(ctx context.Context, st *model.Storage, destRel, fi
 		return nil, err
 	}
 	throughput.Observe(st.ID, throughput.Write, size, time.Since(started))
+	h.recordUpload(ctx, size)
 
 	clean := normalizeDBPath(fullRel)
 	hash := pathkey.Hash(st.ID, clean)

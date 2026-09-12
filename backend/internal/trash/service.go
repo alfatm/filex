@@ -176,14 +176,19 @@ func (s *Service) Restore(ctx context.Context, nodeID int64) error {
 // Each entry's `Path` is the ORIGINAL path (`storage_key`) so the user
 // sees where the item lived, not the internal `.filex-trash/...` key.
 // `TTLDays` is the days remaining before automatic purge.
-func (s *Service) List(ctx context.Context, storageID *int64, limit, offset int) ([]TrashEntry, int, error) {
+// topLevelOnly leaves out the rows a folder dragged in with it, so the caller
+// gets one entry per thing the user actually deleted; restoring the folder
+// brings those children back with it (RestoreNodeAt mirrors the soft-delete).
+// The facets are the caller's filter chips, applied inside the query: a zero
+// value narrows nothing.
+func (s *Service) List(ctx context.Context, storageID *int64, topLevelOnly bool, f db.NodeFacets, limit, offset int) ([]TrashEntry, int, error) {
 	if s == nil || s.Store == nil {
 		return nil, 0, errors.New("trash: service not initialised")
 	}
 	if limit <= 0 || limit > 500 {
 		limit = 50
 	}
-	rows, total, err := s.Store.ListTrashed(ctx, storageID, limit, offset)
+	rows, total, err := s.Store.ListTrashed(ctx, storageID, topLevelOnly, f, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -201,6 +206,7 @@ func (s *Service) List(ctx context.Context, storageID *int64, limit, offset int)
 			ID:        n.ID,
 			StorageID: n.StorageID,
 			Name:      n.Name,
+			Type:      n.Type,
 			Size:      n.Size,
 			Mime:      n.Mime,
 		}
@@ -229,6 +235,11 @@ func (s *Service) List(ctx context.Context, storageID *int64, limit, offset int)
 	return out, total, nil
 }
 
+// ErrNotTrashed is returned when a purge names a node that is not in the trash
+// — a live row, or one already gone. Callers turn it into a 404: from outside,
+// "there is no such trash entry" is what both cases mean.
+var ErrNotTrashed = errors.New("trash: node is not in the trash")
+
 // PurgeOne immediately hard-deletes a single trashed node (admin / owner).
 func (s *Service) PurgeOne(ctx context.Context, nodeID int64) error {
 	if s == nil || s.Store == nil {
@@ -238,21 +249,39 @@ func (s *Service) PurgeOne(ctx context.Context, nodeID int64) error {
 	if err != nil {
 		return err
 	}
+	if n == nil {
+		return ErrNotTrashed
+	}
+	// ⚠ A purge takes the bytes at `n.Path`, and for a LIVE row that path is
+	// where the file still is. Nothing above this line established that the
+	// node is in the trash at all: while the only caller was an admin route
+	// nobody could reach it with a live id, but "purge one node by id" is not a
+	// primitive that may quietly mean "delete anything by id" the moment a
+	// second caller appears.
+	if n.DeletedAt == nil {
+		return ErrNotTrashed
+	}
 	return s.purgeOne(ctx, n)
 }
 
 // TrashEntry is the projection returned by List — flat shape the admin
 // UI consumes directly.
 type TrashEntry struct {
-	ID          int64     `json:"id"`
-	StorageID   int64     `json:"storage_id"`
-	StorageName string    `json:"storage_name,omitempty"`
-	Path        string    `json:"path"`
-	Name        string    `json:"name"`
-	Size        int64     `json:"size"`
-	Mime        string    `json:"mime,omitempty"`
-	DeletedAt   time.Time `json:"deleted_at"`
-	TTLDays     *int      `json:"ttl_days,omitempty"`
+	ID          int64  `json:"id"`
+	StorageID   int64  `json:"storage_id"`
+	StorageName string `json:"storage_name,omitempty"`
+	Path        string `json:"path"`
+	Name        string `json:"name"`
+	// Type is the node kind, under the same json name and with the same values
+	// ("file" / "dir") every other node the API returns carries. Without it the
+	// listing was the one place a deleted FOLDER arrived indistinguishable from
+	// a file: the app has nothing to go on but the name, so it picked an icon by
+	// extension and printed a byte count where a folder shows none.
+	Type      model.NodeType `json:"type"`
+	Size      int64          `json:"size"`
+	Mime      string         `json:"mime,omitempty"`
+	DeletedAt time.Time      `json:"deleted_at"`
+	TTLDays   *int           `json:"ttl_days,omitempty"`
 }
 
 // RunDailyLoop ticks PurgeExpired every interval until ctx is cancelled.
@@ -393,7 +422,7 @@ func (s *Service) purgeDirDescendants(ctx context.Context, dir *model.Node) {
 	}
 	var descendants []*model.Node
 	for offset := 0; ; {
-		batch, _, err := s.Store.ListTrashed(ctx, &dir.StorageID, 500, offset)
+		batch, _, err := s.Store.ListTrashed(ctx, &dir.StorageID, false, db.NodeFacets{}, 500, offset)
 		if err != nil || len(batch) == 0 {
 			break
 		}

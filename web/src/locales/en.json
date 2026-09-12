@@ -84,6 +84,7 @@
   },
   "nav": {
     "dashboard": "Dashboard",
+    "app": "App",
     "files": "Files",
     "storages": "Storages",
     "users": "Users",
@@ -91,7 +92,6 @@
     "external": "External services",
     "authProviders": "Auth providers",
     "apiMcp": "API / MCP",
-    "grants": "Permissions",
     "audit": "Audit log",
     "sync": "Sync runs",
     "shares": "Shares",
@@ -116,7 +116,12 @@
     "branding": "Branding",
     "updates": "Updates",
     "connections": "Connections",
-    "plugins": "Plugins"
+    "plugins": "Plugins",
+    "assistant": "AI assistant",
+    "access": "Access",
+    "quotas": "Quotas",
+    "roles": "Roles",
+    "groups": "Groups"
   },
   "login": {
     "title": "Sign in",
@@ -236,7 +241,14 @@
     "deletedOk": "Storage deleted",
     "createdOk": "Storage created",
     "updatedOk": "Storage updated",
-    "syncStarted": "Sync started"
+    "syncStarted": "Sync started",
+    "resetThumbs": "Reset thumbnails",
+    "resetThumbsAll": "Reset all thumbnails",
+    "resetThumbsConfirm": "Drop the cached thumbnails of \"{name}\"? They are rebuilt in the background straight away. Video, PDF and office previews need ffmpeg / ghostscript / libreoffice on the server — without them those files get a placeholder card instead.",
+    "resetThumbsConfirmAll": "Drop the cached thumbnails of every storage? They are rebuilt in the background straight away, which on a large installation is a long pass over every file.",
+    "resetThumbsOk": "{count} thumbnails cleared; rebuilding in the background.",
+    "resetThumbsOkNoRegen": "{count} thumbnails cleared. This server cannot rebuild them by itself — run `filex thumb backfill`.",
+    "resetThumbsNone": "There were no cached thumbnails to clear."
   },
   "users": {
     "title": "Users",
@@ -361,6 +373,55 @@
     "envManaged": "Set by the environment",
     "envManagedHint": "Pinned by an environment variable. A change here applies immediately but is reset from the environment the next time filex restarts."
   },
+  "assistant": {
+    "title": "AI assistant",
+    "subtitle": "The model this installation talks to, and the conversation history it keeps.",
+    "savedOk": "Assistant settings saved.",
+    "removeKey": "Remove the stored key",
+    "removeKeyConfirm": "Remove the stored API key? The assistant stops answering until a new one is saved.",
+    "keyRemoved": "The stored key was removed.",
+    "supertenantOnly": "The model provider serves the whole instance and is managed by the platform operator.",
+    "testOk": "{model} answered: {reply}",
+    "state": {
+      "ready": "Answering",
+      "off": "Off",
+      "incomplete": "Not usable yet",
+      "unknown": "Unknown"
+    },
+    "provider": {
+      "title": "Model provider"
+    },
+    "fields": {
+      "enabled": "Enable the assistant",
+      "enabledHint": "Off by default. Nothing is sent to a model provider until this is on.",
+      "provider": "Protocol",
+      "providerHint": "The wire protocol, not the vendor: openai also covers vLLM, Ollama, LiteLLM and any compatible gateway.",
+      "baseUrl": "Base URL",
+      "baseUrlHint": "Leave empty for the provider's own endpoint. Must start with http:// or https://.",
+      "model": "Model",
+      "modelHint": "Spelled the way your provider spells it. There is no default: it decides both the bill and the quality.",
+      "turnsPerMinute": "Turns per minute, per account",
+      "turnsPerMinuteHint": "The loop-breaker, not a cost control. A person cannot type past it; an agent talking in circles reaches it at once.",
+      "apiKey": "API key",
+      "apiKeyHint": "Stored encrypted with FILEX_SECRET_KEY and never shown again.",
+      "apiKeyStored": "A key is stored. Leave this empty to keep it, or type a new one to replace it."
+    },
+    "sessions": {
+      "title": "Conversations",
+      "subtitle": "How much history each account holds. You can clear a conversation; you cannot read one — there is no endpoint that returns its messages.",
+      "none": "No conversations yet.",
+      "unnamed": "Not named yet",
+      "delete": "Delete this conversation",
+      "deleteConfirm": "Delete this conversation belonging to {email}? It cannot be recovered.",
+      "deleted": "The conversation was deleted.",
+      "fields": {
+        "owner": "Account",
+        "name": "Name",
+        "messages": "Messages",
+        "lastActive": "Last active"
+      }
+    }
+  },
   "authProviders": {
     "title": "Auth providers",
     "subtitle": "Configure how users sign in",
@@ -402,17 +463,44 @@
     "testFail": "Provider check failed"
   },
   "grants": {
-    "title": "Permissions",
-    "subtitle": "Every per-file/folder grant — who has what, where. Revoke any.",
-    "search": "Search user, path, storage…",
+    "title": "Access",
+    "subtitle": "Which storages enforce grants, and every grant that exists — for an account or for a group.",
+    "search": "Search principal, path, storage…",
     "user": "User",
     "storage": "Storage",
     "path": "Path",
     "level": "Level",
     "revoke": "Revoke",
-    "revokeConfirm": "Revoke {email}'s access to {path}?",
+    "revokeConfirm": "Revoke {principal}’s access to {path}?",
     "revokedOk": "Grant revoked",
-    "empty": "No grants yet."
+    "empty": "No grants yet.",
+    "principal": "Principal",
+    "principalAll": "All principals",
+    "principalUsers": "Users only",
+    "principalGroups": "Groups only",
+    "storagesTitle": "Storages",
+    "storagesHint": "A grant only applies to a storage with RBAC on. With RBAC off the storage is open to every authenticated account.",
+    "rbac": "RBAC",
+    "rbacSavedOk": "RBAC updated for {name}",
+    "noStorages": "No storages yet.",
+    "newTitle": "New grant",
+    "pathHint": "Relative to the storage root. Leave empty for the root itself.",
+    "isDir": "Folder",
+    "isDirHint": "On for a folder and everything under it, off for a single file.",
+    "principalKind": "Grant to",
+    "pickUser": "Account",
+    "pickGroup": "Group",
+    "searchUsers": "Search accounts…",
+    "searchGroups": "Search groups…",
+    "create": "Grant access",
+    "createdOk": "Grant created",
+    "levelChangedOk": "Level changed",
+    "group": "Group",
+    "levels": {
+      "viewer": "Viewer",
+      "editor": "Editor",
+      "owner": "Owner"
+    }
   },
   "apiMcp": {
     "title": "API / MCP",
@@ -514,8 +602,14 @@
     "deleteConfirm": "Permanently delete this share?",
     "revokedOk": "Share revoked",
     "deletedOk": "Share deleted",
-    "noResults": "No active shares",
-    "linkCopied": "Share link copied to clipboard"
+    "noResults": "No shares found",
+    "linkCopied": "Share link copied to clipboard",
+    "revoked": "revoked",
+    "expired": "expired",
+    "scope": {
+      "active": "Active only",
+      "all": "All links"
+    }
   },
   "search": {
     "title": "Search index",
@@ -598,6 +692,8 @@
     "loading": "Loading…",
     "noStorage": "No storages configured yet.",
     "noAccess": "Nothing has been shared with you yet. Ask whoever runs this server for access.",
+    "loadFailed": "Could not load your storages. Check your connection and try again.",
+    "retry": "Try again",
     "addStorage": "Add storage",
     "gotoAdmin": "Admin panel",
     "root": "Root",
@@ -914,6 +1010,7 @@
       "file_infected": "Virus found — the scan flagged a file and quarantined it into the trash",
       "file_deleted": "File deleted permanently",
       "file_trashed": "File moved to the trash",
+      "file_restored": "File restored from the trash",
       "file_moved": "File moved or renamed",
       "share_created": "Share link created",
       "drop_received": "File received through a public request link",
@@ -1190,6 +1287,147 @@
     "signature": {
       "label": "Signature",
       "required": "This instance only accepts signed plugins: paste the detached signature over the binary's SHA-256, hex or base64, made with a key the operator trusts. Without it the install is refused."
+    }
+  },
+  "quotas": {
+    "title": "Quotas",
+    "subtitle": "One default for every account, and the exceptions you make by hand.",
+    "supertenantOnly": "Quotas are one setting for the whole instance and belong to the platform operator.",
+    "defaults": {
+      "title": "Defaults for every account",
+      "subtitle": "What an account gets when it carries no override of its own. 0 means unlimited.",
+      "storage": "Storage limit (GB)",
+      "files": "File limit (count)",
+      "upload": "Upload limit per window (GB)",
+      "window": "Upload window (hours)",
+      "windowHint": "Between 1 and 720 hours.",
+      "zeroUnlimited": "0 = unlimited",
+      "errInvalid": "Enter zero or more, and a window between 1 and 720 hours.",
+      "savedOk": "Defaults saved"
+    },
+    "accounts": {
+      "title": "Accounts",
+      "search": "Search email or name…",
+      "empty": "No accounts match.",
+      "account": "Account",
+      "storage": "Storage",
+      "files": "Files",
+      "upload": "Upload in window",
+      "default": "default",
+      "override": "override",
+      "recompute": "Recompute",
+      "recomputeOk": "Usage recomputed for {email}",
+      "savedOk": "Quota updated for {email}"
+    },
+    "editor": {
+      "title": "Quota for {email}",
+      "storage": "Storage limit",
+      "files": "File limit",
+      "upload": "Upload limit per window",
+      "inherit": "Inherit default ({value})",
+      "unlimited": "Unlimited",
+      "custom": "Custom",
+      "customGb": "Gigabytes",
+      "customCount": "Number of files",
+      "errCustom": "A custom limit has to be greater than zero."
+    }
+  },
+  "roles": {
+    "title": "Roles",
+    "subtitle": "What each role may do with files. Administrators always have everything.",
+    "empty": "The server returned no roles.",
+    "operation": "Operation",
+    "adminHint": "always everything",
+    "unsaved": "Unsaved",
+    "savedOk": "{name} saved",
+    "groups": {
+      "write": "Write",
+      "organise": "Organise",
+      "share": "Sharing",
+      "read": "Read"
+    },
+    "ops": {
+      "files": {
+        "upload": {
+          "label": "Upload files",
+          "hint": "Add new files to a folder."
+        },
+        "mkdir": {
+          "label": "Create folders",
+          "hint": "Make a new folder."
+        },
+        "rename": {
+          "label": "Rename",
+          "hint": "Change the name of a file or folder."
+        },
+        "move": {
+          "label": "Move",
+          "hint": "Move a file or folder somewhere else."
+        },
+        "copy": {
+          "label": "Copy",
+          "hint": "Duplicate a file or folder."
+        },
+        "delete": {
+          "label": "Delete",
+          "hint": "Send a file or folder to the trash."
+        },
+        "purge": {
+          "label": "Delete permanently",
+          "hint": "Remove an item from the trash for good."
+        },
+        "restore": {
+          "label": "Restore",
+          "hint": "Bring an item back from the trash."
+        },
+        "download": {
+          "label": "Download",
+          "hint": "Read and download file contents."
+        },
+        "share": {
+          "label": "Share links",
+          "hint": "Create and revoke public links."
+        },
+        "grant": {
+          "label": "Grant access",
+          "hint": "Give another account access to a path."
+        },
+        "tags": {
+          "label": "Tags",
+          "hint": "Add and remove tags."
+        },
+        "star": {
+          "label": "Stars",
+          "hint": "Mark items as favourites."
+        }
+      }
+    }
+  },
+  "groups": {
+    "title": "Groups",
+    "subtitle": "Tenant-wide user groups. A group holds RBAC grants, exactly like an account does.",
+    "empty": "No groups yet.",
+    "search": "Search groups…",
+    "addNew": "New group",
+    "newTitle": "New group",
+    "editTitle": "Edit group",
+    "createdOk": "Group created",
+    "updatedOk": "Group saved",
+    "deletedOk": "Group deleted",
+    "deleteConfirm": "Delete the group “{name}”?",
+    "deleteHint": "Members keep their accounts; every grant issued to this group is removed with it.",
+    "members": "Members",
+    "membersTitle": "Members",
+    "noMembers": "This group has no members yet.",
+    "addMember": "Add member",
+    "searchUsers": "Search accounts…",
+    "noCandidates": "No accounts match.",
+    "memberAddedOk": "Member added",
+    "memberRemovedOk": "Member removed",
+    "removeMemberConfirm": "Remove {email} from this group?",
+    "fields": {
+      "name": "Name",
+      "description": "Description"
     }
   }
 }

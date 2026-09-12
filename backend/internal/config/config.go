@@ -507,9 +507,10 @@ type HeaderProxyConfig struct {
 
 // ExtServices — plug-and-play.
 type ExtServices struct {
-	OnlyOffice OnlyOfficeConfig `yaml:"onlyoffice"`
-	Drawio     DrawioConfig     `yaml:"drawio"`
-	Convert    ConvertConfig    `yaml:"convert"`
+	OnlyOffice  OnlyOfficeConfig  `yaml:"onlyoffice"`
+	Drawio      DrawioConfig      `yaml:"drawio"`
+	Convert     ConvertConfig     `yaml:"convert"`
+	LibreOffice LibreOfficeConfig `yaml:"libreoffice"`
 }
 
 // OnlyOfficeConfig — Document Server URL + JWT secret.
@@ -525,6 +526,13 @@ type DrawioConfig struct {
 
 // ConvertConfig — universal converter (p2r3/convert fork) embed URL.
 type ConvertConfig struct {
+	URL string `yaml:"url"`
+}
+
+// LibreOfficeConfig — office→PDF conversion service (Gotenberg-compatible)
+// used by the thumbnailer. Unlike Convert, which runs in the visitor's browser,
+// this one is called server-side and never reaches a browser at all.
+type LibreOfficeConfig struct {
 	URL string `yaml:"url"`
 }
 
@@ -952,6 +960,9 @@ func applyEnv(c *Config) {
 	}
 	if v := os.Getenv("FILEX_CONVERT_URL"); v != "" {
 		c.ExternalServices.Convert.URL = v
+	}
+	if v := os.Getenv("FILEX_LIBREOFFICE_URL"); v != "" {
+		c.ExternalServices.LibreOffice.URL = v
 	}
 	if v := os.Getenv("FILEX_SYNC_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {

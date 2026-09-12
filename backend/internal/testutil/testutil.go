@@ -125,6 +125,45 @@ func SeedRegularUser(t *testing.T, store db.Store, email, password string) {
 	}
 }
 
+// SeedUser creates a non-admin account with a known password and returns the
+// row itself. SeedRegularUser's twin: a permission test needs the user id to
+// hand it a grant, and needs credentials to log in with — recreating the
+// account by hand in every suite is how two fixtures end up disagreeing about
+// what an ordinary account looks like.
+func SeedUser(t *testing.T, store db.Store, email, password string) *model.User {
+	t.Helper()
+	hash, err := authlocal.HashPassword(password)
+	if err != nil {
+		t.Fatalf("testutil: hash: %v", err)
+	}
+	u, err := store.CreateUser(context.Background(), email, hash, model.RoleUser, "en", "UTC")
+	if err != nil {
+		t.Fatalf("testutil: create user: %v", err)
+	}
+	return u
+}
+
+// GrantPath gives userID `level` (model.GrantViewer / GrantEditor / GrantOwner)
+// on pathPrefix within storageID.
+//
+// pathPrefix is storage-relative and carries no leading slash — "" is the whole
+// drive. The grant only bites on a storage with RBACEnabled set: with RBAC off
+// every account is already editor everywhere, so a fixture that forgets it is
+// testing nothing.
+func GrantPath(t *testing.T, store db.Store, storageID, userID int64, pathPrefix, level string) *model.FileGrant {
+	t.Helper()
+	if !model.ValidGrantLevel(level) {
+		t.Fatalf("testutil: grant: unknown level %q", level)
+	}
+	g, err := store.CreateFileGrant(context.Background(), &model.FileGrant{
+		StorageID: storageID, UserID: userID, PathPrefix: pathPrefix, Level: level,
+	})
+	if err != nil {
+		t.Fatalf("testutil: create grant: %v", err)
+	}
+	return g
+}
+
 // NewTestServer wires a fully working HTTP server backed by an in-memory
 // SQLite DB plus a tmp-dir local storage. The returned httptest.Server is
 // stopped via t.Cleanup; callers receive a cookie jar pre-installed on the

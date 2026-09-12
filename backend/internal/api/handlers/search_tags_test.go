@@ -166,3 +166,14 @@ func TestSearchEndpoint_TagFilterSurvivesTagChange(t *testing.T) {
 	// …and the tag it no longer carries stops matching, same instant.
 	assert.Empty(t, namesOf(doSearch(t, base, client, "tag:invoice", "name")))
 }
+
+// A hit says which storage it is in, by NAME. Without it a multi-storage client
+// holds a path it cannot address — `<name>://<path>` is how every read and
+// write in the manager API names a node — and the result row is dead on click.
+func TestSearchEndpoint_HitsCarryStorageName(t *testing.T) {
+	base, client, _, _ := seedTaggedSearch(t)
+	got := doSearch(t, base, client, "main.go", "")
+	require.Len(t, got, 1)
+	assert.Equal(t, "main", got[0].Storage)
+	assert.Equal(t, "/main.go", got[0].Path)
+}

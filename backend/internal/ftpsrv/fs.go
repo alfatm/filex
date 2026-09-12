@@ -32,21 +32,10 @@ import (
 // actually reach are implemented; the rest return ErrUnsupported rather than a
 // plausible-looking approximation of a filesystem filex does not have.
 
-// hiddenNames are the filex-internal buckets no protocol exposes.
-var hiddenNames = map[string]bool{
-	".filex-trash": true,
-	".versions":    true,
-	".thumbs":      true,
-}
-
-func hiddenPath(rel string) bool {
-	for _, seg := range strings.Split(rel, "/") {
-		if hiddenNames[seg] {
-			return true
-		}
-	}
-	return false
-}
+// hiddenPath reports whether rel names one of filex's own buckets, or lives
+// anywhere beneath one — per path COMPONENT, through the shared
+// model.IsReservedPath rather than a private copy of the list.
+func hiddenPath(rel string) bool { return model.IsReservedPath(rel) }
 
 type fs struct {
 	srv       *Server

@@ -65,7 +65,7 @@ func newOpsFixture(t *testing.T) *opsFixture {
 		return drv, nil
 	}
 
-	svc := ops.New(sqlDB, resolver)
+	svc := ops.New(sqlDB, "sqlite3", resolver)
 	require.NoError(t, svc.Migrate(ctx))
 	// The real wiring (routes.go) injects the manager handler as DBSync.
 	svc.SetSync(handlers.NewManager(store, resolver))

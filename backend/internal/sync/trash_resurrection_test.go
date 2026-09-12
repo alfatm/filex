@@ -278,7 +278,7 @@ func deleteLikeTheManager(t *testing.T, store db.Store, st *model.Storage, drv s
 
 func trashCount(t *testing.T, store db.Store, storageID int64) int {
 	t.Helper()
-	_, total, err := store.ListTrashed(context.Background(), &storageID, 500, 0)
+	_, total, err := store.ListTrashed(context.Background(), &storageID, false, db.NodeFacets{}, 500, 0)
 	require.NoError(t, err)
 	return total
 }

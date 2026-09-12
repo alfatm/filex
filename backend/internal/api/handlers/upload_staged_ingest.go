@@ -32,6 +32,7 @@ import (
 
 	"github.com/brf-tech/filex/backend/internal/model"
 	"github.com/brf-tech/filex/backend/internal/ops"
+	"github.com/brf-tech/filex/backend/internal/quotastore"
 	"github.com/brf-tech/filex/backend/internal/realtime"
 	"github.com/brf-tech/filex/backend/internal/storage"
 	"github.com/brf-tech/filex/backend/internal/writehook"
@@ -65,6 +66,25 @@ func (h *StagedUpload) StagedReady() bool {
 // ShouldStage is the single decision every whole-body surface asks.
 func (h *StagedUpload) ShouldStage(size int64) bool {
 	return h.StagedReady() && size > h.StagedThreshold()
+}
+
+// uploadIdentity is the account an upload is BILLED to: the explicit owner on
+// the context if there is one, otherwise the authenticated caller, otherwise
+// nobody.
+//
+// ⚠ It is the SAME identity the ceilings are checked against
+// (Manager.checkQuota → quotastore.OwnerFrom), and that is the whole point of
+// its existence. The staged and synchronous branches of IngestFile used two
+// different ones: the small branch recorded against OwnerFrom and the large
+// branch handed currentUserID to IngestStream — which is 0 for an anonymous
+// drop link, where drop.go sets only the owner. So a 4 MB submission filled the
+// link creator's upload window and a 400 MB one filled nobody's, while both
+// were checked against it.
+func uploadIdentity(ctx context.Context) int64 {
+	if owner := quotastore.OwnerFrom(ctx); owner > 0 {
+		return owner
+	}
+	return currentUserID(ctx)
 }
 
 // IngestStream stages src (exactly size bytes) for storageKey on storageID,
@@ -197,6 +217,24 @@ func (h *StagedUpload) IngestStream(
 	}
 	if err := h.Store.AttachStagedUploadTarget(bg, id, node.ID, op.ID); err != nil {
 		slog.Warn("staged ingest: attach op", slog.String("id", id), slog.String("err", err.Error()))
+	}
+	// The upload-window allowance is spent here, the same moment Commit spends
+	// it: the bytes are safe in staging and the transfer is queued.
+	//
+	// ⚠ userID is whatever the caller BILLS, which for an anonymous surface
+	// (the public drop link, a ticketed upload) is the link's creator and not
+	// the uploader — see uploadIdentity. It was currentUserID at every call
+	// site, i.e. 0 on exactly those surfaces, so a drop-link submission big
+	// enough to be staged was CHECKED against the creator's window and then
+	// charged to nobody, while a small one was charged. Only a write with no
+	// account behind it at all reaches here with 0.
+	//
+	// Keyed by the staged-upload id for the same reason Commit's call is.
+	if h.Quota != nil && userID > 0 {
+		if lerr := h.Quota.RecordStagedUpload(bg, userID, size, id); lerr != nil {
+			slog.Warn("quota: record upload",
+				slog.String("id", id), slog.Int64("user", userID), slog.String("err", lerr.Error()))
+		}
 	}
 	emitFolderChange(storageID, storageRelDir(node.Path), realtime.ChangeEvent{Action: "upload"})
 

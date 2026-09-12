@@ -1,23 +1,48 @@
 # filex — self-hosted file manager stack.
 #
-# Profiles let you mix-and-match optional services. Defaults to the slim
-# filex image only (~43 MB, no thumbnail toolchain), with SQLite + local
-# storage. Bring up extras as needed:
+# Defaults to the slim filex image (no thumbnail toolchain), with SQLite +
+# local storage. Profiles bring up optional services:
 #
-#   docker compose up                                            # filex slim only
-#   docker compose --profile full up                             # filex + thumbnail tools
-#   docker compose --profile onlyoffice up                       # filex + OnlyOffice editor
-#   docker compose --profile postgres --profile minio up         # full self-hosted stack
-#   docker compose --profile full --profile onlyoffice --profile postgres up
+#   docker compose up                                     # filex only
+#   docker compose --profile onlyoffice up                # + OnlyOffice editor
+#   docker compose --profile libreoffice up             # + office thumbnails
+#   docker compose --profile postgres --profile minio up  # + Postgres and S3
+#
+# Thumbnails are not a profile — one service cannot be two images. The programs
+# the thumbnailer shells out to live in the `full` image, so set BOTH in `.env`:
+#   FILEX_IMAGE=ghcr.io/brf-tech/filex:full   (or just FILEX_IMAGE_BASE)
+#   FILEX_THUMBS_ENABLED=true
+# Office documents are the one kind that does NOT come with `full`: their
+# converter is the `libreoffice` profile below, reached over HTTP.
+#
+# Building from source instead of pulling:
+#
+#   docker compose up --build                    # server + admin SPA + app
+#   BUILD_APP=0 docker compose up --build        # skip the end-user app
 #
 # Copy `.env.example` -> `.env` and edit before going to prod.
 
 services:
   # ---------------------------------------------------------------------
-  # filex (slim) — default
+  # filex — set FILEX_IMAGE to the `full` tag if you want thumbnails.
   # ---------------------------------------------------------------------
   filex:
-    image: ${FILEX_IMAGE:-ghcr.io/brf-tech/filex:slim}
+    image: ${FILEX_IMAGE:-${FILEX_IMAGE_BASE:-ghcr.io/brf-tech}/filex:slim}
+    # `docker compose up` pulls the image above. `up --build` builds it from
+    # this tree instead — the admin SPA, the end-user app and the Go binary,
+    # all embedded. FILEX_RUNTIME_BASE picks slim (the default, plain alpine)
+    # or full (the published toolchain image, see docker/Dockerfile.tools);
+    # keep it in step with the tag in FILEX_IMAGE. BUILD_APP=0 drops the
+    # end-user app from the build.
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      args:
+        BUILD_APP: ${BUILD_APP:-1}
+        RUNTIME_BASE: ${FILEX_RUNTIME_BASE:-alpine:3.20}
+    # Without this, some Compose versions build on a plain `up` when the image
+    # is not already local — a ten-minute surprise for someone who wanted a pull.
+    pull_policy: missing
     container_name: filex
     restart: unless-stopped
     ports:
@@ -50,62 +75,42 @@ services:
       FILEX_DB_DRIVER: ${FILEX_DB_DRIVER:-sqlite}
       FILEX_DB_DSN: ${FILEX_DB_DSN:-/data/filex.db}
 
+      # --- First boot ---
+      # Set both to seed an admin and skip the setup wizard; leave them unset
+      # and filex generates a password, prints it once and writes it to
+      # /data/.first-run.txt (0600).
+      FILEX_ADMIN_EMAIL: ${FILEX_ADMIN_EMAIL:-}
+      FILEX_ADMIN_PASSWORD: ${FILEX_ADMIN_PASSWORD:-}
+
+      # Encrypts the secrets filex has to read back (internal/secretbox). The
+      # assistant refuses to store a provider key without one, so no model can
+      # be configured until this is set. Changing it later makes the secrets
+      # already stored unreadable — they are re-entered, not migrated.
+      FILEX_SECRET_KEY: ${FILEX_SECRET_KEY:-}
+
       # --- Storage defaults ---
       FILEX_DEFAULT_STORAGE_DRIVER: ${FILEX_DEFAULT_STORAGE_DRIVER:-local}
+      # The drive NAME is what every node is addressed by (`home://Docs/a.pdf`).
+      FILEX_DEFAULT_STORAGE_NAME: ${FILEX_DEFAULT_STORAGE_NAME:-}
+      FILEX_DEFAULT_STORAGE_PATH: ${FILEX_DEFAULT_STORAGE_PATH:-}
 
       # --- Plug & play services (URL = enabled) ---
       FILEX_ONLYOFFICE_URL: ${FILEX_ONLYOFFICE_URL:-}
       FILEX_ONLYOFFICE_JWT: ${FILEX_ONLYOFFICE_JWT:-}
       FILEX_DRAWIO_URL: ${FILEX_DRAWIO_URL:-}
 
+      # Office→PDF conversion for thumbnails of doc/docx/xls/xlsx/ppt/pptx/odf.
+      # Server-side only — unlike OnlyOffice this URL is never handed to a
+      # browser, so the in-network address is the right value:
+      #   COMPOSE_PROFILES=libreoffice
+      #   FILEX_LIBREOFFICE_URL=http://libreoffice:3000
+      # Left EMPTY on purpose when the profile is off: filex would otherwise
+      # mark every office document `failed` against a service that isn't there,
+      # instead of `skipped` with a reason.
+      FILEX_LIBREOFFICE_URL: ${FILEX_LIBREOFFICE_URL:-}
+
       # --- Thumbs ---
       FILEX_THUMBS_ENABLED: ${FILEX_THUMBS_ENABLED:-false}
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5212/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    networks:
-      - filex-net
-
-  # ---------------------------------------------------------------------
-  # filex (full) — the registry's default tag; thumbnail toolchain included
-  # (~510 MB). The lean alternative is ghcr.io/brf-tech/filex:slim (~43 MB),
-  # which has the same binary and none of the programs the thumbnailer shells
-  # out to.
-  # Activate with `--profile full` and stop the `filex` service first
-  # (or change the published port via FILEX_PORT in .env).
-  # ---------------------------------------------------------------------
-  filex-full:
-    profiles: ["full"]
-    image: ${FILEX_FULL_IMAGE:-ghcr.io/brf-tech/filex:full}
-    container_name: filex-full
-    restart: unless-stopped
-    ports:
-      - "${FILEX_PORT:-5212}:5212"
-    volumes:
-      - ./data:/data
-      - ./storage-local:/var/lib/filex/local-storage
-    environment:
-      FILEX_PUBLIC_URL: ${FILEX_PUBLIC_URL:-http://localhost:5212}
-      FILEX_LISTEN: 0.0.0.0:5212
-      FILEX_AUTH_DRIVERS: ${FILEX_AUTH_DRIVERS:-local}
-
-      # --- E2E key escrow (install-time; see docs/CONFIGURATION.md) ---
-      # Unset = off. Pinned at the first boot: filex refuses to start if the
-      # key later changes or is removed, because folders created without it can
-      # never be opened by it.
-      FILEX_INSTALLATION_E2E_ESCROW_KEY: ${FILEX_INSTALLATION_E2E_ESCROW_KEY:-}
-      # Turning escrow ON later needs this as well, once. NOT retroactive:
-      # no operator action reaches a folder that already exists; its owner is
-      # offered a slot at unlock and can grant it with the folder password.
-      FILEX_INSTALLATION_E2E_ESCROW_ADOPT: ${FILEX_INSTALLATION_E2E_ESCROW_ADOPT:-}
-      FILEX_DB_DRIVER: ${FILEX_DB_DRIVER:-sqlite}
-      FILEX_DB_DSN: ${FILEX_DB_DSN:-/data/filex.db}
-      FILEX_THUMBS_ENABLED: "true"
-      FILEX_ONLYOFFICE_URL: ${FILEX_ONLYOFFICE_URL:-}
-      FILEX_ONLYOFFICE_JWT: ${FILEX_ONLYOFFICE_JWT:-}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5212/healthz"]
       interval: 30s
@@ -142,6 +147,40 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    networks:
+      - filex-net
+
+  # ---------------------------------------------------------------------
+  # Office conversion service (profile: libreoffice)
+  # Thumbnails for office documents. This is where LibreOffice lives now —
+  # it is ~730 MB with the JRE it needs, which is why it is not in the filex
+  # image. Gotenberg wraps it in an HTTP API (POST /forms/libreoffice/convert).
+  #
+  # Not published on a host port: only filex talks to it, over filex-net.
+  # There is no healthcheck here because the image carries no HTTP client to
+  # run one with; filex probes /health itself, and Settings → External
+  # services → libreoffice has a Test button.
+  # ---------------------------------------------------------------------
+  # Named for the ENGINE, not for the image in front of it: filex depends on
+  # this name (the external_services row, FILEX_LIBREOFFICE_URL, the admin
+  # page), and every candidate implementation — Gotenberg here, unoserver,
+  # Collabora — drives the same LibreOffice. LIBREOFFICE_IMAGE swaps which one
+  # without touching a line of filex configuration.
+  libreoffice:
+    profiles: ["libreoffice"]
+    image: ${LIBREOFFICE_IMAGE:-gotenberg/gotenberg:8}
+    container_name: filex-libreoffice
+    restart: unless-stopped
+    # filex only ever posts to the LibreOffice route, so the Chromium ones
+    # (render any URL this container can reach, into a PDF) are switched off
+    # rather than left listening. The timeout matches officeConvertTimeout in
+    # backend/internal/thumb/office.go: a service that gave up at its own 30s
+    # default while filex waited two minutes would look like a hang.
+    command:
+      - gotenberg
+      - --api-port=3000
+      - --api-timeout=120s
+      - --chromium-disable-routes=true
     networks:
       - filex-net
 

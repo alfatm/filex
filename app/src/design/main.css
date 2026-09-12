@@ -1,0 +1,82 @@
+@import './tokens.css';
+@import './fonts.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  body {
+    margin: 0;
+    font-family: var(--font);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--c-text);
+    background: var(--c-bg);
+  }
+  button {
+    font: inherit;
+    color: inherit;
+  }
+  /*
+   * A field the browser filled in. Chrome paints its own pale-blue over it, which on the dark theme is a slab of
+   * the wrong colour with barely readable text inside — and the sign-in form, where autofill happens most, is the
+   * first screen anybody sees.
+   *
+   * The text colour is settable; the background is not, so it is left to the animation Chrome uses to apply it and
+   * that animation is postponed indefinitely. This keeps the field TRANSPARENT rather than repainting it, which is
+   * what the layout needs: the visible surface belongs to the wrapper around the input, and it is not the same
+   * colour everywhere (`bg-bg` in the shared control, `bg-bg-muted` on the sign-in form).
+   */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--c-text);
+    caret-color: var(--c-text);
+    transition: background-color 600000s 0s;
+  }
+}
+
+@layer utilities {
+  /* Code in the assistant's answers. Whatever the machine already has — nothing is downloaded for it.
+     ⚠ Not `theme.fontFamily.mono`: that config key is replaced rather than extended, so adding one there
+     would also switch on the inert `font-mono` in Thumbnail.vue and change a screen nobody asked about. */
+  .font-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  /* `truncate` on a line-height-1 box clips descenders (the tail of "g"). `clip` with a
+     clip margin paints them without changing the box; the ellipsis still hides the overflow. */
+  .truncate-safe {
+    overflow: clip;
+    overflow-clip-margin: 0.25em;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* A 6px rail instead of the platform's ~15: inside a modal column the native bar eats the gutter and
+     draws a heavier line than anything else on the panel. Chromium ignores `scrollbar-width` wherever the
+     ::-webkit- pseudo-elements apply, so the standard properties are left to the engines that have nothing else
+     (Firefox), which cap out at "thin". */
+  .scroll-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: var(--c-border-hover);
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    .scroll-thin {
+      scrollbar-width: thin;
+      scrollbar-color: var(--c-border-hover) transparent;
+    }
+  }
+}

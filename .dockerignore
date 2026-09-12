@@ -1,24 +1,44 @@
+# The image builds from: the pnpm manifests, packages/, web/, app/, backend/.
+.git
+.github
+.gitlab
+.claude
+.vscode
+.idea
+
 node_modules
 **/node_modules
-**/dist
 **/.turbo
 **/.vite
+
+# Host build output. Excluded without exception: the image builds its own, and
+# a stale host bundle must never reach it. docker/Dockerfile.local, which does
+# consume the host dists on purpose, carries its own
+# docker/Dockerfile.local.dockerignore.
+**/dist
+
+# Workspace projects and trees the image does not build.
+desktop
+docs-site
+e2e
+demo
+docs
+deploy
+bin
+
+# Runtime data, not sources.
+data
+storage-data
+storage-local
 
 # Backend artefacts.
 filex
 filex-test
 backend/embed/admin
 backend/embed/web
+backend/embed/app
 !backend/embed/admin/.keep
 !backend/embed/web/.keep
+!backend/embed/app/.keep
 
-# Test reports.
-e2e/test-results
-e2e/playwright-report
-e2e/.playwright-mcp
-
-# Local dev.
-.idea
-.vscode
 *.log
-sweep-2026-05-09

@@ -85,29 +85,47 @@ func NormWords(s string) []string {
 	return strings.Split(n, " ")
 }
 
-// ─────────────────── tag: filter parsing ───────────────────
+// ─────────────────── tag: / -path: filter parsing ───────────────────
 
-// Parsed is a raw query string split into free text and tag filters.
+// Parsed is a raw query string split into free text and filters.
 //
 // Tags are a FILTER, not a search term: `main go tag:source` means "the
 // name match `main go`, restricted to nodes tagged source", never "also
 // look for the word source". Filters narrow, so several tags are ANDed.
 type Parsed struct {
-	// Text is the query with every tag token removed. It may be empty (a
-	// pure `tag:x` query), in which case the caller should list the
-	// tagged nodes rather than run a text search.
+	// Text is the query with every filter token removed. It may be empty
+	// (a pure `tag:x` or `-path:x` query), in which case the caller should
+	// LIST rather than search — there is nothing left to rank.
 	Text string
 	// Tags must ALL be present on a node for it to survive the filter.
 	Tags []string
 	// ExcludeTags (`-tag:x`) drop a node when ANY of them is present.
 	ExcludeTags []string
+	// ExcludePaths (`-path:x`) drop a node whose path runs through the
+	// folder any of them names, in Normalize's separator-blind form (so
+	// `-path:/demo/archive/` arrives as "demo archive"). ANY match drops
+	// the node: exclusions widen what is hidden, the way several tags
+	// narrow what is kept.
+	ExcludePaths []string
 }
 
 // HasTagFilter reports whether any tag token was parsed out.
 func (p Parsed) HasTagFilter() bool { return len(p.Tags) > 0 || len(p.ExcludeTags) > 0 }
 
-// ParseQuery splits `foo bar tag:source -tag:archive` into its text and
-// tag parts.
+// HasFilter reports whether any filter token at all was parsed out —
+// what tells a caller with empty Text that it has a LISTING to answer
+// rather than an empty query to refuse.
+func (p Parsed) HasFilter() bool { return p.HasTagFilter() || len(p.ExcludePaths) > 0 }
+
+// pathExcludeMinRunes is the shortest `-path:` value that is treated as a
+// filter. One character names no folder anybody meant; it is a slip on
+// the way to typing one, and acting on it hides most of a drive between
+// two keystrokes. Below it the token stays in the text, which is the same
+// answer a bare `tag:` gets.
+const pathExcludeMinRunes = 2
+
+// ParseQuery splits `foo bar tag:source -tag:archive -path:tmp` into its
+// text and filter parts.
 //
 // Rules, all deliberate and mirrored in docs/SEARCH.md:
 //
@@ -117,7 +135,12 @@ func (p Parsed) HasTagFilter() bool { return len(p.Tags) > 0 || len(p.ExcludeTag
 //   - `tag:"two words"` is supported, because the tags endpoint accepts
 //     any string up to 64 characters and people do use spaces;
 //   - a bare `tag:` with no value is NOT a filter. It stays in the text,
-//     so somebody looking for a file actually called `tag:` still can.
+//     so somebody looking for a file actually called `tag:` still can;
+//   - `-path:` is negative only. There is no positive `path:` operator,
+//     and the asymmetry is the point: confining a search to one subtree
+//     is already the `path_prefix` facet the advanced form sends, and a
+//     second spelling of it would be a second thing to keep in step.
+//     Excluding one has no facet, which is why it needs an operator.
 func ParseQuery(raw string) Parsed {
 	var p Parsed
 	var text []string
@@ -126,6 +149,17 @@ func ParseQuery(raw string) Parsed {
 		body := tok
 		if strings.HasPrefix(body, "-") {
 			neg, body = true, body[1:]
+		}
+		if neg && len(body) >= 5 && strings.EqualFold(body[:5], "path:") {
+			// Normalized here rather than at the query, so every surface
+			// that reads a Parsed compares paths the one way the index
+			// stores them.
+			if val := Normalize(unquote(body[5:])); len([]rune(val)) >= pathExcludeMinRunes {
+				p.ExcludePaths = append(p.ExcludePaths, val)
+				continue
+			}
+			text = append(text, tok)
+			continue
 		}
 		if len(body) < 4 || !strings.EqualFold(body[:4], "tag:") {
 			text = append(text, tok)

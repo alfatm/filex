@@ -119,7 +119,11 @@ func TestQuotaGuard_IsCountedAndLogged(t *testing.T) {
 	assert.Equal(t, "QUOTA_EXCEEDED", out["code"])
 
 	assert.Equal(t, before+1, counter(t, metrics.GuardRefusals.WithLabelValues(metrics.GuardQuota)))
-	assert.Contains(t, logs(), "staged upload refused: quota")
+	// The refusal now comes from the ONE place quota errors become HTTP
+	// answers (handlers/quota_refusal.go), so every write surface refuses in
+	// the same words — "write refused: quota" is the grep target, with the
+	// account id on the line.
+	assert.Contains(t, logs(), "write refused: quota")
 }
 
 // And the ceiling has to hold across SEPARATE uploads, not just within one:

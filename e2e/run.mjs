@@ -2,7 +2,7 @@
 /**
  * e2e/run.mjs — the one entry point for filex's end-to-end suite.
  *
- * Three profiles, deliberately kept apart:
+ * Four profiles, deliberately kept apart:
  *
  *   local        Hermetic Playwright run. Starts a filex binary on a free port
  *                against a throwaway data dir with a deterministic admin, waits
@@ -15,6 +15,18 @@
  *                contracts the UI is built on plus the admin screens that read
  *                them (web/cypress/README.md has the split). Both have to run
  *                with no secrets and against no live host.
+ *
+ *   app          The END-USER SPA (`app/`) against that same hermetic
+ *                instance. It builds the app bundle with VITE_FILEX_API set
+ *                and serves it with `vite preview`, whose `/api` proxy points
+ *                at the server this run started — so the browser sees one
+ *                origin and the session cookie needs no CORS.
+ *
+ *                It is the only coverage `app/` has: it exercises
+ *                `app/src/data/http/` and its contract with the Go handlers,
+ *                which is the code a deployment actually runs. A second suite
+ *                once drove the app against an in-memory mock with no backend
+ *                at all; it went when the mock did.
  *
  *   deployment   Read-only smoke against a URL that is already live. Never
  *                run as part of a build check.
@@ -30,6 +42,7 @@
  *   node e2e/run.mjs local --binary ../bin/filex.exe --keep
  *   node e2e/run.mjs cypress
  *   node e2e/run.mjs cypress --spec "cypress/e2e/13-navigation-ui.cy.ts"
+ *   node e2e/run.mjs app --build
  *   node e2e/run.mjs deployment --url https://fm.example.com
  *
  * Exit code is the suite's. A profile that cannot set up what it promised
@@ -59,7 +72,7 @@ const value = (name, fallback = undefined) => {
   return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : fallback;
 };
 
-const PROFILES = ['local', 'cypress', 'deployment'];
+const PROFILES = ['local', 'cypress', 'app', 'deployment'];
 if (!PROFILES.includes(profile)) {
   console.error(`usage: node e2e/run.mjs <${PROFILES.join('|')}> [options]\n`);
   console.error('  local       hermetic Playwright run against a binary this script starts');
@@ -75,6 +88,13 @@ if (!PROFILES.includes(profile)) {
   console.error('    --spec <pattern>  pass through to cypress (default: every spec)');
   console.error('    --browser <name>  cypress browser (default: electron, always present)');
   console.error('    --headed          show the browser');
+  console.error('');
+  console.error('  app         the end-user SPA against the same kind of instance');
+  console.error('    --binary / --build / --port / --keep as above');
+  console.error('    --app-port <n>    port for `vite preview` (default: a free one)');
+  console.error('    --browser <name>  chromium (default) | firefox | webkit — ONE engine per run');
+  console.error('    --scale           also measure a ten-thousand-file folder (adds ~2 min)');
+  console.error('    --grep <pattern>  pass through to playwright');
   console.error('');
   console.error('  deployment  read-only smoke against a live URL');
   console.error('    --url <url>       required, e.g. https://fm.example.com');
@@ -164,7 +184,7 @@ function localSpecs() {
  * So: resolve the binary, and if it is not there, say what to run. A loud
  * failure beats a run on an unknown version.
  */
-function playwright(specs, env) {
+function playwright(specs, env, config) {
   const bin = path.join(
     E2E_DIR,
     'node_modules',
@@ -180,6 +200,8 @@ function playwright(specs, env) {
     );
   }
   const args = ['test', ...specs, '--reporter=list'];
+  // Omitted means the default config (playwright.config.ts, the admin suite).
+  if (config) args.push('--config', config);
   const grep = value('grep');
   if (grep) args.push('--grep', grep);
 
@@ -272,6 +294,35 @@ function build() {
   fs.mkdirSync(path.dirname(out), { recursive: true });
   run('go', ['build', '-o', out, './cmd/filex'], { cwd: path.join(REPO, 'backend') });
   return out;
+}
+
+/**
+ * The end-user SPA bundle, for the `app` profile.
+ *
+ * ⚠ Unconditional, and it is the point of the profile rather than a step on
+ * the way to it. `VITE_FILEX_API` is read at BUILD time (app/src/data/index.ts
+ * picks the mock repository without it, and app/vite.config.ts refuses a
+ * production build that would ship that mock), so a bundle left over from
+ * `pnpm --filter ./app build --mode demo` would serve demo data and every
+ * assertion in tests/app-live would be about nothing. Rebuilding is the only
+ * way this run can know what it is serving.
+ *
+ * ⚠ `@brftech/filex-core` first: `app` imports it through that package's
+ * `exports`, which point at a git-ignored `dist/`. On a fresh clone nothing
+ * that imports core resolves until this has run.
+ */
+function buildApp() {
+  log('building @brftech/filex-core and the app bundle (VITE_FILEX_API=1)…');
+  run('pnpm', ['--filter', '@brftech/filex-core', 'build'], { cwd: REPO });
+  run('pnpm', ['--filter', './app', 'build'], {
+    cwd: REPO,
+    env: {
+      ...process.env,
+      VITE_FILEX_API: '1',
+      // vue-tsc over the whole component tree; the same headroom CI gives it.
+      NODE_OPTIONS: process.env.NODE_OPTIONS ?? '--max-old-space-size=4096',
+    },
+  });
 }
 
 async function startServer(binary) {
@@ -498,7 +549,9 @@ async function adminCookie(baseURL) {
 }
 
 /**
- * One local-driver storage, so the Cypress suite measures a populated instance.
+ * One local-driver storage, so a browser suite measures a populated instance.
+ * Named by the caller: the Cypress suite discovers "the first storage", the
+ * app suite addresses every node as `<drive>://path` and is told which drive.
  *
  * ⚠ A bare instance has ZERO storages, and most of these specs discover "the
  * first storage" and then quietly do nothing when there is none. That run
@@ -511,11 +564,10 @@ async function adminCookie(baseURL) {
  * carries the full story and the bug it caused). It lives under the throwaway
  * data dir so a run cannot inherit the previous one's files.
  */
-async function seedCypressStorage(baseURL, dataDir) {
-  const root = path.join(dataDir, 'storages', 'cypress-local');
+async function seedStorage(baseURL, dataDir, name) {
+  const root = path.join(dataDir, 'storages', name);
   fs.mkdirSync(root, { recursive: true });
   const cookie = await adminCookie(baseURL);
-  const name = 'cypress-local';
   const res = await fetch(`${baseURL}/api/admin/storages`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', cookie },
@@ -634,7 +686,7 @@ async function main() {
   fs.mkdirSync(storageRootDir, { recursive: true });
 
   if (profile === 'cypress') {
-    const storageName = await seedCypressStorage(baseURL, dataDir);
+    const storageName = await seedStorage(baseURL, dataDir, 'cypress-local');
     log('running the Cypress suite');
     return cypress({
       // ⚠ CYPRESS_BASE_URL, not a --config flag: cypress.config.ts reads this
@@ -646,6 +698,31 @@ async function main() {
       CYPRESS_ADMIN_PASSWORD: ADMIN_PASSWORD,
       CYPRESS_SEEDED_STORAGE: storageName,
     });
+  }
+
+  if (profile === 'app') {
+    // The drive the specs address every node through (`<drive>://path`). Short
+    // and recognisable, because it is in every URL the suite navigates to.
+    const storageName = await seedStorage(baseURL, dataDir, 'live');
+    buildApp();
+    const appPort = Number(value('app-port')) || (await freePort());
+    log(`running the app suite against ${baseURL}, bundle served on port ${appPort}`);
+    return playwright([], {
+      // Read by app/vite.config.ts to point `vite preview`'s /api proxy at the
+      // server this run started — the browser then sees ONE origin, so the
+      // session cookie rides along and nothing needs CORS.
+      FILEX_API_PROXY: baseURL,
+      E2E_APP_PORT: String(appPort),
+      E2E_APP_STORAGE: storageName,
+      E2E_ADMIN_EMAIL: ADMIN_EMAIL,
+      E2E_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      // One engine per run: the specs are serial against one server and one drive, so a matrix would have two
+      // browsers editing the same tree. The config rejects a name it does not know.
+      E2E_APP_BROWSER: value('browser', 'chromium'),
+      // The large-folder measurement builds and indexes ten thousand files — longer than the rest of the suite
+      // together, so it is asked for rather than paid for on every run.
+      ...(flag('scale') ? { E2E_APP_SCALE: '1' } : {}),
+    }, 'playwright.app.live.config.ts');
   }
 
   const env = {

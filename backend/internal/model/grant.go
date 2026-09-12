@@ -46,4 +46,18 @@ type FileGrant struct {
 	UserEmail       string `json:"user_email,omitempty"`
 	UserDisplayName string `json:"user_display_name,omitempty"`
 	Inherited       bool   `json:"inherited,omitempty"`
+
+	// Principal says which table this row came from — PrincipalUser (the
+	// default, file_grants) or PrincipalGroup (file_group_grants, projected
+	// into this shape by acl so one Set can answer for both). On a group row
+	// UserID is 0 and GroupID/GroupName/MemberCount carry the principal.
+	Principal   string `json:"principal,omitempty"`
+	GroupID     int64  `json:"group_id,omitempty"`
+	GroupName   string `json:"group_name,omitempty"`
+	MemberCount int    `json:"member_count,omitempty"`
+}
+
+// IsGroup reports whether this row grants a group rather than one account.
+func (g *FileGrant) IsGroup() bool {
+	return g != nil && g.Principal == PrincipalGroup
 }

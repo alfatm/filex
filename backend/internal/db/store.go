@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/brf-tech/filex/backend/internal/model"
@@ -66,6 +67,15 @@ type Store interface {
 	// without one, because drivers differ on that.
 	ListLiveNodesInTrash(ctx context.Context, storageID int64, trashPrefix string) ([]*model.Node, error)
 	ListNodesByParent(ctx context.Context, storageID int64, parentID *int64) ([]*model.Node, error)
+	// ListNodesByParentFiltered is ListNodesByParent narrowed by the facets,
+	// inside the query and in the same order. The folder listing is not paged,
+	// so this is not about reach the way the capped listings' facets are; it
+	// is so that one folder and one flat listing mean the same thing by `ext`.
+	ListNodesByParentFiltered(ctx context.Context, storageID int64, parentID *int64, f NodeFacets) ([]*model.Node, error)
+	// CountNodesByParent counts the live children of a folder, unfiltered — the
+	// `total` a filtered folder listing reports so the client can tell a
+	// narrowed answer from an empty folder.
+	CountNodesByParent(ctx context.Context, storageID int64, parentID *int64) (int, error)
 	// AggNodes returns a lightweight {id, parent_id, is_dir, size} row for every
 	// live node of a storage — the input to folder-size aggregation.
 	AggNodes(ctx context.Context, storageID int64) ([]NodeAgg, error)
@@ -102,6 +112,28 @@ type Store interface {
 	// the SPA looping every node row.
 	StorageStats(ctx context.Context, storageID int64) (fileCount int64, totalBytes int64, err error)
 	SearchNodes(ctx context.Context, storageID int64, like string, limit int) ([]*model.Node, error)
+	// ListNodeIDsMatching answers "which nodes have these properties" — the
+	// facet half of a search, which the full-text index cannot express because
+	// its documents carry no size, date or owner. The ids come back so the
+	// index can be RESTRICTED to them, the same mechanism a `tag:` filter uses;
+	// `limit` is a ceiling on the set, and a truncated set is reported by the
+	// caller rather than silently narrowing the search.
+	ListNodeIDsMatching(ctx context.Context, storageID int64, f NodeFacets, limit int) ([]int64, error)
+	// ListNodesMatching is the same question answered as a LISTING: the node
+	// rows themselves, newest first, a page at a time.
+	//
+	// It exists for the request the full-text index cannot be asked — "every
+	// file except the ones under here". That has no positive text to score, so
+	// there is nothing for the index to rank and nothing for it to narrow on;
+	// what it needs is a page of a drive in a stated order, which is a listing.
+	// Reaching for ListNodeIDsMatching instead would mean materialising the
+	// whole drive as an id set (capped, so a long drive would silently lose its
+	// tail) purely to hand it back to an engine with no query to run.
+	//
+	// Newest first because that is this product's default listing order, and an
+	// answer that arrives in a different order than the folder it came from
+	// would read as a different feature.
+	ListNodesMatching(ctx context.Context, storageID int64, f NodeFacets, limit, offset int) ([]*model.Node, error)
 
 	// Users
 	CreateUser(ctx context.Context, email, passwordHash, role, locale, tz string) (*model.User, error)
@@ -129,16 +161,36 @@ type Store interface {
 	UpdateUserLocale(ctx context.Context, id int64, locale, tz string) error
 	UpdateUserRole(ctx context.Context, id int64, role string) error
 	TouchLastLogin(ctx context.Context, id int64) error
+
+	// Roles — the per-role operation allow-list in roles.permissions_json
+	// (vocabulary in internal/perm, rewritten by migration 00044). Get returns
+	// sql.ErrNoRows for a role that has no row; nothing here creates roles,
+	// because there is no dynamic role-creation surface (model.ValidRole).
+	GetRolePermissions(ctx context.Context, role string) ([]string, error)
+	SetRolePermissions(ctx context.Context, role string, ops []string) error
 	DeleteUser(ctx context.Context, id int64) error
 
 	// TOTP / 2FA
 	SetTotpPendingSecret(ctx context.Context, id int64, secret string, recoveryCodes []string) error
 	ActivateTotp(ctx context.Context, id int64) error
 	ClearTotp(ctx context.Context, id int64) error
+	// ConsumeTotpRecoveryCode removes ONE recovery code equal to `code` (both
+	// sides compared through model.NormalizeRecoveryCode) and reports whether it
+	// did. Atomic: two logins racing on the same code cannot both get true.
+	ConsumeTotpRecoveryCode(ctx context.Context, userID int64, code string) (bool, error)
 
 	// Sessions
 	CreateSession(ctx context.Context, userID int64, token string, expiresAt time.Time, ip, ua string) (*model.Session, error)
 	GetSessionByToken(ctx context.Context, token string) (*model.Session, error)
+	// UpdateUserProfileFields writes the optional full name and job title (migration 00035).
+	UpdateUserProfileFields(ctx context.Context, id int64, fullName, jobTitle string) error
+	// ListSessionsForUser returns the user's own unexpired sessions, newest first — the
+	// list behind "where am I signed in".
+	ListSessionsForUser(ctx context.Context, userID int64) ([]*model.Session, error)
+	// DeleteUserSession ends one session of that user. The user id is part of the WHERE, so
+	// the worst a caller can do with somebody else's session id is delete nothing; the bool
+	// says whether a row was actually there.
+	DeleteUserSession(ctx context.Context, userID, sessionID int64) (bool, error)
 	DeleteSession(ctx context.Context, token string) error
 	DeleteSessionsForUser(ctx context.Context, userID int64, exceptToken string) error
 	CountActiveSessions(ctx context.Context) (int64, error)
@@ -219,12 +271,38 @@ type Store interface {
 	UpdateFileGrantLevel(ctx context.Context, id int64, level string) error
 	DeleteFileGrant(ctx context.Context, id int64) error
 
+	// Groups — named sets of accounts (migration 00043). providerID scopes a
+	// listing to one tenant; nil means "every tenant" (single-tenant installs,
+	// supertenant callers, background workers).
+	CreateGroup(ctx context.Context, g *model.Group) (*model.Group, error)
+	GetGroup(ctx context.Context, id int64) (*model.Group, error)
+	UpdateGroup(ctx context.Context, id int64, name, description string) error
+	DeleteGroup(ctx context.Context, id int64) error
+	ListGroups(ctx context.Context, q string, providerID *int64, limit, offset int) ([]*model.Group, int, error)
+	SearchGroups(ctx context.Context, q string, providerID *int64, limit int) ([]*model.Group, error)
+	ListGroupMembers(ctx context.Context, groupID int64) ([]*model.User, error)
+	SetGroupMembers(ctx context.Context, groupID int64, userIDs []int64) error
+	AddGroupMember(ctx context.Context, groupID, userID int64) error
+	RemoveGroupMember(ctx context.Context, groupID, userID int64) error
+	ListGroupsOfUser(ctx context.Context, userID int64) ([]*model.Group, error)
+
+	// File grants addressed to a group (migration 00043).
+	CreateFileGroupGrant(ctx context.Context, g *model.FileGroupGrant) (*model.FileGroupGrant, error)
+	GetFileGroupGrant(ctx context.Context, id int64) (*model.FileGroupGrant, error)
+	UpdateFileGroupGrantLevel(ctx context.Context, id int64, level string) error
+	DeleteFileGroupGrant(ctx context.Context, id int64) error
+	ListFileGroupGrantsByStorageGroups(ctx context.Context, storageID int64, groupIDs []int64) ([]*model.FileGroupGrant, error)
+	ListFileGroupGrantsByPath(ctx context.Context, storageID int64, pathPrefix string) ([]*model.FileGroupGrant, error)
+	ListAllFileGroupGrants(ctx context.Context) ([]*model.FileGroupGrant, error)
+
 	// Shares
 	CreateShare(ctx context.Context, share *model.Share) (*model.Share, error)
 	GetShareByID(ctx context.Context, id int64) (*model.Share, error)
 	GetShareByToken(ctx context.Context, token string) (*model.Share, error)
 	ListSharesByNode(ctx context.Context, nodeID int64) ([]*model.Share, error)
-	ListAllShares(ctx context.Context, creatorID *int64, activeOnly bool, limit, offset int) ([]*ShareWithMeta, int64, error)
+	// ListAllShares is the admin overview. `q` matches token, node path or
+	// creator email (empty = no filter); activeOnly drops revoked/expired rows.
+	ListAllShares(ctx context.Context, creatorID *int64, q string, activeOnly bool, limit, offset int) ([]*ShareWithMeta, int64, error)
 	RevokeShare(ctx context.Context, id int64) error
 	IncrementShareDownload(ctx context.Context, id int64) error
 	// ReserveShareDownload claims ONE download against the link's cap and
@@ -265,10 +343,29 @@ type Store interface {
 	// ListIdleStagedUploads returns rows whose last activity is older than
 	// `before` — the staging sweeper's input.
 	ListIdleStagedUploads(ctx context.Context, before time.Time, limit int) ([]*model.StagedUpload, error)
+	// ActiveStagedUploadForTarget is the active-upload lock: another session
+	// (id != excludeID) on the same (storage_id, storage_key) whose bytes are
+	// moving — `committing` at any age, or `staging` touched at or after
+	// `since`. nil, nil when there is none.
+	ActiveStagedUploadForTarget(ctx context.Context, storageID int64, storageKey string, since time.Time, excludeID string) (*model.StagedUpload, error)
+	// ClaimStagedUploadCommit moves one session from staging/failed to
+	// committing, but only while no OTHER session holds the same target — in a
+	// single statement, so two commits racing on one file cannot both win.
+	// Reports whether the claim was taken.
+	ClaimStagedUploadCommit(ctx context.Context, id string, since time.Time) (bool, error)
 	// SumOpenStagedUploadBytes is the quota RESERVATION: the declared size of
-	// every not-yet-committed upload the user owns. Derived rather than stored,
-	// so it can never drift from the rows it describes and a row leaving the
-	// open set releases its reservation by construction.
+	// every upload the user is still STAGING. Derived rather than stored, so it
+	// can never drift from the rows it describes and a row leaving `staging`
+	// releases its reservation by construction.
+	//
+	// ⚠ `staging` ONLY — `committing` and `failed` are deliberately excluded,
+	// and that exclusion is not an oversight. A row leaves `staging` at commit,
+	// and commit is also the moment the node is published (so users.usage_bytes
+	// already holds these bytes) and the moment the upload ledger row is
+	// written (so the rate window already holds them too). Counting a
+	// `committing` row here as well charged the same bytes twice against both
+	// ceilings for as long as the background transfer was queued: a committed
+	// 60 MB upload plus a 30 MB begin read as 150 MB against a 100 MB window.
 	SumOpenStagedUploadBytes(ctx context.Context, userID int64) (int64, error)
 
 	// SetNodeTransferState sets nodes.transfer_state: "staged" while the bytes
@@ -294,6 +391,79 @@ type Store interface {
 	InsertAuditEntry(ctx context.Context, e *model.AuditEntry) error
 	ListAuditRecent(ctx context.Context, limit int) ([]*model.AuditEntry, error)
 	ListAuditFiltered(ctx context.Context, userID *int64, action string, from, to *time.Time, limit, offset int) ([]*AuditEntryWithUser, int64, error)
+
+	// Assistant sessions and messages.
+	//
+	// The split is the privacy rule made structural: session rows are metadata
+	// an administrator may list, message rows are the conversation and only the
+	// owner ever reads them. There is deliberately no store method that returns
+	// another user's messages — not a filtered one, none.
+	CreateAssistantSession(ctx context.Context, s *model.AssistantSession) (*model.AssistantSession, error)
+	// ListAssistantSessions returns one user's sessions, most recently active
+	// first — which is also the order eviction reads from the other end.
+	ListAssistantSessions(ctx context.Context, userID int64, limit int) ([]*model.AssistantSession, error)
+	GetAssistantSession(ctx context.Context, id int64) (*model.AssistantSession, error)
+	// SetAssistantSessionTitle records a title; manual marks it as chosen by a
+	// person, which stops the generator from replacing it later.
+	SetAssistantSessionTitle(ctx context.Context, id int64, title string, manual bool) error
+	// DeleteAssistantSession removes a conversation and everything scoped to
+	// it — messages, read grants, plans — atomically. The grants are the
+	// person's consent to open named files and do not outlive the conversation
+	// they were given in.
+	DeleteAssistantSession(ctx context.Context, id int64) error
+	// EvictAssistantSessions drops everything past `keep` for this user, oldest
+	// by LAST ACTIVITY, and answers with how many it removed. Ordering by
+	// creation would evict the conversation somebody returns to every week.
+	EvictAssistantSessions(ctx context.Context, userID int64, keep int) (int, error)
+	// AppendAssistantMessage stores one turn and moves the session's activity
+	// stamp and message count with it — one call, so a stored message can never
+	// leave the session looking untouched.
+	AppendAssistantMessage(ctx context.Context, m *model.AssistantMessage) (*model.AssistantMessage, error)
+	ListAssistantMessages(ctx context.Context, sessionID int64) ([]*model.AssistantMessage, error)
+	// GrantAssistantRead records the person's permission to read ONE file's
+	// contents inside ONE conversation. Repeating a grant is not an error —
+	// the same file approved twice is one permission.
+	//
+	// ⚠ There is no revoke and no wildcard on purpose. Consent ends with the
+	// conversation (the rows cascade with it), and a form that could express
+	// "everything" is the one the owner ruled out.
+	GrantAssistantRead(ctx context.Context, sessionID int64, path string) error
+	// AssistantReadGranted answers the read tool's only question: may this
+	// conversation open this exact path.
+	AssistantReadGranted(ctx context.Context, sessionID int64, path string) (bool, error)
+	// ListAssistantReadGrants is what the panel redraws its approvals from
+	// when a stored conversation is reopened.
+	ListAssistantReadGrants(ctx context.Context, sessionID int64) ([]string, error)
+	// CreateAssistantPlan stores proposed work. It is created pending and is
+	// the only thing the executor will act on — the model's tool call wrote
+	// this row and then stopped being involved.
+	CreateAssistantPlan(ctx context.Context, p *model.AssistantPlan) (*model.AssistantPlan, error)
+	GetAssistantPlan(ctx context.Context, id int64) (*model.AssistantPlan, error)
+	ListAssistantPlans(ctx context.Context, sessionID int64) ([]*model.AssistantPlan, error)
+	// ClaimAssistantPlan takes a pending plan for execution and reports whether
+	// this caller is the one that got it.
+	//
+	// ⚠⚠ This — not FinishAssistantPlan — is what makes a plan run at most
+	// once. Closing the row afterwards is too late: two approvals racing (a
+	// double click, a retried request, two tabs) both read `pending`, both do
+	// the work, and only then does one of them lose the update — by which time
+	// a create_share plan has minted two public links and shown one of them to
+	// nobody. So the claim happens BEFORE the first item runs.
+	//
+	// The claim is `decided_at`, not a new status: the row stays `pending`
+	// while it runs, so FinishAssistantPlan closes it exactly as before and no
+	// status value the interface does not know ever reaches it. A plan whose
+	// execution died half-way is therefore pending with a decided_at, which is
+	// refused rather than run again — the safe way round, since what it did
+	// before it died is not known.
+	ClaimAssistantPlan(ctx context.Context, id int64) (bool, error)
+	// FinishAssistantPlan records the outcome and closes the plan. It moves the
+	// row out of `pending` ONLY while it is still pending, and reports whether
+	// it did.
+	FinishAssistantPlan(ctx context.Context, id int64, status, resultJSON string) (bool, error)
+	// CountAssistantSessions is the admin overview's figure: how many
+	// conversations an account holds, never what is in them.
+	CountAssistantSessions(ctx context.Context, userID int64) (int, error)
 
 	// Settings
 	GetSetting(ctx context.Context, key string) (string, error)
@@ -327,6 +497,14 @@ type Store interface {
 	// half, and it exists so a purge does not have to wait for the FK cascade
 	// to be the only thing that ever removed it.
 	DeleteThumbnail(ctx context.Context, nodeID int64) error
+	// PurgeThumbnails drops every thumbnails row in scope — one storage when
+	// storageID > 0, the whole installation when 0 — and returns the node ids
+	// whose rows were removed so the caller can delete their cached JPEGs.
+	//
+	// The catalogue half only, like DeleteThumbnail: nothing here touches the
+	// cache directory. See thumb.Pipeline.Reset for the operation an admin
+	// actually triggers.
+	PurgeThumbnails(ctx context.Context, storageID int64) ([]int64, error)
 	// ExistingNodeIDs reports which of the given ids still have a `nodes` row —
 	// TRASHED ROWS INCLUDED, because a trashed file is restorable and must keep
 	// its thumbnail. It is the safety interlock of the thumbnail-cache sweeper:
@@ -360,15 +538,83 @@ type Store interface {
 	// user cannot start a session; nothing they own is touched.
 	SetUserEnabled(ctx context.Context, userID int64, enabled bool) error
 	RecomputeUserUsage(ctx context.Context, userID int64) (int64, error)
+	// GetUserLimits reads the tri-state override columns (migration 00042):
+	// 0 = inherit the instance default, -1 = unlimited, N = this user's limit.
+	GetUserLimits(ctx context.Context, userID int64) (quotaBytes, quotaFiles, quotaUploadBytes int64, err error)
+	// SetUserLimits writes whichever of the three overrides is non-nil, so a
+	// PATCH that names one column does not silently reset the other two.
+	SetUserLimits(ctx context.Context, userID int64, quotaBytes, quotaFiles, quotaUploadBytes *int64) error
+	// GetUserFileUsage returns usage_files.
+	GetUserFileUsage(ctx context.Context, userID int64) (int64, error)
+	// IncrementUserFileUsage adjusts usage_files (delta may be negative);
+	// the result is clamped at 0.
+	IncrementUserFileUsage(ctx context.Context, userID int64, delta int64) error
+	// RecomputeUserFileUsage rebuilds usage_files from the node rows, the way
+	// RecomputeUserUsage rebuilds usage_bytes — trashed rows included.
+	RecomputeUserFileUsage(ctx context.Context, userID int64) (int64, error)
+	// SearchUsers is the admin quota table's listing: a substring match on
+	// email or display name, paged. q == "" lists everyone.
+	//
+	// providerID confines the listing to one tenant, exactly as ListGroups'
+	// does; nil means every tenant (single-tenant installs, supertenant
+	// callers). It is a parameter rather than a tenantstore wrapper because
+	// tenantstore confines storage listings only — a tenant-scoped caller that
+	// forgets to pass its provider would enumerate every tenant's accounts.
+	SearchUsers(ctx context.Context, q string, providerID *int64, limit, offset int) ([]*model.User, int64, error)
+
+	// Upload rate ledger (migration 00042). One row per COMPLETED upload;
+	// rows older than the window are swept.
+	//
+	// stagedUploadID is an IDEMPOTENCY key, "" for the surfaces that have
+	// none. A staged commit whose transfer failed is retried on purpose, and
+	// the retry reaches this call again: passing the staged-upload id makes
+	// the second insert a no-op instead of a second charge for one stored
+	// object. The column carries a unique index, so this holds even if two
+	// callers race.
+	InsertUploadLedger(ctx context.Context, userID int64, bytes int64, stagedUploadID string) error
+	// SumUploadLedger returns the bytes uploaded since `since` and the
+	// creation time of the OLDEST row still inside that window — which is
+	// what a Retry-After is derived from. A zero time means no rows.
+	SumUploadLedger(ctx context.Context, userID int64, since time.Time) (int64, time.Time, error)
+	SweepUploadLedger(ctx context.Context, before time.Time) (int64, error)
 
 	// Node owner
 	SetNodeOwner(ctx context.Context, nodeID int64, ownerID *int64) error
 	GetNodeOwner(ctx context.Context, nodeID int64) (*int64, error)
+	// NodeOwners answers for a whole listing at once, already joined to the
+	// account's name. GetNodeOwner per row would be one query per file, and it
+	// would still leave the caller holding a number nobody can read.
+	//
+	// ⚠ Name means DISPLAY NAME, and is empty for an account that has set none.
+	// The e-mail is never a fallback for it: this row is drawn for everybody who
+	// may see the listing.
+	NodeOwners(ctx context.Context, nodeIDs []int64) ([]NodeOwner, error)
+
+	// Listing enrichment — one query for a whole page, keyed by node id.
+	//
+	// ChildCounts counts the LIVE children of each parent, minus the internal
+	// buckets a listing hides (.filex-trash, .versions, .thumbs, the E2E
+	// marker), so the number matches what the same listing would show. Parents
+	// with no children are absent rather than carried as a zero.
+	ChildCounts(ctx context.Context, parentIDs []int64) (map[int64]int64, error)
+	// SharedNodeIDs answers which of these nodes currently have a public link
+	// somebody could still open — the same liveness test model.Share.IsExpired
+	// applies to one share, asked of many nodes at once.
+	SharedNodeIDs(ctx context.Context, nodeIDs []int64) ([]int64, error)
+	// StorageUsage sums the bytes each of these drives holds, as the index knows
+	// them: every file row, trashed ones included, because a file in the trash is
+	// still on the driver. Directory rows are excluded — they carry an aggregate
+	// of their subtree and would count everything twice.
+	StorageUsage(ctx context.Context, storageIDs []int64) (map[int64]int64, error)
 
 	// Trash retention
 	ListTrashedExpired(ctx context.Context, before time.Time, limit int) ([]*model.Node, error)
 	// ListTrashed returns soft-deleted nodes (paginated). storage filter optional.
-	ListTrashed(ctx context.Context, storageID *int64, limit, offset int) ([]*model.Node, int, error)
+	// topLevelOnly drops the rows that were dragged into the trash with a folder
+	// (their parent is trashed too), leaving one row per thing the user deleted.
+	// The facets narrow inside the query rather than after it, so a filtered
+	// page is a page of the filtered set and `total` counts that set.
+	ListTrashed(ctx context.Context, storageID *int64, topLevelOnly bool, f NodeFacets, limit, offset int) ([]*model.Node, int, error)
 	RestoreNode(ctx context.Context, id int64) error
 	// RestoreNodeAt restores a soft-deleted node, simultaneously reverting its
 	// path/path_hash to the supplied original-path values and re-attaching it
@@ -384,7 +630,19 @@ type Store interface {
 	DeleteUserNodeMeta(ctx context.Context, userID, nodeID int64, key string) error
 	GetUserNodeMeta(ctx context.Context, userID, nodeID int64, key string) (string, error)
 	ListUserNodeMetaForNode(ctx context.Context, userID, nodeID int64, prefix string) (map[string]string, error)
-	ListNodesByUserMeta(ctx context.Context, userID int64, key string, limit int) ([]*model.Node, error)
+	// The facets narrow inside the query: applying them to the page instead
+	// would hand back the matches within the newest N rows and call that the
+	// answer.
+	ListNodesByUserMeta(ctx context.Context, userID int64, key string, f NodeFacets, limit int) ([]*model.Node, error)
+	// UserNodeMetaTimes reports WHEN each of these nodes was flagged with
+	// (key) for this user — the same user_node_meta.updated_at that
+	// ListNodesByUserMeta orders by. No node row can carry it: "recently
+	// opened" is a fact about the reader, not about the file. Without it a
+	// client has only the file's own mtime to show and to sort by, which
+	// undoes the server's order and dates "Today" by when the file was
+	// written rather than read. Nodes with no such row are absent from the
+	// answer rather than carried as a zero time.
+	UserNodeMetaTimes(ctx context.Context, userID int64, key string, nodeIDs []int64) (map[int64]time.Time, error)
 
 	// Tags use the shared node_meta table (key='tag:<name>', value='1').
 	SetNodeTags(ctx context.Context, nodeID int64, tags []string) error
@@ -400,6 +658,9 @@ type Store interface {
 	InsertNotification(ctx context.Context, n *model.NotificationInput) (int64, error)
 	GetNotification(ctx context.Context, id int64) (*model.Notification, error)
 	ListNotifications(ctx context.Context, userID *int64, onlyUnread bool, limit, offset int) ([]*model.Notification, int64, error)
+	// ListNodeEvents is the same table read the other way round: everything
+	// recorded against ONE file, newest first — the per-node activity feed.
+	ListNodeEvents(ctx context.Context, storageID int64, path string, limit int) ([]*model.Notification, error)
 	MarkNotificationRead(ctx context.Context, id int64, userID *int64) error
 	MarkAllNotificationsRead(ctx context.Context, userID *int64) error
 	UnreadNotificationCount(ctx context.Context, userID *int64) (int64, error)
@@ -503,6 +764,361 @@ type ShareWithMeta struct {
 	CreatorEmail string       `json:"creator_email,omitempty"`
 	NodePath     string       `json:"node_path,omitempty"`
 	StorageName  string       `json:"storage_name,omitempty"`
+}
+
+// NodeFacets narrows a node set by the properties the advanced search filters
+// on. A zero value matches every live node of the storage.
+//
+// Exts carries EXTENSIONS, not a type group: which extensions count as
+// "documents" is the client's vocabulary, and a second copy of that taxonomy
+// here is a second copy to keep in step. The client sends the list it means.
+type NodeFacets struct {
+	// PathPrefix confines the search to one subtree, given clean and slashed
+	// ("/Docs"). Empty means the whole storage.
+	PathPrefix string
+	// Exts are lower-case and without the dot ("md", "pdf"). A node matches if
+	// its name ends in any of them; empty means any extension.
+	Exts []string
+	// NameContains keeps the nodes whose name has it as a case-insensitive
+	// substring. Empty means any name.
+	//
+	// ⚠ "Case-insensitive" is whatever the reader folds case with, and the three
+	// readers do not agree: the SQL uses the database's own LOWER (ASCII-only on
+	// SQLite, locale-aware on Postgres), Matches below uses Go's full-Unicode
+	// one, and the app sieves a small folder with the browser's. They part ways
+	// only outside ASCII — Turkish İ/ı is the case that shows up in this
+	// product, since tr ships — so a needle with such a letter can match in a
+	// cold folder and miss in a cached one. Closing it means folding the name
+	// into a stored column; until then this is the known edge.
+	NameContains string
+	// ModifiedAfter and ModifiedBefore bound the date window from below and
+	// above. Two bounds rather than one because "around this file's date" is a
+	// window, not a cutoff: the details panel filters a listing to what was
+	// written within 24 hours either side of the row it describes, and a lone
+	// "since" cannot express the upper edge.
+	ModifiedAfter  *time.Time
+	ModifiedBefore *time.Time
+	// CreatedAfter and CreatedBefore are the same window over nodes.created_at
+	// — when filex first catalogued the node, which is what every listing row
+	// carries as `created_at` and what the panel's Created row shows.
+	CreatedAfter  *time.Time
+	CreatedBefore *time.Time
+	// Tags keeps the nodes carrying EVERY tag listed (AND, not OR): the chips
+	// narrow, and two tags naming a broader set than one would be the only
+	// filter in the toolbar that widens as you add to it. Tags live in
+	// node_meta as `tag:<value>` rows, so this is the one facet no node row can
+	// answer by itself — see Matches.
+	Tags []string
+	// Mimes keeps the nodes whose recorded MIME type is one of them, compared
+	// lower-case and in full ("image/png", not "image/*"): the details panel
+	// offers the type it is showing, and a prefix match would answer a question
+	// nothing on screen asked. Empty means any type.
+	Mimes   []string
+	SizeMin *int64
+	SizeMax *int64
+	OwnerID *int64
+	// FilesOnly drops directories. Type and size are properties of files, so a
+	// filter on either is a filter for files; a date or an owner is not.
+	FilesOnly bool
+	// DirsOnly is its mirror, and exists for one caller: the destination picker,
+	// which needs to find a folder anywhere on a drive without first walking the
+	// whole drive to have something to filter. Setting both is a contradiction
+	// and the caller that builds the facets refuses it rather than resolving it.
+	DirsOnly bool
+	// SharedOnly keeps only the nodes the caller has published a link to —
+	// "shared" as SharedNodeIDs already means it for the badge on a listing
+	// row: a share row exists and still opens. It is the advanced search's
+	// "Search in → Shared files", which narrowed nothing at all before,
+	// because the server had no word for it.
+	SharedOnly bool
+}
+
+// Any reports whether the facets narrow anything at all.
+func (f NodeFacets) Any() bool {
+	return f.PathPrefix != "" || len(f.Exts) > 0 || f.NameContains != "" || f.ModifiedAfter != nil ||
+		f.ModifiedBefore != nil || f.CreatedAfter != nil || f.CreatedBefore != nil || len(f.Tags) > 0 ||
+		len(f.Mimes) > 0 || f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.FilesOnly ||
+		f.DirsOnly || f.SharedOnly
+}
+
+// Where renders the facets as SQL predicates, to be ANDed into whatever the
+// caller's own query already restricts. It lives here rather than in a driver
+// because every listing that takes these facets has to mean the same thing by
+// them: a second copy of "which column is the size" is a second copy to keep in
+// step, and the two drivers differ only in how a placeholder is spelled.
+//
+// `bind` appends a value to the caller's argument list and returns the
+// placeholder for it ("?" on sqlite, "$N" on postgres). It also owns how a
+// time.Time reaches the engine: sqlite stores its date columns as TEXT and
+// compares them as TEXT, so the driver renders the bound moment in the shape
+// its own CURRENT_TIMESTAMP writes, while postgres binds the instant itself.
+//
+// `alias` qualifies the columns ("n." for a joined query, "" for a plain one).
+// `modified` names the column the date window tests, because not every listing
+// dates its rows the same way: the trash listing means "when it was deleted",
+// every other listing means "when it was last written".
+func (f NodeFacets) Where(alias, modified string, bind func(any) string) []string {
+	var where []string
+	if f.FilesOnly {
+		where = append(where, alias+"type = "+bind(string(model.NodeTypeFile)))
+	}
+	if f.DirsOnly {
+		where = append(where, alias+"type = "+bind(string(model.NodeTypeDirectory)))
+	}
+	if f.PathPrefix != "" && f.PathPrefix != "/" {
+		// The subtree, and the folder itself.
+		where = append(where, "("+alias+"path = "+bind(f.PathPrefix)+" OR "+alias+"path LIKE "+bind(likeEscape(f.PathPrefix)+"/%")+likeEscapeClause+")")
+	}
+	if len(f.Exts) > 0 {
+		ors := make([]string, 0, len(f.Exts))
+		for _, ext := range f.Exts {
+			ors = append(ors, "LOWER("+alias+"name) LIKE "+bind("%."+likeEscape(ext))+likeEscapeClause)
+		}
+		where = append(where, "("+strings.Join(ors, " OR ")+")")
+	}
+	if f.NameContains != "" {
+		// The wildcards are part of the BOUND pattern rather than spelled around
+		// the placeholder: `||` and CONCAT are two spellings for three engines.
+		where = append(where, "LOWER("+alias+"name) LIKE "+bind("%"+likeEscape(strings.ToLower(f.NameContains))+"%")+likeEscapeClause)
+	}
+	if len(f.Mimes) > 0 {
+		ors := make([]string, 0, len(f.Mimes))
+		for _, mime := range f.Mimes {
+			ors = append(ors, "LOWER("+alias+"mime) = "+bind(mime))
+		}
+		where = append(where, "("+strings.Join(ors, " OR ")+")")
+	}
+	if f.ModifiedAfter != nil {
+		where = append(where, alias+modified+" >= "+bind(*f.ModifiedAfter))
+	}
+	if f.ModifiedBefore != nil {
+		where = append(where, alias+modified+" <= "+bind(*f.ModifiedBefore))
+	}
+	// created_at is named outright rather than through the `modified` parameter:
+	// which column dates a row differs per listing, but when it was catalogued
+	// is the same column everywhere.
+	if f.CreatedAfter != nil {
+		where = append(where, alias+"created_at >= "+bind(*f.CreatedAfter))
+	}
+	if f.CreatedBefore != nil {
+		where = append(where, alias+"created_at <= "+bind(*f.CreatedBefore))
+	}
+	for _, tag := range f.Tags {
+		// ⚠ The outer id is qualified for the same reason SharedOnly's is: the
+		// subquery's own table has no `id`, but leaving it bare here would read
+		// whatever the enclosing query calls one.
+		outer := alias
+		if outer == "" {
+			outer = "nodes."
+		}
+		where = append(where, "EXISTS (SELECT 1 FROM node_meta tm WHERE tm.node_id = "+outer+"id AND tm.key = "+bind(tagMetaPrefix+tag)+")")
+	}
+	if f.SizeMin != nil {
+		where = append(where, alias+"size >= "+bind(*f.SizeMin))
+	}
+	if f.SizeMax != nil {
+		where = append(where, alias+"size <= "+bind(*f.SizeMax))
+	}
+	if f.OwnerID != nil {
+		where = append(where, alias+"owner_id = "+bind(*f.OwnerID))
+	}
+	if f.SharedOnly {
+		// The liveness test SharedNodeIDs applies, asked as a predicate so the
+		// filter narrows inside the query instead of over the page the query
+		// has already chosen. The moment is BOUND rather than spelled
+		// (CURRENT_TIMESTAMP / NOW()): "still opens" is a statement about now,
+		// and the drivers write and compare a Go time the same way here as
+		// they do for every other expiry.
+		// ⚠ The outer id is qualified even when nothing else here is. Inside the
+		// subquery an unqualified `id` resolves to `shares` — which also has
+		// one — so the correlation would silently read `sh.node_id = sh.id` and
+		// match nothing. Every caller of these facets queries `nodes`.
+		outer := alias
+		if outer == "" {
+			outer = "nodes."
+		}
+		where = append(where, "EXISTS (SELECT 1 FROM shares sh WHERE sh.node_id = "+outer+"id"+
+			" AND (sh.expires_at IS NULL OR sh.expires_at > "+bind(time.Now().UTC())+")"+
+			" AND (sh.max_downloads IS NULL OR sh.download_count < sh.max_downloads)"+
+			" AND (sh.max_uploads IS NULL OR sh.upload_count < sh.max_uploads))")
+	}
+	return where
+}
+
+// Matches is the exact predicate Where renders, over a node row rather than
+// inside a query. It is what keeps the answer right on the paths that never
+// run the query — a folder read straight off its driver, a shared-with-me row,
+// a search hit the index returned — and it has to mean exactly what the SQL
+// means, so it lives next to it.
+//
+// The date window tests backend_mtime alone, as the SQL does: a node filex
+// could never date cannot be inside a "modified since" window. SharedOnly is
+// not tested here — it is a join, not a property of the row — so a caller that
+// sets it must have already narrowed by it.
+// NeedsNodeRow reports whether any facet asks something only a catalogued node
+// can answer — its size, its modification time, its owner, where it sits, or
+// whether a link to it is open. A caller holding a row the indexer never walked
+// (a grant on a path with no node behind it) can answer the rest from the path
+// alone, and uses this to tell "cannot be judged" from "judged and rejected".
+func (f NodeFacets) NeedsNodeRow() bool {
+	return f.ModifiedAfter != nil || f.ModifiedBefore != nil || f.CreatedAfter != nil || f.CreatedBefore != nil ||
+		len(f.Tags) > 0 || len(f.Mimes) > 0 || f.SizeMin != nil || f.SizeMax != nil || f.OwnerID != nil || f.SharedOnly ||
+		(f.PathPrefix != "" && f.PathPrefix != "/")
+}
+
+// MatchesPath applies the facets that a NAME and a kind are enough to decide:
+// files-only, dirs-only, the extension list and the name substring. It is the
+// same three rules Matches applies, against a node that does not exist, and the
+// caller is responsible for having checked NeedsNodeRow first.
+func (f NodeFacets) MatchesPath(name string, isDir bool) bool {
+	if f.FilesOnly && isDir {
+		return false
+	}
+	if f.DirsOnly && !isDir {
+		return false
+	}
+	lower := strings.ToLower(name)
+	if len(f.Exts) > 0 {
+		hit := false
+		for _, ext := range f.Exts {
+			if strings.HasSuffix(lower, "."+ext) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			return false
+		}
+	}
+	return f.NameContains == "" || strings.Contains(lower, strings.ToLower(f.NameContains))
+}
+
+func (f NodeFacets) Matches(n *model.Node) bool {
+	if n == nil {
+		return false
+	}
+	if f.FilesOnly && n.Type != model.NodeTypeFile {
+		return false
+	}
+	if f.DirsOnly && n.Type != model.NodeTypeDirectory {
+		return false
+	}
+	if f.PathPrefix != "" && f.PathPrefix != "/" && n.Path != f.PathPrefix && !strings.HasPrefix(n.Path, f.PathPrefix+"/") {
+		return false
+	}
+	if len(f.Exts) > 0 {
+		name := strings.ToLower(n.Name)
+		hit := false
+		for _, ext := range f.Exts {
+			if strings.HasSuffix(name, "."+ext) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			return false
+		}
+	}
+	if f.NameContains != "" && !strings.Contains(strings.ToLower(n.Name), strings.ToLower(f.NameContains)) {
+		return false
+	}
+	if len(f.Mimes) > 0 {
+		mime := strings.ToLower(n.Mime)
+		hit := false
+		for _, want := range f.Mimes {
+			if mime == want {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			return false
+		}
+	}
+	if f.ModifiedAfter != nil && (n.BackendMtime == nil || n.BackendMtime.Before(*f.ModifiedAfter)) {
+		return false
+	}
+	if f.ModifiedBefore != nil && (n.BackendMtime == nil || n.BackendMtime.After(*f.ModifiedBefore)) {
+		return false
+	}
+	// A node the caller built from a driver listing has no catalogue row behind
+	// it, so its CreatedAt is the zero time: unknown, and unknown is outside
+	// every window.
+	if f.CreatedAfter != nil && (n.CreatedAt.IsZero() || n.CreatedAt.Before(*f.CreatedAfter)) {
+		return false
+	}
+	if f.CreatedBefore != nil && (n.CreatedAt.IsZero() || n.CreatedAt.After(*f.CreatedBefore)) {
+		return false
+	}
+	// Tags are rows in node_meta, not a field of the node, so this predicate
+	// cannot answer for them the way the SQL does. Saying "no" is the honest
+	// reading on the paths that run it: a driver object has no catalogue row and
+	// therefore no tags at all. A caller that CAN resolve them — the shared
+	// listing, whose rows are real nodes — narrows by tag before it gets here
+	// and clears the facet, rather than being silently told none of its rows
+	// carry the tag.
+	if len(f.Tags) > 0 {
+		return false
+	}
+	if f.SizeMin != nil && n.Size < *f.SizeMin {
+		return false
+	}
+	if f.SizeMax != nil && n.Size > *f.SizeMax {
+		return false
+	}
+	if f.OwnerID != nil {
+		owner := n.OwnerID
+		if owner == nil || *owner != *f.OwnerID {
+			return false
+		}
+	}
+	return true
+}
+
+// tagMetaPrefix is how a tag is spelled as a node_meta key: one row per tag,
+// `tag:<lower-cased value>`, which is what SetNodeTags writes and what the tag
+// facet above tests for. The drivers spell the same prefix for their own tag
+// queries; it is defined here because the facet SQL is built here.
+const tagMetaPrefix = "tag:"
+
+// likeEscapeChar is the character that turns off LIKE's two wildcards in the
+// patterns built above.
+//
+// `!` rather than the usual backslash because the same SQL string is handed to
+// three engines: MySQL reads a backslash inside a string literal, so `ESCAPE
+// '\'` would have to be spelled differently there than on sqlite and postgres,
+// and one spelling that means the same thing everywhere is worth more than
+// following the convention.
+const likeEscapeChar = "!"
+
+// likeEscapeClause is appended to every LIKE built from a value that is meant
+// to be read literally. sqlite has no default escape character at all, so it
+// has to be named or the escaping below would be visible in the pattern.
+const likeEscapeClause = ` ESCAPE '` + likeEscapeChar + `'`
+
+var likeEscaper = strings.NewReplacer(
+	likeEscapeChar, likeEscapeChar+likeEscapeChar,
+	"%", likeEscapeChar+"%",
+	"_", likeEscapeChar+"_",
+)
+
+// likeEscape neutralises the wildcards in a value that is to be matched
+// literally. The values are BOUND, so this was never an injection — it was a
+// wrong answer: `_` matches any single character, so a folder named `My_Docs`
+// narrowed to `MyXDocs` as well, and an extension filter of `%` matched every
+// file on the drive.
+func likeEscape(s string) string { return likeEscaper.Replace(s) }
+
+// NodeOwner is one node's owner, named. Nodes with no owner — anything a
+// storage sync found rather than a person uploading it — are simply absent from
+// the answer rather than carried as a null.
+//
+// Name is the account's display name and is empty when it has set none — never
+// its e-mail address. See the note on NodeOwners.
+type NodeOwner struct {
+	NodeID  int64  `json:"node_id"`
+	OwnerID int64  `json:"owner_id"`
+	Name    string `json:"name"`
 }
 
 // AuditEntryWithUser is an audit row joined with the user.email column

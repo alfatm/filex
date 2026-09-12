@@ -32,21 +32,10 @@ import (
 //	/photos               that storage's root
 //	/photos/2026/img.jpg  an object
 
-// hiddenNames are filex-internal buckets that no protocol exposes.
-var hiddenNames = map[string]bool{
-	".filex-trash": true,
-	".versions":    true,
-	".thumbs":      true,
-}
-
-func hiddenPath(rel string) bool {
-	for _, seg := range strings.Split(rel, "/") {
-		if hiddenNames[seg] {
-			return true
-		}
-	}
-	return false
-}
+// hiddenPath reports whether rel names one of filex's own buckets, or lives
+// anywhere beneath one — per path COMPONENT, through the shared
+// model.IsReservedPath rather than a private copy of the list.
+func hiddenPath(rel string) bool { return model.IsReservedPath(rel) }
 
 // fs is one session's view of the tree. One per SFTP session, so the ACL sets
 // are resolved once per storage rather than once per packet.

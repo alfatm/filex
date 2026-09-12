@@ -19,7 +19,6 @@ interface ToolEntry {
 }
 
 const thumbnailTools = computed<ToolEntry[]>(() => [
-  { name: 'imagemagick', available: data.value.imagemagick },
   { name: 'ffmpeg', available: data.value.ffmpeg },
   { name: 'ghostscript', available: data.value.ghostscript },
   { name: 'libreoffice', available: data.value.libreoffice },

@@ -46,6 +46,31 @@ nicety: a bare instance has zero storages, and most Cypress specs discover "the
 first storage" and then quietly assert nothing when there is none — a green run
 that measured almost nothing.
 
+The **app** profile drives the end-user SPA (`app/`) against that same hermetic
+instance — the only suite that exercises `app/src/data/http/` and its contract
+with the Go handlers, which is the code a deployment actually runs:
+
+```bash
+node e2e/run.mjs app --build           # or: pnpm --filter filex-e2e test:app:live
+```
+
+It seeds one local drive (`live://`), builds `@brftech/filex-core` and the app
+bundle with `VITE_FILEX_API=1`, serves the BUILD with `vite preview` (whose
+`/api` proxy points at the server this run started, so the browser sees one
+origin and the cookie needs no CORS), and mints the session once in
+`auth.setup.ts` — the app has no login screen of its own. `--app-port <n>` fixes
+the preview port; `--binary`, `--build`, `--port`, `--keep` and `--grep` work as
+above. ⚠ Do not run `playwright.app.live.config.ts` by hand: it needs a server,
+a seeded drive and a bundle built against them, and only `run.mjs app` arranges
+all three.
+
+⚠ **`tests/app-live/` is the only coverage `app/` has, and it is thin.** There
+used to be a second suite, `tests/app/`, driving the app against an in-memory
+mock repository — 18 specs and 15 pixel baselines' worth of UI-contract
+coverage. It went when the mock did, together with the generated demo dataset
+underneath it. What is left is a handful of journeys that cannot pass unless a
+real server answered, which leaves the screens themselves untested end to end.
+
 The **deployment** profile is a separate, read-only smoke against something
 already live, and is deliberately not part of a build check:
 
@@ -102,9 +127,37 @@ visually. `pnpm test:debug` opens the inspector.
 | `tests/01-harness.spec.ts`  | the harness itself: no piped server log, isolated storages |
 | `tests/91-rounds-…`         | round 4-8 regressions; seeds its own fixture set locally, or point at a live one with `E2E_FIXTURE_STORAGE` |
 
+Those are the anchors, not the whole directory: `tests/` holds **24** top-level
+specs, and the rest are numbered beside the ones above — connections (`25`), S3
+(`26`, `--s3` only), multi-storage routing (`70`), navigation (`75`), trash
+(`76`), a second share shape (`77`), Monaco save-text (`78`), the per-verb async
+endpoints (`79`), the file-type MIME matrix (`80`), capability gating (`82`),
+meta routes and the markdown editor (`83`), resumable upload (`85`), the slow-
+storage prepared copy (`86`), the deployment smoke (`90`, its own profile) and
+the per-extension viewer audit (`100`).
+
 `helpers/auth.ts`  → `loginAs`, `apiLogin`, `logout`
 `helpers/seed.ts`  → `seedLocalStorage`, `dropStorageByName`
 `fixtures/`         → small files used by upload tests
+
+## End-user app suite, against a real server (`tests/app-live/`)
+
+`playwright.app.live.config.ts`, started by `node e2e/run.mjs app --build` (see
+above). `auth.setup.ts` mints the session once through the preview server's own
+origin; `files.spec.ts` walks the journeys that cannot pass unless a real server
+answered — the shell booting with none of the mock dataset on screen, New folder
+surviving a reload, a duplicate name refused with the first folder intact,
+upload landing real bytes, rename moving the file on the server (and a collision
+refused with neither file moved), trash and restore travelling through the
+server rather than the store, and Download handing back the bytes that went up.
+
+`search.spec.ts` is the second story: two folders with a file each, then the
+server's own index answering for them — a folder skipped from its own result row
+(the `-path:` exclusion the chip sends) leaving the answer and coming back with
+the chip, the drive picker narrowing by `storage_id` without losing rows that
+really are on that drive, and an exclusion with no query text answered as a
+listing. None of it can pass without a server: the index, the exclusion and the
+drive id are all the handler's work.
 
 ## Screenshots (`shots/`)
 

@@ -31,6 +31,8 @@
 //
 //	usage_bytes(u) == SUM(nodes.size) WHERE owner_id=u AND type='file'
 //	                  — trashed rows INCLUDED
+//	usage_files(u) == COUNT(*)        WHERE owner_id=u AND type='file'
+//	                  — the same rows, counted instead of summed (00042)
 //
 // Everything else follows from that identity:
 //
@@ -129,6 +131,23 @@ func (s *Store) Quota() *quota.Service { return s.q }
 // AttachMetrics installs the optional counter sink.
 func (s *Store) AttachMetrics(m Metrics) { s.metrics = m }
 
+// addFiles applies a signed delta to a user's FILE COUNT.
+//
+// Same rule as add(): accounting must never fail a write that already landed,
+// so a failure is logged and `filex admin quota recompute` (quota.Recompute,
+// which rebuilds both counters in one pass) is the repair.
+func (s *Store) addFiles(ctx context.Context, userID, delta int64) {
+	if userID <= 0 || delta == 0 {
+		return
+	}
+	if err := s.q.AddUsageFiles(ctx, userID, delta); err != nil {
+		slog.Warn("quota: file-count accounting",
+			slog.Int64("user", userID),
+			slog.Int64("delta", delta),
+			slog.String("err", err.Error()))
+	}
+}
+
 // add applies a signed delta to a user's usage and reports it.
 func (s *Store) add(ctx context.Context, userID, delta int64) {
 	if userID <= 0 || delta == 0 {
@@ -179,6 +198,10 @@ func (s *Store) CreateNode(ctx context.Context, n *model.Node) (*model.Node, err
 	}
 	if created.Type == model.NodeTypeFile {
 		s.add(ctx, owner, created.Size)
+		// One more file against the COUNT ceiling. Directories are excluded
+		// for the same reason they are excluded from the byte total: the
+		// limit is about files, and a folder tree is not what fills it.
+		s.addFiles(ctx, owner, 1)
 	}
 	return created, nil
 }
@@ -226,6 +249,13 @@ func (s *Store) UpdateNodeMeta(ctx context.Context, id int64, size int64, mime, 
 		return nil
 	}
 	s.add(ctx, writer, size)
+	// The FILE itself moved between accounts, so the count moves with the
+	// bytes. An unowned node (prevOwner == nil) was never counted by anybody,
+	// so there is nothing to take away — it simply starts counting here.
+	if prevOwner != nil {
+		s.addFiles(ctx, *prevOwner, -1)
+	}
+	s.addFiles(ctx, writer, 1)
 	return nil
 }
 
@@ -247,6 +277,7 @@ func (s *Store) HardDeleteNode(ctx context.Context, id int64) error {
 	}
 	if owner != nil && before != nil {
 		s.add(ctx, *owner, -before.Size)
+		s.addFiles(ctx, *owner, -1)
 	}
 	return nil
 }

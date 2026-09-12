@@ -255,7 +255,8 @@ func (d *Driver) HandleCallback(w http.ResponseWriter, r *http.Request) (*model.
 	if err != nil {
 		return nil, "", err
 	}
-	if _, err := d.store.CreateSession(ctx, user.ID, sessionToken, time.Now().Add(12*time.Hour), "", ""); err != nil {
+	ip, ua := auth.ClientIP(r), r.UserAgent()
+	if _, err := d.store.CreateSession(ctx, user.ID, sessionToken, time.Now().Add(12*time.Hour), ip, ua); err != nil {
 		return nil, "", err
 	}
 	return user, sessionToken, nil

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -172,19 +173,53 @@ func (s *service) Send(ctx context.Context, e Event) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("notify: marshal meta: %w", err)
 	}
-	id, err := s.store.InsertNotification(ctx, &model.NotificationInput{
+	in := &model.NotificationInput{
 		Event:    string(e.Event),
 		Severity: string(e.Severity),
 		Title:    e.Title,
 		Body:     e.Body,
 		MetaJSON: metaJSON,
 		UserID:   e.UserID,
-	})
+	}
+	// The node also goes into meta_json (marshalMeta); these columns are the
+	// same reference in a form that can be looked up, which is what a per-file
+	// activity feed asks for. An event about no file leaves them null.
+	if e.Node != nil && e.Node.Path != "" {
+		storageID := e.Node.StorageID
+		in.NodeStorageID, in.NodePath = &storageID, e.Node.Path
+	}
+	id, err := s.store.InsertNotification(ctx, in)
 	if err != nil {
 		return 0, err
 	}
+	// The per-user opt-in matrix (notification_settings) has been writable since migration 00007 and
+	// was read by nothing: muting an event stored a preference the delivery path never consulted. It
+	// is honoured HERE rather than by skipping the insert, because the row is also the record — the
+	// per-file activity feed reads these same rows — so a mute silences the bell and keeps the log.
+	if e.UserID != nil && s.mutedFor(ctx, *e.UserID, e.Event) {
+		_ = s.store.MarkNotificationRead(ctx, id, e.UserID)
+	}
 	s.dispatch(id, e)
 	return id, nil
+}
+
+// mutedFor reports whether this user has switched off in-app notifications altogether or muted this
+// event in particular. A user with no settings row wants everything, which is what the schema says.
+func (s *service) mutedFor(ctx context.Context, userID int64, event EventType) bool {
+	st, err := s.store.GetNotificationSettings(ctx, userID)
+	if err != nil || st == nil {
+		return false
+	}
+	if !st.InAppEnabled {
+		return true
+	}
+	var muted []string
+	if len(st.MutedEventsRaw) > 0 {
+		if err := json.Unmarshal(st.MutedEventsRaw, &muted); err != nil {
+			return false
+		}
+	}
+	return slices.Contains(muted, string(event))
 }
 
 // marshalMeta folds the structured Node/Share/Actor refs into the

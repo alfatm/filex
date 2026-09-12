@@ -2,11 +2,12 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRouter, RouterLink } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { Database, Plus, RefreshCcw, Trash2, Pencil } from 'lucide-vue-next';
+import { Database, ImageOff, Plus, RefreshCcw, Trash2, Pencil } from 'lucide-vue-next';
 
 import { useStoragesStore } from '@/stores/storages';
 import { useToastStore } from '@/stores/toast';
 import { extractError } from '@/api/client';
+import { StoragesApi } from '@/api/storages';
 import type { StorageRef } from '@/api/types';
 import { formatBytes, formatNumber, formatRelative } from '@/lib/format';
 
@@ -42,6 +43,37 @@ async function syncOne(s: StorageRef) {
     toast.error(extractError(e, t('errors.generic')));
   } finally {
     syncingId.value = null;
+  }
+}
+
+// Thumbnail reset. 'all' is the whole installation, a StorageRef is one drive;
+// null closes the dialog. Both go through it — dropping thumbnails starts a
+// background regeneration pass, which on a large drive is real work.
+const thumbTarget = ref<StorageRef | 'all' | null>(null);
+const resettingThumbs = ref(false);
+
+async function confirmResetThumbs() {
+  const target = thumbTarget.value;
+  if (!target) return;
+  resettingThumbs.value = true;
+  try {
+    const res =
+      target === 'all'
+        ? await StoragesApi.resetAllThumbs()
+        : await StoragesApi.resetThumbs(target.id);
+    if (res.cleared === 0) {
+      toast.info(t('storages.resetThumbsNone'));
+    } else if (res.regenerating) {
+      toast.success(t('storages.resetThumbsOk', { count: res.cleared }));
+    } else {
+      // The server cleared them but has no way to rebuild them itself.
+      toast.warn(t('storages.resetThumbsOkNoRegen', { count: res.cleared }));
+    }
+    thumbTarget.value = null;
+  } catch (e: unknown) {
+    toast.error(extractError(e, t('errors.generic')));
+  } finally {
+    resettingThumbs.value = false;
   }
 }
 
@@ -88,6 +120,15 @@ onMounted(load);
         <Button variant="outline" size="sm" @click="load" :loading="storages.loading">
           <RefreshCcw class="h-4 w-4" />
           {{ t('common.refresh') }}
+        </Button>
+        <Button
+          v-if="!storages.empty"
+          variant="outline"
+          size="sm"
+          @click="thumbTarget = 'all'"
+        >
+          <ImageOff class="h-4 w-4" />
+          {{ t('storages.resetThumbsAll') }}
         </Button>
         <Button @click="router.push({ name: 'storages.new' })">
           <Plus class="h-4 w-4" />
@@ -166,6 +207,10 @@ onMounted(load);
               <RefreshCcw class="h-3.5 w-3.5" />
               {{ t('common.syncNow') }}
             </Button>
+            <Button size="sm" variant="outline" @click="thumbTarget = s">
+              <ImageOff class="h-3.5 w-3.5" />
+              {{ t('storages.resetThumbs') }}
+            </Button>
             <Button
               size="sm"
               variant="ghost"
@@ -181,6 +226,27 @@ onMounted(load);
         </div>
       </div>
     </div>
+
+    <Modal
+      :model-value="thumbTarget !== null"
+      :title="thumbTarget === 'all' ? t('storages.resetThumbsAll') : t('storages.resetThumbs')"
+      size="sm"
+      @update:model-value="(v) => (v ? null : (thumbTarget = null))"
+    >
+      <p class="text-sm text-zinc-700 dark:text-zinc-300">
+        {{
+          thumbTarget === 'all'
+            ? t('storages.resetThumbsConfirmAll')
+            : t('storages.resetThumbsConfirm', { name: thumbTarget?.name })
+        }}
+      </p>
+      <template #footer>
+        <Button variant="ghost" @click="thumbTarget = null">{{ t('common.cancel') }}</Button>
+        <Button :loading="resettingThumbs" @click="confirmResetThumbs">
+          {{ t('common.confirm') }}
+        </Button>
+      </template>
+    </Modal>
 
     <Modal
       :model-value="deleteTarget !== null"
