@@ -25,8 +25,15 @@ watch(() => branding.name, (name) => (document.title = name || 'filex'), { immed
  * The sign-in screen stands alone: no sidebar, no topbar, and none of the account-shaped start-up the shell does
  * (the drives, the capability snapshot, the staged uploads) — every one of those is a request the server answers
  * 401 to when there is nobody signed in. AppShell owns that work now, so it happens exactly when the shell does.
+ *
+ * ⚠ The FIRST navigation is still pending when the app mounts, and until it resolves the route is vue-router's
+ * start location: no name, no meta, and therefore not public. Without the name check the shell mounted there and
+ * bootstrapped against a server that had not been asked who this is yet — on a cold load at a folder URL that is
+ * a 401, which leaves the drive list empty and `ready` true. Signing in remounts the shell, but `ready` is what
+ * the folder page waits on: it opened the address against an empty drive list, and the second bootstrap then
+ * cleared the failure it had raised. The address was right and the folder was blank until a reload.
  */
-const shell = computed(() => !route.meta.public);
+const shell = computed(() => route.name !== undefined && !route.meta.public);
 </script>
 
 <template>
