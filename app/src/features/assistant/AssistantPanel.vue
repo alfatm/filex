@@ -247,7 +247,10 @@ onBeforeUnmount(() => {
                 <p class="mt-1 text-10 leading-none text-text-3">{{ formatTime(message.at) }}</p>
               </div>
             </div>
-            <ResultCard v-for="hit in message.hits" :key="hit.node.id" :hit="hit" />
+            <!-- All hits of one answer read as a single result list, not as a stack of separate cards. -->
+            <div v-if="message.hits?.length" class="divide-y divide-border-soft overflow-hidden rounded-lg border border-border">
+              <ResultCard v-for="hit in message.hits" :key="hit.node.id" :hit="hit" />
+            </div>
             <ReportCard v-for="(report, at) in message.reports" :key="at" :report="report" />
 
             <!-- Spec §6: permission is asked for one file at a time, and the card says which file and why. -->
@@ -359,16 +362,16 @@ onBeforeUnmount(() => {
             :disabled="!online"
             :placeholder="t('assistant.placeholder')"
             :aria-label="t('assistant.placeholder')"
-            class="h-14 min-w-0 flex-1 resize-none rounded-lg border border-border bg-bg px-4 py-4 text-13 leading-[1.45] text-text placeholder:text-text-3 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-bg-muted"
+            class="h-10 min-w-0 flex-1 resize-none rounded-lg border border-border bg-bg px-3 py-2 text-13 leading-[1.45] text-text placeholder:text-text-3 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-bg-muted"
             @keydown.enter.exact.prevent="send(draft)"
           />
           <button
             type="submit"
             :disabled="!canSend"
             :aria-label="t('assistant.send')"
-            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-primary text-white hover:bg-primary-hover disabled:opacity-60 disabled:hover:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary text-white hover:bg-primary-hover disabled:opacity-60 disabled:hover:bg-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
           >
-            <Send :size="22" />
+            <Send :size="18" />
           </button>
         </form>
       </div>

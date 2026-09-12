@@ -519,9 +519,11 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
   in it survives only if the model wrapped it in backticks — the system prompt
   asks it to, and a bare one ends at the first space, the same way every
   Markdown renderer treats it.
-- Result card (full width, border 1px radius 12 padding 14, gap 12 between):
-  icon 40 (pdf tile red radius 8 / fig / md), name 16/500, path 14 gray,
-  "Matched content: "…"" 14 gray (wraps), `MoreVertical` 20 top-right.
+- Result list — all hits of one answer in ONE card (full width, border 1px
+  radius 10), never a stack of separate cards, rows split by a
+  `--c-border-soft` rule. Row (padding 8/12): icon 24 (pdf tile red radius 8 /
+  fig / md), name 12/500, path 11 gray, "Matched content: "…"" 11 gray (wraps),
+  `MoreVertical` 16 top-right.
   Drawn from the `hits` frame the server sends whenever the assistant ran a
   search — the same rows the model reads as JSON — and stored with the answer,
   so reopening the conversation redraws them. The snippet's matched words
@@ -542,9 +544,9 @@ and the assistant); search box shrinks. Ref 4 shows it with details closed.
 - No suggestion chips under the mode chips. The reference draws two ("Find
   contracts from July", "Search by tag: design"); they were canned prompts
   that fit no real drive, and were dropped.
-- Input row bottom: textarea h 56 radius 12 border 2px primary (focused) /
-  1px `--c-border` (idle), placeholder "Ask to find files…" 15; send button
-  56×56 radius 12 primary with `Send` 22 white; gap 10. Hint below 13 gray:
+- Input row bottom: textarea h 40 radius 12 border 2px primary (focused) /
+  1px `--c-border` (idle), placeholder "Ask to find files…" 13; send button
+  40×40 radius 12 primary with `Send` 18 white; gap 10. Hint below 13 gray:
   "Try searching by topic, filename, or ask a question…".
 - Enter sends, Shift+Enter newline; disabled when offline (dot grey, "Offline").
 
