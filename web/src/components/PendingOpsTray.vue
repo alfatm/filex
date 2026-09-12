@@ -10,8 +10,9 @@
  * stick until dismissed. The store handles all the polling logic — this
  * component is purely presentational.
  *
- * Initial mount kicks off polling; if the backend doesn't expose a list
- * endpoint the tray simply stays hidden.
+ * Initial mount opens the live channel and reads the backlog once; after that
+ * the store hears about ops as they happen and polls only if the socket is
+ * unavailable. If the backend exposes neither, the tray simply stays hidden.
  */
 import { computed, onBeforeUnmount, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -25,11 +26,11 @@ const { t } = useI18n();
 const store = usePendingOpsStore();
 
 onMounted(() => {
-  store.start();
+  store.connect();
 });
 
 onBeforeUnmount(() => {
-  store.stop();
+  store.disconnect();
 });
 
 const visibleItems = computed(() => store.items.slice().reverse());

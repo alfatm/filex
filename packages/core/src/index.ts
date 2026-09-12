@@ -261,3 +261,19 @@ export type {
   StorageWrite,
 } from './types/Connections';
 /* /connections */
+
+// ——— Realtime ———
+// The live socket (folder changes, presence, and the queue frames addressed to
+// the signed-in person). Exported because the admin SPA's pending-ops tray runs
+// OUTSIDE any explorer — it sits at the layout level, on pages that mount no
+// FileExplorer at all — and it must not have to reimplement ticket auth,
+// reconnect and the polling fallback to hear about a running copy.
+export { RealtimeClient } from './lib/realtime';
+export type {
+  RealtimeHandlers,
+  RealtimeOptions,
+  ChangeMessage,
+  PresenceMessage,
+  OpMessage,
+  WsTicket,
+} from './lib/realtime';

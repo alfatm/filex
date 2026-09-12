@@ -263,6 +263,12 @@ func (h *WS) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.Hub.Unsubscribe(client)
 
+	// Attach is about the CONNECTION, not about a room: the queue's progress is
+	// addressed to whoever submitted the op and has to reach them on whatever
+	// page they are on, including the ones that never subscribe to a folder.
+	h.Hub.Attach(client)
+	defer h.Hub.Detach(client)
+
 	go h.writePump(connCtx, cancel, conn, client)
 
 	for {

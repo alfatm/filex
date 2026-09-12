@@ -36,6 +36,27 @@ export interface ChangeMessage {
   new_name?: string;
 }
 
+/** One queue row (copy / move / delete / upload-commit) as the server sees it
+ *  right now. Same shape `GET /api/files/ops` returns, so a consumer renders
+ *  one thing whether it heard it live or polled for it. */
+export interface OpMessage {
+  type: 'op';
+  op: {
+    id: number;
+    kind: string;
+    status: string;
+    total: number;
+    done: number;
+    failed: number;
+    error?: string;
+    dest?: string;
+    sources?: string[];
+    created_at?: string;
+    started_at?: string;
+    finished_at?: string;
+  };
+}
+
 export interface PresenceMessage {
   type: 'presence';
   path: string;
@@ -50,6 +71,9 @@ export interface WsTicket {
 export interface RealtimeHandlers {
   onChange?: (msg: ChangeMessage) => void;
   onPresence?: (msg: PresenceMessage) => void;
+  /** A queue op this user submitted changed state. Addressed to the person,
+   *  not to a folder, so it arrives on every page — no subscribe needed. */
+  onOp?: (msg: OpMessage) => void;
   onStatus?: (connected: boolean) => void;
   /** Fires true when the live socket is unavailable (consumer should poll),
    *  false when a live socket is (re)established. */
@@ -151,6 +175,7 @@ export class RealtimeClient {
       const m = msg as { type?: string };
       if (m?.type === 'change') this.opts.handlers.onChange?.(msg as ChangeMessage);
       else if (m?.type === 'presence') this.opts.handlers.onPresence?.(msg as PresenceMessage);
+      else if (m?.type === 'op') this.opts.handlers.onOp?.(msg as OpMessage);
       // pong / error frames are intentionally ignored by the UI.
     };
 

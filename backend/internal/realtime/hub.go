@@ -133,6 +133,10 @@ type Hub struct {
 	mu    sync.Mutex
 	rooms map[string]*room
 
+	// users indexes every attached connection by account, for the frames that
+	// are addressed to a person rather than to a folder. See user.go.
+	users map[int64]map[*Client]struct{}
+
 	// Coalescing window bounds — see room. Fields rather than constants so the
 	// tests can shrink them and stay fast; nothing outside this package sets
 	// them.
@@ -168,6 +172,7 @@ const (
 func NewHub() *Hub {
 	return &Hub{
 		rooms:       make(map[string]*room),
+		users:       make(map[int64]map[*Client]struct{}),
 		coalesceMin: defaultCoalesceMin,
 		coalesceMax: defaultCoalesceMax,
 		now:         time.Now,

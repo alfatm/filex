@@ -7,11 +7,17 @@
  * admin layout level so users see ongoing copy/move/delete progress
  * everywhere in the SPA, not just on the Explore page.
  *
- * Polling strategy:
- *   - Every `POLL_MS` we ask `GET /api/files/ops?status=running` for a
- *     consolidated list. Failure (network/404) keeps the local set
- *     unchanged — gracefully degrades on backends without a list
- *     endpoint.
+ * How it learns about ops:
+ *   - LIVE, over the same WebSocket the explorer already uses. The queue
+ *     addresses each frame to the account that submitted the op (see
+ *     `internal/ops/live.go`), so the tray hears about a copy on every page,
+ *     including the ones that mount no explorer and join no room.
+ *   - By POLLING `GET /api/files/ops?status=running` every `POLL_MS`, but
+ *     ONLY while the socket is unavailable. This used to run unconditionally
+ *     from the moment the layout mounted until the tab was closed — 43 200
+ *     requests a day per open tab, essentially all of them answering "nothing
+ *     is running". Failure (network/404) keeps the local set unchanged, so an
+ *     older backend degrades to exactly the old behaviour.
  *   - Anything we've seen *active* before stays in the local list until
  *     it transitions to a terminal state OR the row disappears from
  *     two consecutive polls (probably purged server-side).
@@ -25,7 +31,9 @@
  */
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import { opsApi, type PendingOp } from '@/api/ops';
+import { RealtimeClient, type OpMessage } from '@brftech/filex-core';
+import { api } from '@/api/client';
+import { opsApi, normalizeOp, type PendingOp } from '@/api/ops';
 
 const POLL_MS = 2_000;
 const RETAIN_MS = 3_000;
@@ -52,7 +60,12 @@ export const usePendingOpsStore = defineStore('pending-ops', () => {
   // poll these one-by-one as a backup when the list endpoint is missing.
   const tracked = ref<Set<number>>(new Set());
 
+  /** True while the live socket is carrying op frames. */
+  const live = ref(false);
+
   let timer: ReturnType<typeof setInterval> | null = null;
+  let client: RealtimeClient | null = null;
+  let sweepTimer: ReturnType<typeof setTimeout> | null = null;
 
   const list = computed<PendingOp[]>(() => items.value.map((it) => it.op));
   const active = computed(() => list.value.filter((o) => !isTerminal(o.status)));
@@ -74,6 +87,103 @@ export const usePendingOpsStore = defineStore('pending-ops', () => {
       timer = null;
     }
     polling.value = false;
+  }
+
+  /**
+   * connect opens the live channel and brings the tray up to date once.
+   *
+   * The single poll is not a fallback — it is the BACKLOG: an op submitted
+   * before this tab existed (another tab, another device, a page reload during
+   * a long copy) has already sent its frames to sockets that are now gone, and
+   * nothing will re-send them. After that one answer the socket carries
+   * everything, and no timer runs while the queue is idle.
+   */
+  function connect(): void {
+    void poll();
+    if (client) return;
+    client = new RealtimeClient({
+      getTicket: async () => {
+        try {
+          const { data } = await api.post<{ ticket: string; ws_url: string }>('/files/ws-ticket');
+          return data?.ticket && data?.ws_url ? data : null;
+        } catch {
+          // No ticket → no socket → onFallback(true) below puts us on the poll.
+          return null;
+        }
+      },
+      handlers: {
+        onOp: (msg: OpMessage) => applyLive(msg),
+        onStatus: (connected: boolean) => {
+          live.value = connected;
+          if (!connected) return;
+          stop();
+          // Frames sent while the socket was down reached nobody, so a
+          // reconnect re-reads the backlog exactly as the first connect did.
+          void poll();
+        },
+        // Fires only once the client has given up reconnecting. THIS is the
+        // one thing that starts the interval — the tray would otherwise go
+        // blind in the middle of a copy.
+        onFallback: (active: boolean) => {
+          if (active) start();
+        },
+      },
+    });
+  }
+
+  /** Tear down the live channel and every timer. Call on unmount. */
+  function disconnect(): void {
+    client?.close();
+    client = null;
+    live.value = false;
+    stop();
+    if (sweepTimer) {
+      clearTimeout(sweepTimer);
+      sweepTimer = null;
+    }
+  }
+
+  /**
+   * applyLive folds one server frame into the tray.
+   *
+   * The frame carries the raw `ops.Op` row, which is the same shape the list
+   * endpoint returns — `normalizeOp` is therefore the one translation, shared
+   * with the poll, and a row cannot render differently depending on how it
+   * arrived.
+   */
+  function applyLive(msg: OpMessage): void {
+    if (!msg?.op) return;
+    const op = normalizeOp(msg.op as unknown as Record<string, unknown>);
+    if (!op.id) return;
+    upsert(op);
+    if (isTerminal(op.status)) {
+      tracked.value.delete(op.id);
+      scheduleSweep();
+    }
+  }
+
+  /**
+   * scheduleSweep retires finished rows after `RETAIN_MS`.
+   *
+   * The poll used to do this on its next tick, which is why removing the poll
+   * needs this: without it a completed op would sit in the tray until the user
+   * navigated away. It arms at most one timer, and only while something
+   * finished is on screen — an idle tray schedules nothing.
+   */
+  function scheduleSweep(): void {
+    if (sweepTimer) return;
+    sweepTimer = setTimeout(() => {
+      sweepTimer = null;
+      const now = Date.now();
+      items.value = items.value.filter((it) => {
+        if (it.cancelled) return now - (it.settledAt ?? now) < RETAIN_MS;
+        if (!isTerminal(it.op.status)) return true;
+        // Failed ops stick until dismissed; done ops fade out.
+        if (it.op.status === 'error') return true;
+        return now - (it.settledAt ?? now) < RETAIN_MS;
+      });
+      if (items.value.some((it) => isTerminal(it.op.status) || it.cancelled)) scheduleSweep();
+    }, RETAIN_MS);
   }
 
   function upsert(op: PendingOp): void {
@@ -153,16 +263,25 @@ export const usePendingOpsStore = defineStore('pending-ops', () => {
     }
   }
 
-  /** Mark this op for individual polling — needed when the list endpoint isn't available. */
+  /**
+   * Mark this op for individual polling — needed when the list endpoint isn't
+   * available, or when a hand-rolled flow kicked an op the tray hasn't seen.
+   *
+   * On a live socket the op's own frames are already on their way, so this
+   * only fetches the row once for an immediate render; the interval stays off.
+   */
   function track(opId: number): void {
     if (!Number.isFinite(opId) || opId <= 0) return;
     tracked.value.add(opId);
-    start();
+    if (live.value) void poll();
+    else start();
   }
 
   function dismiss(opId: number): void {
     items.value = items.value.filter((it) => it.op.id !== opId);
     tracked.value.delete(opId);
+    // Nothing left to draw: the fallback interval has no reason to run. The
+    // socket stays — it costs nothing idle and is how the next op arrives.
     if (items.value.length === 0) stop();
   }
 
@@ -200,7 +319,10 @@ export const usePendingOpsStore = defineStore('pending-ops', () => {
     hasActive,
     visible,
     polling,
+    live,
     lastError,
+    connect,
+    disconnect,
     start,
     stop,
     poll,

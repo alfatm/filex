@@ -409,6 +409,18 @@ pnpm run build:all    # builds packages, web, then Go binary
 ./bin/filex serve
 ```
 
+Live dev servers (Vite + `go run` in parallel):
+
+```bash
+cp .env.example .env    # then fill in FILEX_SECRET_KEY and friends
+pnpm dlx dotenv-cli -e .env -- pnpm dev
+```
+
+Neither pnpm nor the Go backend reads `.env` on its own, so plain `pnpm dev`
+starts with an empty `FILEX_SECRET_KEY` and the assistant refuses to store
+provider keys. The `dotenv-cli` prefix exports `.env` into the environment that
+every workspace `dev` script inherits.
+
 Subdirectories:
 - `backend/` — Go HTTP service (cmd/filex, internal/*, db/queries, db/migrations)
 - `packages/core` — `@brftech/filex-core` (Vue 3 SFC, source of truth)

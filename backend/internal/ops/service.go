@@ -93,6 +93,13 @@ type Service struct {
 	storageResolver func(int64) (storage.Driver, error)
 	dbsync          DBSync
 	uploadCommitter UploadCommitter
+	// notifier pushes live queue frames to the submitter's open tabs; nil
+	// leaves every client on the poll. See live.go.
+	notifier Notifier
+	// lastProgress rate-limits the per-item progress frames, one entry per
+	// in-flight op. Guarded by progressMu.
+	progressMu   sync.Mutex
+	lastProgress map[int64]time.Time
 
 	wakeup chan struct{}
 	stopMu sync.Mutex
@@ -276,7 +283,13 @@ func (s *Service) SubmitTo(ctx context.Context, kind string, storageID, destStor
 		id, _ = res.LastInsertId()
 	}
 	s.poke()
-	return s.Get(ctx, id)
+	op, err := s.Get(ctx, id)
+	if err == nil {
+		// The submitter's OTHER tabs have no way to know this exists — the one
+		// that posted it has the response body, they have only the socket.
+		s.emit(op)
+	}
+	return op, err
 }
 
 // opColumns is the one projection both readers use, in scanOp's order.
@@ -429,6 +442,9 @@ func (s *Service) execute(ctx context.Context, op *Op) {
 	// read their actor off the context exactly as a request handler's would. The
 	// user is long gone; their id is on the row, so put it back.
 	ctx = s.withSubmitter(ctx, op)
+	// claimNext has just flipped the row to `running`; say so before the first
+	// item, or a long single-file op looks queued for its whole duration.
+	s.emit(op)
 	if s.storageResolver == nil {
 		s.fail(ctx, op, "no storage resolver")
 		return
@@ -467,6 +483,7 @@ func (s *Service) execute(ctx context.Context, op *Op) {
 			op.Done++
 		}
 		_, _ = s.db.ExecContext(ctx, s.rebind(`UPDATE pending_ops SET done=?, failed=? WHERE id=?`), op.Done, op.Failed, op.ID)
+		s.emitProgress(op)
 	}
 
 	status := StatusOK
@@ -484,6 +501,19 @@ func (s *Service) execute(ctx context.Context, op *Op) {
 	_, _ = s.db.ExecContext(ctx,
 		s.rebind(`UPDATE pending_ops SET status=?, error=?, finished_at=CURRENT_TIMESTAMP WHERE id=?`),
 		status, errMsg, op.ID)
+	s.finished(op, status, errMsg)
+}
+
+// finished stamps the terminal state onto the in-memory row and announces it.
+// The DB has it either way; this is what the tray redraws from, and it is the
+// frame the whole channel exists to deliver promptly.
+func (s *Service) finished(op *Op, status, errMsg string) {
+	now := time.Now()
+	op.Status = status
+	op.Error = errMsg
+	op.FinishedAt = &now
+	s.forgetProgress(op.ID)
+	s.emit(op)
 }
 
 // withSubmitter attaches the account that queued this op, so the events its
@@ -679,6 +709,8 @@ func (s *Service) fail(ctx context.Context, op *Op, msg string) {
 	_, _ = s.db.ExecContext(ctx,
 		s.rebind(`UPDATE pending_ops SET status=?, error=?, finished_at=CURRENT_TIMESTAMP, failed=total WHERE id=?`),
 		StatusFailed, msg, op.ID)
+	op.Failed = op.Total
+	s.finished(op, StatusFailed, msg)
 }
 
 func errMessage(err error) string {

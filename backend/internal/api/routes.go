@@ -636,6 +636,11 @@ func BuildRouter(d *Deps) http.Handler {
 	// a nil emitter (unwired) is a safe no-op.
 	hub := realtime.NewHub()
 	handlers.SetChangeEmitter(hub)
+	// …and the queue, which addresses its progress to the person who submitted
+	// the op rather than to a folder. Unwired the tray falls back to polling.
+	if d.Ops != nil {
+		d.Ops.SetNotifier(hub)
+	}
 	// The protocol servers (WebDAV, S3, SFTP, FTPS, NFS) reach the catalogue
 	// through internal/protocolsync rather than through these handlers, so the
 	// same hub has to be wired there too — otherwise a file written over any
