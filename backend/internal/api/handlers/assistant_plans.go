@@ -467,7 +467,7 @@ func (t *assistantTools) planMove(ctx context.Context, raw string) assistant.Too
 	}
 	var items []planItem
 	if targetRel != "" {
-		existing := t.liveNode(ctx, drive.ID, targetRel)
+		existing := t.liveNode(ctx, drive, targetRel)
 		switch {
 		case existing != nil && existing.Type != model.NodeTypeDirectory:
 			return failure("%s is a file, not a folder", target)
@@ -475,7 +475,7 @@ func (t *assistantTools) planMove(ctx context.Context, raw string) assistant.Too
 			// One new folder per plan, under a folder that exists: a chain of
 			// new folders is a plan nobody can check against anything.
 			if parent := path.Dir(targetRel); parent != "." {
-				if above := t.liveNode(ctx, drive.ID, parent); above == nil || above.Type != model.NodeTypeDirectory {
+				if above := t.liveNode(ctx, drive, parent); above == nil || above.Type != model.NodeTypeDirectory {
 					return failure("the folder above %s does not exist; create one level at a time, or pick an existing folder", target)
 				}
 			}
@@ -526,11 +526,16 @@ func (t *assistantTools) planMove(ctx context.Context, raw string) assistant.Too
 	return t.createPlan(ctx, model.PlanKindMove, args.Summary, items)
 }
 
-// liveNode is the cached row at rel, or nil when there is none or it is in the
-// trash.
-func (t *assistantTools) liveNode(ctx context.Context, storageID int64, rel string) *model.Node {
-	node, err := t.store.GetNodeByPath(ctx, storageID, pathkey.Hash(storageID, rel))
-	if err != nil || node == nil || node.DeletedAt != nil {
+// liveNode is the row at rel, or nil when the drive has nothing there and it is
+// in the trash. A path the cache has never seen but the driver holds is
+// catalogued rather than reported missing — see catalogue for why the cache
+// alone is not an answer here.
+func (t *assistantTools) liveNode(ctx context.Context, drive *model.Storage, rel string) *model.Node {
+	node, err := t.store.GetNodeByPath(ctx, drive.ID, pathkey.Hash(drive.ID, rel))
+	if err != nil || node == nil {
+		return t.catalogue(ctx, drive, rel)
+	}
+	if node.DeletedAt != nil {
 		return nil
 	}
 	return node
@@ -931,7 +936,7 @@ func (t *assistantTools) runMoveItem(ctx context.Context, item planItem) planIte
 			return result.skip(reasonForbidden, err.Error())
 		}
 		// Made by hand in the meantime: the folder the plan wanted is there.
-		if existing := t.liveNode(ctx, drive.ID, rel); existing != nil && existing.Type == model.NodeTypeDirectory {
+		if existing := t.liveNode(ctx, drive, rel); existing != nil && existing.Type == model.NodeTypeDirectory {
 			return result.ok()
 		}
 		if _, err := t.ops.Mkdir(ctx, item.Path); err != nil {
@@ -964,7 +969,7 @@ func (t *assistantTools) runMoveItem(ctx context.Context, item planItem) planIte
 	// before this one, or already there. Nothing is moved into a folder that
 	// is not there, whatever a driver would make of that.
 	if targetRel != "" {
-		if folder := t.liveNode(ctx, drive.ID, targetRel); folder == nil || folder.Type != model.NodeTypeDirectory {
+		if folder := t.liveNode(ctx, drive, targetRel); folder == nil || folder.Type != model.NodeTypeDirectory {
 			return result.skip(reasonMissing, "the destination folder does not exist")
 		}
 	}

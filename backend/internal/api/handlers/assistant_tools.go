@@ -146,12 +146,53 @@ func (t *assistantTools) resolveNode(ctx context.Context, path string) (*model.N
 	}
 	node, err := t.store.GetNodeByPath(ctx, storage.ID, pathkey.Hash(storage.ID, rel))
 	if err != nil || node == nil {
-		return nil, fmt.Errorf("filex has no record of %s yet — list the folder it is in first", path)
+		if node = t.catalogue(ctx, storage, rel); node == nil {
+			return nil, fmt.Errorf("filex cannot find %s on %s", path, storage.Name)
+		}
 	}
 	if node.DeletedAt != nil {
 		return nil, fmt.Errorf("%s is in the trash", path)
 	}
 	return node, nil
+}
+
+// catalogue records a path the node cache has never seen but the storage
+// really holds, and returns the row it wrote. nil means the driver has nothing
+// there either — the only honest "it is not there".
+//
+// ⚠ The gap this closes: the assistant LISTS through the driver, while
+// everything that changes a file is addressed by node id, and the rows in
+// between are written by the periodic sync (15 minutes by default) or by a
+// write filex made itself. So every file that was already on a storage when it
+// was added reads fine and refuses to be tagged, restored, shared or moved
+// until a walk gets to it — and the refusal used to tell the model to list the
+// folder first, which writes no rows and could therefore never help.
+//
+// Rows only, through the same Syncer the protocol surfaces write through: this
+// is discovery of something that is already there, so it must not announce
+// itself as a write.
+func (t *assistantTools) catalogue(ctx context.Context, drive *model.Storage, rel string) *model.Node {
+	drv, err := t.ops.resolver(drive.ID)
+	if err != nil {
+		return nil
+	}
+	obj, err := drv.Stat(ctx, rel)
+	if err != nil {
+		return nil
+	}
+	syncer := t.ops.sync()
+	if obj.Kind == storage.KindDirectory {
+		if _, err := syncer.EnsureDirChain(ctx, drive, rel); err != nil {
+			return nil
+		}
+	} else if _, _, ok := syncer.WriteRows(ctx, drive, rel, obj.Size, obj.Mime); !ok {
+		return nil
+	}
+	node, err := t.store.GetNodeByPath(ctx, drive.ID, pathkey.Hash(drive.ID, rel))
+	if err != nil {
+		return nil
+	}
+	return node
 }
 
 // Specs describes the tools to the model.
