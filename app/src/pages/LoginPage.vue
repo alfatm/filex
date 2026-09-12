@@ -123,7 +123,7 @@ function startOidc() {
     <div aria-hidden="true" class="pointer-events-none absolute -bottom-32 -right-24 h-96 w-96 rotate-12 rounded-[80px] bg-primary-tint" />
 
     <div class="relative w-full max-w-[672px]">
-      <div class="rounded-[20px] bg-bg px-8 py-12 shadow-modal sm:px-[88px]">
+      <div class="rounded-[20px] bg-bg px-8 py-12 shadow-modal md:px-[88px]">
         <div class="flex items-center justify-center gap-4">
           <img :src="branding.logoUrl || `${baseUrl}logo.svg`" alt="" class="h-16 w-16 object-contain" />
           <span class="text-[44px] font-bold leading-none tracking-tight">{{ branding.name || t('app.name') }}</span>

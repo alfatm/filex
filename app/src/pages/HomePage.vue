@@ -7,6 +7,8 @@ import { repository } from '@/data';
 import type { Node } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
 import { useFileActions } from '@/features/files/useFileActions';
+import { useItemMenuStore } from '@/features/files/itemMenuStore';
+import { useNodeTaps } from '@/features/files/useNodeTaps';
 import { useListingKeyboard } from '@/features/files/useListingKeyboard';
 import { filesRoute } from '@/lib/path';
 import { useFilesStore } from '@/stores/files';
@@ -25,6 +27,16 @@ const { formatSize } = useFormat();
 const files = useFilesStore();
 const view = useViewStore();
 const actions = useFileActions();
+const itemMenu = useItemMenuStore();
+
+/**
+ * Touch (spec §10). Home has no details panel of its own, so a double tap is left to mean nothing here and a tap
+ * opens — which is the whole point of the row on a phone.
+ */
+const taps = useNodeTaps({
+  tap: (node) => void actions.open(node),
+  longPress: (node, target) => itemMenu.openFor(node, target),
+});
 const { onMainClick } = useListingKeyboard();
 
 const recent = ref<Node[]>([]);
@@ -122,6 +134,10 @@ watch(() => files.revision, load);
           :focused="files.cursorId === node.id"
           @click="files.selectFromEvent(node.id, $event)"
           @dblclick="actions.open(node)"
+          @pointerdown="taps.down($event, node)"
+          @pointermove="taps.move($event)"
+          @pointerup="taps.up($event, node)"
+          @pointercancel="taps.cancel()"
           @focus="files.focusedId = node.id"
         />
       </div>
@@ -137,6 +153,10 @@ watch(() => files.revision, load);
             :focused="files.cursorId === node.id"
             @click="files.selectFromEvent(node.id, $event)"
             @dblclick="actions.open(node)"
+            @pointerdown="taps.down($event, node)"
+            @pointermove="taps.move($event)"
+            @pointerup="taps.up($event, node)"
+            @pointercancel="taps.cancel()"
             @focus="files.focusedId = node.id"
           />
           <FileCard
@@ -146,6 +166,10 @@ watch(() => files.revision, load);
             :focused="files.cursorId === node.id"
             @click="files.selectFromEvent(node.id, $event)"
             @dblclick="actions.open(node)"
+            @pointerdown="taps.down($event, node)"
+            @pointermove="taps.move($event)"
+            @pointerup="taps.up($event, node)"
+            @pointercancel="taps.cancel()"
             @focus="files.focusedId = node.id"
           />
         </template>

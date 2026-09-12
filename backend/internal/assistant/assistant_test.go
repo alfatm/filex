@@ -329,6 +329,22 @@ func TestTrimHistory_MergesAndWindows(t *testing.T) {
 	assert.Equal(t, "user", windowed[0].Role)
 }
 
+// The executor's line is a third side of the conversation, and neither provider
+// has a role for it: Anthropic takes user and assistant turns only. It travels
+// as a user turn that names itself, merged with the question that follows so the
+// two do not arrive as two user turns in a row.
+func TestTrimHistory_HandsTheExecutorsLineOverAsAUserTurn(t *testing.T) {
+	got := trimHistory([]Message{
+		{Role: RoleUser, Content: "tag the invoices"},
+		{Role: RoleAssistant, Content: "I have proposed tagging them."},
+		{Role: RoleSystem, Content: "The person refused plan 7 (tags). Nothing was done."},
+		{Role: RoleUser, Content: "never mind then"},
+	})
+	require.Len(t, got, 3)
+	assert.Equal(t, RoleUser, got[2].Role, "no provider takes a system turn mid-conversation")
+	assert.Equal(t, "[system] The person refused plan 7 (tags). Nothing was done.\n\nnever mind then", got[2].Content)
+}
+
 func TestBegin_OneTurnAtATimeAndAPerMinuteCeiling(t *testing.T) {
 	svc := New(newMem(), nil)
 

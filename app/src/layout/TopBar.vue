@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import {
+  ArrowLeft,
   ChevronDown,
   HelpCircle,
   LogOut,
   Monitor,
   Moon,
+  Menu as MenuIcon,
   Search,
   Settings,
   ShieldCheck,
@@ -16,10 +18,12 @@ import {
   Sun,
   UserRound,
 } from 'lucide-vue-next';
+import { useBreakpoint } from '@/composables/useBreakpoint';
 import { emptyQuery, fromUrlQuery, toUrlQuery, useSearchStore } from '@/features/search/searchStore';
 import { joinPath, segments } from '@/lib/path';
 import { THEMES, useSettingsStore } from '@/features/settings/settingsStore';
 import { useAuthStore } from '@/stores/auth';
+import { useBrandingStore } from '@/stores/branding';
 import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
@@ -38,6 +42,53 @@ const view = useViewStore();
 const settings = useSettingsStore();
 const capabilities = useCapabilitiesStore();
 const auth = useAuthStore();
+const branding = useBrandingStore();
+const baseUrl = import.meta.env.BASE_URL;
+
+/**
+ * On a phone the sidebar is not in the layout at all (spec §10), so the brand moves HERE — and the three icon
+ * buttons that would no longer fit beside it move into the account menu. Without this a phone carried no product
+ * name anywhere on screen.
+ */
+const { isMobile } = useBreakpoint();
+
+/**
+ * The phone's search (spec §10): an icon, and the field takes the whole bar once it is asked for.
+ *
+ * A 390px bar cannot hold a menu button, a brand, a search field and an account at once — the field was the one
+ * that lost, down to about a hundred pixels with a placeholder nobody could read.
+ */
+const searchOpen = ref(false);
+
+/**
+ * The mode where the field has the whole bar. Asked for by the icon — and forced on the results route, because
+ * there the field IS the query: collapsed, it left the page with nothing to edit the search in and no way out of
+ * it, since the control that leaves lives in the bar the field takes over.
+ */
+const searchFull = computed(() => isMobile.value && (searchOpen.value || route.name === 'search'));
+
+/**
+ * Where the back arrow goes: the route the search was STARTED from, not a step of history. Every refinement
+ * pushes another `/search` entry, so `back()` would walk the previous queries one at a time instead of leaving
+ * the search at all — and a shared `/search?q=…` link has nothing behind it to go back to, hence the fallback.
+ */
+const searchOrigin = ref<string | null>(null);
+
+async function openSearch() {
+  searchOrigin.value = route.fullPath;
+  searchOpen.value = true;
+  await nextTick();
+  input.value?.focus();
+}
+
+function closeSearch() {
+  searchOpen.value = false;
+  if (route.name === 'search') void router.push(searchOrigin.value ?? { name: 'home' });
+}
+
+function reload() {
+  window.location.reload();
+}
 
 const accountMenu = ref<{ x: number; y: number } | null>(null);
 const ACCOUNT_MENU_WIDTH = 208;
@@ -71,6 +122,23 @@ const ADMIN_SETTINGS_URL = '/admin/settings';
 const isAdmin = computed(() => !!files.user && files.user.role !== 'member');
 
 const accountItems = computed<FloatingMenuEntry[]>(() => [
+  /*
+   * The three themes as a choice, not the bar's cycling button carried over: that button's label is a whole
+   * sentence ("Theme: Dark. Switch to Light") because it has to explain a cycle to somebody hovering one icon —
+   * in a menu it wrapped onto two lines and said what the NEXT press would do instead of what this entry does.
+   * A menu can show all three and tick the one in force.
+   */
+  ...(isMobile.value
+    ? [
+        ...THEMES.map((id) => ({
+          id: `theme:${id}`,
+          label: t(`settings.theme.${id}`),
+          icon: THEME_ICONS[id],
+          checked: theme.value === id,
+        })),
+        { id: 'help', label: t('topbar.help'), icon: HelpCircle, dividerBefore: true, disabled: true, hint: t('common.comingSoon') },
+      ]
+    : []),
   { id: 'settings', label: t('settings.title'), icon: UserRound },
   ...(isAdmin.value ? [{ id: 'adminSettings', label: t('topbar.adminSettings'), icon: ShieldCheck }] : []),
   { id: 'signOut', label: t('topbar.signOut'), icon: LogOut, dividerBefore: true },
@@ -78,7 +146,8 @@ const accountItems = computed<FloatingMenuEntry[]>(() => [
 
 function onAccountSelect(id: string) {
   accountMenu.value = null;
-  if (id === 'settings') settings.open = true;
+  if (id.startsWith('theme:')) settings.settings.theme = id.slice('theme:'.length) as (typeof THEMES)[number];
+  else if (id === 'settings') settings.open = true;
   // A new tab: the console is a different application, and the person was in the middle of their files.
   else if (id === 'adminSettings') window.open(ADMIN_SETTINGS_URL, '_blank', 'noopener');
   // Ends the session and reloads onto the sign-in screen — the store's own doing, because nothing of this
@@ -163,11 +232,48 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
 
 <template>
   <header class="flex h-12 shrink-0 items-center border-b border-border bg-bg pl-4 pr-3">
+    <!-- The rail below `xl` cannot carry the brand, so it stands here instead — one control that reloads the app,
+         exactly as it is in the sidebar. The phone keeps the plain search bar until the search itself becomes an
+         icon (spec §10); a brand beside a full-width field would leave neither of them room. -->
+    <!-- `-ml-2` cancels the bar's own `pl-4` down to the 8 the sidebar's row uses, and the glyph is the sidebar's
+         18: the drawer this opens draws the same button and the same brand a few pixels away, and two geometries
+         for one control make the whole header jump as the drawer slides over it. -->
+    <IconButton
+      v-if="isMobile && !searchFull"
+      :label="t('nav.openMenu')"
+      class="-ml-2 mr-1 text-text"
+      @click="view.drawerOpen = true"
+    >
+      <MenuIcon :size="18" :stroke-width="1.75" />
+    </IconButton>
+    <!-- Back, not a cross at the far end of the bar: the control belongs to the search it leaves, and on a phone
+         that is what the gesture is — one step back out of a mode, the same as the breadcrumb's arrow. -->
+    <IconButton
+      v-if="searchFull"
+      :label="t('topbar.closeSearch')"
+      class="-ml-2 mr-1 text-text"
+      @click="closeSearch"
+    >
+      <ArrowLeft :size="18" :stroke-width="1.75" />
+    </IconButton>
+    <button
+      v-if="isMobile && !searchFull"
+      type="button"
+      :title="t('nav.reload')"
+      class="mr-3 flex shrink-0 items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+      @click="reload"
+    >
+      <img :src="branding.logoUrl || `${baseUrl}logo.svg`" alt="" class="h-7 w-7 object-contain" />
+      <!-- 18, as in the sidebar (§2): on a phone the same brand is drawn in two places — here, and in the drawer
+           the menu button opens — and two sizes for one name reads as two different things. -->
+      <span class="ml-2 text-18 font-semibold leading-none">{{ branding.name || t('app.name') }}</span>
+    </button>
     <!-- Capped rather than full-bleed: a search field the width of the window reads as a page, not a control.
          The cap narrows again while the assistant panel is open. -->
     <label
+      v-if="!isMobile || searchFull"
       class="flex h-control-md flex-1 items-center rounded-md bg-bg-muted pl-3 pr-2 focus-within:ring-2 focus-within:ring-primary-ring"
-      :class="view.assistantOpen ? 'max-w-[560px]' : 'max-w-[760px]'"
+      :class="isMobile ? '' : view.assistantOpen ? 'max-w-[560px]' : 'max-w-[760px]'"
     >
       <Search :size="16" class="shrink-0 text-text-3" />
       <input
@@ -183,22 +289,28 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
       <IconButton :label="t('topbar.advancedSearch')" :size="28" class="mr-1 text-text-2" @click="openAdvanced">
         <SlidersHorizontal :size="16" />
       </IconButton>
-      <span class="flex gap-1">
+      <span v-if="!isMobile" class="flex gap-1">
         <kbd class="flex h-5 w-5 items-center justify-center rounded-sm border border-border bg-bg text-10 leading-none text-text-2">⌘</kbd>
         <kbd class="flex h-5 w-5 items-center justify-center rounded-sm border border-border bg-bg text-10 leading-none text-text-2">K</kbd>
       </span>
     </label>
 
-    <div class="ml-auto flex items-center gap-0.5 pl-3">
+    <div v-if="!searchFull" class="ml-auto flex items-center gap-0.5 pl-3">
+      <IconButton v-if="isMobile" :label="t('nav.search')" @click="openSearch">
+        <Search :size="18" :stroke-width="1.75" />
+      </IconButton>
       <!-- The panel's own X closes it; hiding the trigger keeps the bar at the reference width while it is open. -->
       <IconButton v-if="assistantOffered" :label="t('topbar.assistant')" @click="view.assistantOpen = true">
         <Sparkles :size="18" :stroke-width="1.75" />
       </IconButton>
-      <IconButton :label="themeLabel" @click="settings.settings.theme = nextTheme">
-        <component :is="THEME_ICONS[theme]" :size="18" :stroke-width="1.75" />
-      </IconButton>
-      <IconButton :label="t('topbar.settings')" @click="settings.open = true"><Settings :size="18" :stroke-width="1.75" /></IconButton>
-      <IconButton :label="t('topbar.help')" :disabled-hint="t('common.comingSoon')"><HelpCircle :size="18" :stroke-width="1.75" /></IconButton>
+      <!-- On a phone these three are entries in the account menu instead: the bar has the brand to carry now. -->
+      <template v-if="!isMobile">
+        <IconButton :label="themeLabel" @click="settings.settings.theme = nextTheme">
+          <component :is="THEME_ICONS[theme]" :size="18" :stroke-width="1.75" />
+        </IconButton>
+        <IconButton :label="t('topbar.settings')" @click="settings.open = true"><Settings :size="18" :stroke-width="1.75" /></IconButton>
+        <IconButton :label="t('topbar.help')" :disabled-hint="t('common.comingSoon')"><HelpCircle :size="18" :stroke-width="1.75" /></IconButton>
+      </template>
       <button
         type="button"
         class="ml-1 flex items-center gap-0.5 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"

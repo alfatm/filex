@@ -42,6 +42,12 @@ const (
 	// carries the ToolCallID of the call it answers — both providers match
 	// results to calls by id, not by position.
 	RoleTool = "tool"
+	// RoleSystem is the EXECUTOR speaking inside the conversation: what the
+	// server did after the person decided on a plan. Neither provider takes a
+	// system turn in the middle of a conversation — Anthropic has no such role
+	// at all — so trimHistory hands it over as a user turn that says what it
+	// is. It never reaches a provider under this name.
+	RoleSystem = "system"
 )
 
 // Image is a picture a tool result shows the model, as bytes the model's

@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Copy, Download, FolderInput, RotateCcw, Share2, Star, Trash2, X } from 'lucide-vue-next';
+import { Copy, Download, FolderInput, MoreVertical, RotateCcw, Share2, Star, Trash2, X } from 'lucide-vue-next';
 import { useModalsStore } from '@/features/files/modalsStore';
 import { useFileActions } from '@/features/files/useFileActions';
 import type { RolePermission } from '@/data/types';
 import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
+import { useBreakpoint } from '@/composables/useBreakpoint';
 import { IconButton } from '@/ui';
+import FloatingMenu, { anchorBelow } from '@/ui/FloatingMenu.vue';
 
 const { t } = useI18n();
 const files = useFilesStore();
@@ -81,6 +83,32 @@ const actions = computed<Action[]>(() =>
         },
       ],
 );
+
+/**
+ * A phone fits three of these beside the count and the clear button; the seventh was drawn off the edge of the
+ * bar, where nothing could reach it. The rest move into a ⋮ — the same actions, one tap further away (spec §10).
+ */
+const { isMobile } = useBreakpoint();
+const PHONE_ACTIONS = 3;
+const OVERFLOW_MENU_WIDTH = 208;
+const shown = computed(() => (isMobile.value ? actions.value.slice(0, PHONE_ACTIONS) : actions.value));
+const overflow = computed(() => (isMobile.value ? actions.value.slice(PHONE_ACTIONS) : []));
+const menu = ref<{ x: number; y: number } | null>(null);
+
+const overflowItems = computed(() =>
+  overflow.value.map((action) => ({
+    id: action.id,
+    label: t(`selection.${action.id}`),
+    icon: action.icon,
+    disabled: action.disabled || !!action.hint,
+    hint: action.hint,
+  })),
+);
+
+function onOverflowSelect(id: string) {
+  menu.value = null;
+  overflow.value.find((action) => action.id === id)?.run?.();
+}
 </script>
 
 <template>
@@ -92,7 +120,7 @@ const actions = computed<Action[]>(() =>
   >
     <span class="mr-2 text-12 font-medium leading-none">{{ t('selection.count', { count: files.selected.length }) }}</span>
     <IconButton
-      v-for="action in actions"
+      v-for="action in shown"
       :key="action.id"
       :label="t(`selection.${action.id}`)"
       :size="28"
@@ -103,6 +131,26 @@ const actions = computed<Action[]>(() =>
     >
       <component :is="action.icon" :size="16" :fill="action.id === 'unstar' ? 'currentColor' : 'none'" />
     </IconButton>
+    <IconButton
+      v-if="overflow.length"
+      :label="t('files.more')"
+      :size="28"
+      class="text-text-2 hover:bg-primary-tint"
+      aria-haspopup="menu"
+      @click="menu = anchorBelow($event.currentTarget as HTMLElement, OVERFLOW_MENU_WIDTH)"
+    >
+      <MoreVertical :size="16" />
+    </IconButton>
+    <FloatingMenu
+      v-if="menu"
+      :items="overflowItems"
+      :x="menu.x"
+      :y="menu.y"
+      :width="OVERFLOW_MENU_WIDTH"
+      :label="t('files.more')"
+      @select="onOverflowSelect"
+      @close="menu = null"
+    />
     <IconButton :label="t('selection.clear')" :size="28" class="ml-auto text-text-2 hover:bg-primary-tint" @click="files.clearSelection()">
       <X :size="16" />
     </IconButton>

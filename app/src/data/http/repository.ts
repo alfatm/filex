@@ -2,7 +2,7 @@ import { ACCOUNT_DISABLED, DUPLICATE_NAME, FileLimitExceeded, FORBIDDEN, INVALID
 import { windowBounds } from '../dateWindow';
 import { MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
-import { noCapabilities, ROLE_PERMISSIONS, type Access, type ActivityEvent, type AssistantCard, type AssistantContext, type AssistantConversation, type AssistantMode, type AssistantReport, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type AuthOptions, type Branding, type Capabilities, type FolderListing, type GroupOption, type InviteOutcome, type ListingFilter, type Node, type Person, type Quota, type RolePermission, type Credentials, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type TotpEnrollment, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
+import { noCapabilities, ROLE_PERMISSIONS, type Access, type ActivityEvent, type AssistantCard, type AssistantContext, type AssistantConversation, type AssistantMessage, type AssistantMode, type AssistantReport, type PlanDecision, type PlanOutcome, type PlanResult, type AssistantSession, type AssistantEvent, type AuthMethods, type AuthOptions, type Branding, type Capabilities, type FolderListing, type GroupOption, type InviteOutcome, type ListingFilter, type Node, type Person, type Quota, type RolePermission, type Credentials, type ProfilePatch, type SearchHit, type SearchQuery, type NotifyPrefs, type SearchResult, type Session, type Storage, type TotpEnrollment, type UploadInput, type UploadOptions, type UploadSession, type User, type Version } from '../types';
 import { i18n } from '@/i18n';
 import { isInside, joinPath, nameOf, parentPath, splitPath } from '@/lib/address';
 import { HttpError, putChunk, request, streamJSON } from './client';
@@ -183,6 +183,35 @@ function fromCard(wire: WireCard): AssistantCard | null {
     return { kind: 'approval', path: wire.path ?? '', reason: wire.reason, ...(decision ? { decision } : {}) };
   }
   return null;
+}
+
+/**
+ * One stored turn as the panel holds it. `system` is kept as itself: it is the executor's line about a plan, drawn
+ * as a side of its own, and reading it as an assistant answer would put the server's words in the model's mouth.
+ */
+function fromChatMessage(wire: WireChatMessage): AssistantMessage {
+  const role = wire.role === 'user' || wire.role === 'system' ? wire.role : 'assistant';
+  return {
+    id: wire.id,
+    role,
+    text: wire.content,
+    at: wire.created_at,
+    ...(wire.aborted ? { aborted: true } : {}),
+    ...(wire.cards?.length ? { cards: wire.cards.map(fromCard).filter((c): c is AssistantCard => c !== null) } : {}),
+    ...(wire.hits?.length ? { hits: wire.hits.map(fromAssistantHit) } : {}),
+    ...(wire.reports?.length ? { reports: wire.reports.map(fromReport) } : {}),
+    ...(wire.plan_decision ? { planDecision: fromPlanDecision(wire.plan_decision) } : {}),
+  };
+}
+
+function fromPlanDecision(wire: WirePlanDecision): PlanDecision {
+  return {
+    planId: wire.plan_id,
+    status: wire.status === 'cancelled' ? 'cancelled' : 'done',
+    done: wire.done ?? 0,
+    skipped: wire.skipped ?? 0,
+    failed: wire.failed ?? 0,
+  };
 }
 
 /**
@@ -587,6 +616,16 @@ interface WireChatMessage {
   hits?: WireAssistantHit[];
   /** The documents the tools wrote for the person in this turn, stored with the answer. */
   reports?: WireReport[];
+  /** On a system message: what the executor did about one plan. */
+  plan_decision?: WirePlanDecision;
+}
+
+interface WirePlanDecision {
+  plan_id: string;
+  status: string;
+  done?: number;
+  skipped?: number;
+  failed?: number;
 }
 
 function fromChatSession(wire: WireChatSession): AssistantSession {
@@ -1738,7 +1777,20 @@ export class HttpRepository implements Repository {
    */
   async *assistantAsk(prompt: string, mode: AssistantMode, conversationId: string | null, signal: AbortSignal, context?: AssistantContext): AsyncIterable<AssistantEvent> {
     if (!conversationId) throw new Error('assistant: a conversation has to exist before a turn can be stored in it');
-    const stream = streamJSON<WireAssistantEvent>(`${ASSISTANT_SESSIONS}/${conversationId}/turn`, { prompt, mode, context }, signal);
+    yield* this.assistantTurn(conversationId, { prompt, mode, context }, signal);
+  }
+
+  /**
+   * The turn nobody typed: the executor has just written what a plan did, and the assistant is let back in to deal
+   * with what it left undone. The server refuses this unless that note really is the last thing said, so it cannot
+   * be used to make the assistant answer itself.
+   */
+  async *assistantResume(conversationId: string, signal: AbortSignal): AsyncIterable<AssistantEvent> {
+    yield* this.assistantTurn(conversationId, { resume: true }, signal);
+  }
+
+  private async *assistantTurn(conversationId: string, body: object, signal: AbortSignal): AsyncIterable<AssistantEvent> {
+    const stream = streamJSON<WireAssistantEvent>(`${ASSISTANT_SESSIONS}/${conversationId}/turn`, body, signal);
     for await (const event of stream) {
       if (event.type === 'meta') yield { type: 'meta', conversationId: event.conversation_id ?? conversationId };
       else if (event.type === 'text') yield { type: 'text', delta: event.delta ?? '' };
@@ -1797,16 +1849,7 @@ export class HttpRepository implements Repository {
   async assistantMessages(id: string): Promise<AssistantConversation> {
     const { messages, granted } = await request<{ messages: WireChatMessage[]; granted?: string[] }>(`${ASSISTANT_SESSIONS}/${id}`);
     return {
-      messages: (messages ?? []).map((m) => ({
-        id: m.id,
-        role: m.role === 'user' ? 'user' : 'assistant',
-        text: m.content,
-        at: m.created_at,
-        ...(m.aborted ? { aborted: true } : {}),
-        ...(m.cards?.length ? { cards: m.cards.map(fromCard).filter((c): c is AssistantCard => c !== null) } : {}),
-        ...(m.hits?.length ? { hits: m.hits.map(fromAssistantHit) } : {}),
-        ...(m.reports?.length ? { reports: m.reports.map(fromReport) } : {}),
-      })),
+      messages: (messages ?? []).map(fromChatMessage),
       granted: granted ?? [],
     };
   }
@@ -1819,16 +1862,23 @@ export class HttpRepository implements Repository {
   /** The body is empty on purpose: the work is the plan the server already stored, not anything sent from here. */
   async decideAssistantPlan(id: string, planId: string, approve: boolean): Promise<PlanOutcome> {
     const verb = approve ? 'approve' : 'cancel';
-    const wire = await request<{ status: string; items?: WirePlanResult[]; done?: number; skipped?: number; failed?: number }>(
-      `${ASSISTANT_SESSIONS}/${id}/plans/${planId}/${verb}`,
-      { method: 'POST', body: {} },
-    );
+    const wire = await request<{
+      status: string;
+      items?: WirePlanResult[];
+      done?: number;
+      skipped?: number;
+      failed?: number;
+      message?: WireChatMessage;
+    }>(`${ASSISTANT_SESSIONS}/${id}/plans/${planId}/${verb}`, { method: 'POST', body: {} });
     return {
       status: wire.status === 'cancelled' ? 'cancelled' : 'done',
       results: (wire.items ?? []).map(fromPlanResult),
       done: wire.done ?? 0,
       skipped: wire.skipped ?? 0,
       failed: wire.failed ?? 0,
+      // The executor's line about this decision, written by the server and returned here so the log can show it
+      // without reading the whole conversation back.
+      ...(wire.message ? { note: fromChatMessage(wire.message) } : {}),
     };
   }
 

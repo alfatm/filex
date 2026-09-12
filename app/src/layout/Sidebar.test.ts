@@ -2,11 +2,18 @@ import { mount, type VueWrapper } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import { nextTick } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { breakpointMock, setLayout } from '@/test/viewport';
 import { noQuota } from '@/data/types';
 import { i18n } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
+import { useViewStore } from '@/stores/view';
 import Sidebar from './Sidebar.vue';
+
+vi.mock('@/composables/useBreakpoint', async () => (await import('@/test/viewport')).breakpointMock);
+void breakpointMock;
+
+afterEach(() => setLayout('desktop'));
 
 const Page = { template: '<div />' };
 const ACTIVE = 'bg-primary-soft';
@@ -16,9 +23,8 @@ const drive = (id: string) => ({ id, serverId: 1, name: id, rootId: `${id}://`, 
 /** Every sidebar row painted as the current one; on a files route there must be exactly one. */
 const activeRows = (wrapper: VueWrapper) => wrapper.findAll('a').filter((a) => a.classes().includes(ACTIVE)).map((a) => a.text());
 
-async function mountSidebar() {
-  setActivePinia(createPinia());
-  const router = createRouter({
+const router = () =>
+  createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/files/:path*', name: 'files', component: Page },
@@ -32,10 +38,14 @@ async function mountSidebar() {
       { path: '/trash', name: 'trash', component: Page },
     ],
   });
-  await router.push('/files');
+
+async function mountSidebar() {
+  setActivePinia(createPinia());
+  const routes = router();
+  await routes.push('/files');
   const files = useFilesStore();
   await files.bootstrap();
-  const wrapper = mount(Sidebar, { attachTo: document.body, global: { plugins: [router, i18n] } });
+  const wrapper = mount(Sidebar, { attachTo: document.body, global: { plugins: [routes, i18n] } });
   await nextTick();
   return { files, wrapper };
 }
@@ -127,6 +137,45 @@ describe('Sidebar storages', () => {
     await nextTick();
     const rows = wrapper.findAll('a').filter((a) => a.text() === 'demo' || a.text() === 'main');
     expect(rows.some((a) => a.classes().includes(ACTIVE))).toBe(false);
+    wrapper.unmount();
+  });
+});
+
+/** The hamburger, by its label — `[aria-expanded]` alone also matches the New button's menu state. */
+const MENU_TOGGLE = 'button[aria-label="Expand menu"], button[aria-label="Collapse menu"]';
+
+describe('Sidebar shapes', () => {
+  // The drawer's copy is always the full column — a rail inside a drawer would be a menu hiding its own labels —
+  // and its hamburger is the way back out.
+  it('closes the drawer from the same glyph', async () => {
+    setActivePinia(createPinia());
+    const view = useViewStore();
+    view.drawerOpen = true;
+    const wrapper = mount(Sidebar, { props: { drawer: true }, global: { plugins: [router(), i18n] } });
+    await nextTick();
+
+    expect(wrapper.get('nav').attributes('style')).toContain('280px');
+    await wrapper.get('button[aria-label="Close menu"]').trigger('click');
+    expect(view.drawerOpen).toBe(false);
+    wrapper.unmount();
+  });
+
+  // Spec §10: the drawer is the phone's ONE way in, and it carries no New button — the `+` in the listing
+  // toolbar is the single entry point there.
+  it('leaves New out of the phone drawer', async () => {
+    setLayout('mobile');
+    setActivePinia(createPinia());
+    const wrapper = mount(Sidebar, { props: { drawer: true }, global: { plugins: [router(), i18n] } });
+    await nextTick();
+
+    expect(wrapper.find('button[aria-haspopup="menu"]').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('keeps the toggle, and the stored width, beside the listing', async () => {
+    const { wrapper } = await mountSidebar();
+    expect(wrapper.get('nav').attributes('style')).toContain('192px');
+    expect(wrapper.findAll(MENU_TOGGLE).length).toBe(1);
     wrapper.unmount();
   });
 });

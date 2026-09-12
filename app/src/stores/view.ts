@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
+import { useBreakpoint } from '@/composables/useBreakpoint';
 
 export type ViewMode = 'grid' | 'list';
 export type SortKey = 'name' | 'type' | 'modified' | 'size';
@@ -87,8 +88,22 @@ export const useViewStore = defineStore('view', () => {
   const sidebarWidth = ref(saved.sidebarWidth);
   const assistantWidth = ref(saved.assistantWidth);
   const detailsWidth = ref(saved.detailsWidth);
-  const detailsOpen = ref(true);
+  /**
+   * Open by default — but only where it has a column of its own. Below `xl` the panel is an overlay (spec §10),
+   * and an overlay that is open on arrival is a page you have to dismiss before you can read it.
+   */
+  const detailsOpen = ref(useBreakpoint().isDesktop.value);
   const assistantOpen = ref(saved.assistantOpen);
+  /**
+   * The phone's sidebar (spec §10): a drawer over the listing rather than a column beside it. Never persisted —
+   * an app that opens on its own navigation menu is an app that opens on the wrong thing.
+   */
+  const drawerOpen = ref(false);
+  /**
+   * The details sheet at full height rather than the 70dvh it opens at (spec §10): what a double tap on a file
+   * asks for, when the point of the gesture is to READ the properties rather than glance at them.
+   */
+  const detailsFull = ref(false);
 
   watch([mode, sortKey, sortDir, sidebarCollapsed, sidebarWidth, assistantWidth, detailsWidth, assistantOpen], () => {
     const data: Persisted = {
@@ -149,6 +164,8 @@ export const useViewStore = defineStore('view', () => {
     detailsWidth,
     detailsOpen,
     assistantOpen,
+    drawerOpen,
+    detailsFull,
     toggleSortDir,
     setSortKey,
     setSidebarWidth,

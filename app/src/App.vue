@@ -44,7 +44,8 @@ const shell = computed(() => route.name !== undefined && !route.meta.public);
     <ItemMenuHost />
     <!-- One corner, two trays: a column so neither has to guess the other's height. Operations sit above the
          uploads — an upload is watched while it runs, an operation row is usually read after something went wrong. -->
-    <div class="fixed bottom-6 right-6 z-30 flex flex-col items-end gap-3">
+    <!-- A phone has no corner to spare: the trays take the width they are given, less a gutter (spec §10). -->
+    <div class="fixed inset-x-3 bottom-3 z-30 flex flex-col items-end gap-3 md:inset-x-auto md:bottom-6 md:right-6">
       <OperationsTray />
       <UploadTray />
     </div>

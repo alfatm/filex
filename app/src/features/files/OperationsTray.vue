@@ -12,7 +12,7 @@ const operations = useOperationsStore();
   <section
     v-if="operations.open"
     :aria-label="t('op.title')"
-    class="w-[360px] overflow-hidden rounded-lg border border-border bg-bg shadow-menu"
+    class="w-full max-w-[360px] overflow-hidden rounded-lg border border-border bg-bg shadow-menu"
   >
     <header class="flex h-12 items-center border-b border-border pl-4 pr-1">
       <span class="flex-1 text-13 font-medium leading-none" aria-live="polite">

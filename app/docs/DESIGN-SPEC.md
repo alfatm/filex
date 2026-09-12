@@ -910,3 +910,101 @@ not as data any build will produce. The SVG/CSS placeholders
 layer panel wired to the frame it edits, component card, colour styles and an
 empty slot — video gradient) stay as the fallback when the assets are not served. demo.mp4 shows
 the real duration (00:30) once the browser reads it.
+
+## 10. Responsive (refs: desktop / mobile portrait)
+
+A fourth reference sheet draws the app on more than one device at once (the
+orchestrator sees it, like the other refs). It adds no new screens — it says
+what the screens in §2–§8 become when the window is not 1672 wide.
+
+**Two layouts, not three.** There is no tablet layout: the middle band used to
+draw a forced rail, overlay panels and a brand in the topbar, which is a third
+geometry nobody designed and which read as neither of the two that were. A
+window at 834 gets the desktop layout, and the phone layout starts where a
+phone does.
+
+**One edge, one source.** `src/design/breakpoints.ts` holds it, Tailwind's
+`screens` are generated from it and `useBreakpoint()` reads the same number, so
+an `md:` utility and a component asking "which layout is this?" can never
+disagree:
+
+| Layout | Width | What it is |
+|---|---|---|
+| `mobile` | `< 768` | The phone-portrait ref |
+| `desktop` | `≥ 768` | §1–§8 exactly as measured, at any width above the edge |
+
+⚠ **The desktop layout does not move.** Everything below is what happens *under*
+`md`; at 768 and up the geometry is the one the rest of this document measures,
+to the pixel. A change that "improves" the desktop while making a phone work is
+out of scope by definition.
+
+| Element | desktop `≥ 768` | mobile `< 768` |
+|---|---|---|
+| Sidebar | Full, resizable (§2), collapsible to a 60 rail by the hamburger | Off-canvas drawer over the listing, opened from the topbar |
+| Brand (mark + name) | In the sidebar | In the topbar, and in the drawer; one size (18) in both |
+| Search | Field, cap 760 (560 with the assistant open) | Icon; the field then takes the whole bar, and `←` leaves it |
+| Theme / help / settings | Icon buttons in the topbar | In the account menu |
+| Breadcrumbs | Full, folding (§7b) | "← + current folder"; the rest stays in the fold menu |
+| Filter row | One row (§7a) | Chips scroll sideways; the name filter takes its own row |
+| New | Button in the sidebar (§2) | `+` in the listing toolbar — and *only* there: the drawer carries no New entry |
+| Details | In flow at the right, resizable (§3) | Bottom sheet, `max-height: 70dvh`, the §3 tabs unchanged |
+| Assistant | In flow at the right, resizable (§6) | Full screen |
+| Grid | `minmax(176px, 1fr)` (§3) | unchanged — two columns at 390 |
+| List | Every column (§4) | Name + ⋮ only |
+| Trays | Bottom-right, 360 (§7) | Full width less a 12 gutter, at the bottom |
+| Modals | §5 / §8 widths | Width capped to the viewport less 32, height to `100dvh − 32`, body scrolls; the advanced-search and settings modals become full-screen sheets |
+
+**Touch density.** Where the pointer is coarse *and* the window is under `md`,
+the three control heights in §1b step up (28 → 40, 34 → 44, 40 → 48) so every
+control clears the 44px a finger needs. This happens in `tokens.css` alone: no
+component knows about it, and a touch-screen laptop at desktop width keeps the
+drawn geometry.
+
+**Leaving the search.** The phone's `←` returns to the route the search was
+*started* from, not one step of history: refining a query pushes a `/search`
+entry each time, so `back()` walks the previous queries instead of leaving the
+search, and a shared `/search?q=…` link has nothing behind it (there it goes
+home). On the results route the field cannot be collapsed — there the field *is*
+the query.
+
+**Gestures.** A tap opens (a folder, a file's preview); a long press is the
+context menu the right button gives a mouse; a double tap on a file opens the
+details sheet at full height. A downward swipe dismisses: the details sheet, by
+its grabber, and the preview, anywhere on the stage that is not scrollable
+text. In the preview a sideways swipe steps through the listing — left for the
+next file — and the axis a drag is more of decides which of the two it is. The
+preview's image does not pan under a finger: there is no pinch to zoom, so the
+image is always whole and the drag belongs to these two gestures.
+
+**A gesture ends where it started.** What a swipe dismisses is gone before the
+finger is lifted, and the browser gives the rest of that gesture — the release
+and the click it synthesises — to whatever is under the finger by then. Both
+halves are refused: a release is only a tap where its own press landed (and
+never after a `pointercancel`, which is the browser taking the gesture for a
+scroll), and the click is swallowed for as long as one gesture's tail can be.
+Without this, swiping the preview away opened the card it was dropped on.
+
+**Every control clears 44.** The density tokens raise the control heights, but
+they cannot reach a size passed as a prop — the 22px breadcrumb chevron, the
+28px filter field. `.touch-target` (`main.css`) puts a `min-width`/`min-height`
+floor of 44 under a coarse pointer on those, which outranks the inline size, so
+the glyph keeps its drawn size and only the hit grows.
+
+**Menus render at the `<body>`.** `FloatingMenu` is placed in viewport
+coordinates, and `position: fixed` is still clipped by an ancestor that is a
+containing block for fixed descendants — a `mask-image`, a `transform`. The
+chips' side-scroller is masked, which left every chip menu below `md` in the DOM
+and painted nowhere.
+
+**The phone's panels are modal.** Backdrop, Escape, a focus trap, and focus
+handed back to the control that opened them — an overlay without those is a trap
+for anyone not using a mouse. The details panel therefore also starts *closed*
+below `md`: on the desktop it is a column beside the listing, but an overlay that
+is open on arrival is a page you have to dismiss before you can read anything.
+
+**Viewport units.** `dvh`, never `vh`: mobile browsers count the address bar
+into `vh`, which put the bottom of a full-height sheet under it.
+
+**Not in scope.** Dragging with a finger: DnD stays a mouse affordance and
+"Move to…" in the item menu is the move path everywhere. Phone landscape and
+widths below 360 are not drawn.

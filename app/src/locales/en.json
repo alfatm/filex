@@ -55,7 +55,9 @@
     "collapseMenu": "Collapse menu",
     "expandMenu": "Expand menu",
     "reload": "Reload",
-    "resize": "Resize sidebar"
+    "resize": "Resize sidebar",
+    "openMenu": "Open menu",
+    "closeMenu": "Close menu"
   },
   "new": {
     "button": "New",
@@ -277,7 +279,8 @@
     "account": "Account",
     "theme": "Theme: {current}. Switch to {next}",
     "adminSettings": "Admin settings",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "closeSearch": "Close search"
   },
   "files": {
     "breadcrumbHome": "Home",
@@ -310,7 +313,8 @@
     "listingActions": "Listing actions",
     "dropHere": "Drop files to upload to “{folder}”",
     "fileKind": "Type",
-    "location": "Location"
+    "location": "Location",
+    "breadcrumbUp": "Up one level"
   },
   "filter": {
     "type": "Type",
@@ -643,8 +647,8 @@
       "cancelled": "You refused this plan",
       "ran": "Done — each line shows what happened to it",
       "itemDone": "done",
-      "approvedPrompt": "I approved the plan. {done} done, {skipped} not done.",
-      "refusedPrompt": "I did not approve that plan.",
+      "executedNote": "Plan carried out: {done} done, {skipped} not done.",
+      "refusedNote": "Plan refused. Nothing was done.",
       "reason": {
         "gone": "it was no longer there",
         "changed": "it had changed since the plan was made",

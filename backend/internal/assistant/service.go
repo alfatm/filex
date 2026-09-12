@@ -207,6 +207,11 @@ func (s *Service) Ask(ctx context.Context, cfg Config, box Toolbox, history []Me
 	}
 }
 
+// systemNotePrefix marks the executor's line so the model does not read it as
+// something the person typed. Short on purpose: it is prepended to every such
+// note and the note itself already says who did what.
+const systemNotePrefix = "[system] "
+
 // roundLimitNotice is what a turn that hit MaxToolRounds ends with.
 const roundLimitNotice = "\n\n_I stopped after looking at too many things in a row without reaching an answer. Ask me again with something narrower — a folder, or a name to look for._"
 
@@ -223,6 +228,13 @@ func trimHistory(history []Message) []Message {
 	for _, m := range history {
 		if strings.TrimSpace(m.Content) == "" {
 			continue
+		}
+		// The executor's line, handed over as a user turn that names itself —
+		// see RoleSystem. It is done here, before the merge below, so a note
+		// followed by a question reaches the model as one user turn rather
+		// than as two the providers would have to alternate around.
+		if m.Role == RoleSystem {
+			m.Role, m.Content = RoleUser, systemNotePrefix+m.Content
 		}
 		if n := len(merged); n > 0 && merged[n-1].Role == m.Role {
 			merged[n-1].Content += "\n\n" + m.Content

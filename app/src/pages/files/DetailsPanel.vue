@@ -379,9 +379,11 @@ function sentence(event: ActivityEvent): string {
        gutters on both sides so the label column starts where the header icon does. -->
   <SidePanel
     :width="view.detailsWidth"
+    :mobile="view.detailsFull ? 'full' : 'sheet'"
     :resize-label="t('panel.resize')"
     :aria-label="t('files.details')"
     @resize="view.setDetailsWidth"
+    @close="emit('close')"
   >
     <div class="flex items-start">
       <FolderIcon

@@ -34,6 +34,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path"
 	"strconv"
@@ -683,7 +684,10 @@ func (h *Assistant) decidePlan(w http.ResponseWriter, r *http.Request, approve b
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "status": model.PlanCancelled})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "status": model.PlanCancelled,
+			"message": h.notePlanDecision(ctx, plan, model.PlanCancelled, 0, 0, 0),
+		})
 		return
 	}
 	results := h.runPlan(ctx, r, plan)
@@ -704,7 +708,79 @@ func (h *Assistant) decidePlan(w http.ResponseWriter, r *http.Request, approve b
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "status": model.PlanDone, "items": results,
 		"done": done, "skipped": skipped, "failed": failed,
+		"message": h.notePlanDecision(ctx, plan, model.PlanDone, done, skipped, failed),
 	})
+}
+
+// planDecision is the executor's line about one plan: what the person decided
+// and what the server then did with it.
+//
+// ⚠ Status and the counts are CODES and numbers, not a sentence, for the same
+// reason a plan item's action is one: the panel is read in three languages and
+// words this itself. The English sentence stored beside it is for the MODEL.
+type planDecision struct {
+	PlanID   string `json:"plan_id"`
+	PlanKind string `json:"plan_kind"`
+	Status   string `json:"status"`
+	Done     int    `json:"done"`
+	Skipped  int    `json:"skipped"`
+	Failed   int    `json:"failed"`
+}
+
+// notePlanDecision writes the outcome into the conversation as a message of the
+// executor's own — role `system`, a third side beside the person and the model —
+// and returns it as the wire carries it, so the panel can show it without
+// re-reading the conversation.
+//
+// ⚠ The panel used to report this by SENDING a chat turn worded as the person
+// ("I did not approve that plan"): words nobody typed, a whole model turn spent
+// answering them, and a transcript that misattributed both. Nothing is asked of
+// the model here — it reads this as history the next time the person asks
+// something.
+func (h *Assistant) notePlanDecision(ctx context.Context, plan *model.AssistantPlan, status string, done, skipped, failed int) map[string]any {
+	decision := planDecision{
+		PlanID:   strconv.FormatInt(plan.ID, 10),
+		PlanKind: plan.Kind,
+		Status:   status,
+		Done:     done,
+		Skipped:  skipped,
+		Failed:   failed,
+	}
+	payload, err := json.Marshal(map[string]any{"plan_decision": decision})
+	if err != nil {
+		return nil
+	}
+	stored, err := h.Store.AppendAssistantMessage(ctx, &model.AssistantMessage{
+		SessionID:   plan.SessionID,
+		Role:        model.AssistantRoleSystem,
+		Content:     planDecisionLine(decision),
+		PayloadJSON: string(payload),
+	})
+	if err != nil {
+		// The work is done and recorded on the plan row itself. A note that
+		// could not be stored is a gap in the transcript, not a reason to
+		// answer with an error the person would react to by pressing the
+		// button a second time.
+		slog.Error("assistant: storing the plan decision failed", slog.Any("error", err), slog.Int64("plan", plan.ID))
+		return nil
+	}
+	return map[string]any{
+		"id":            strconv.FormatInt(stored.ID, 10),
+		"role":          stored.Role,
+		"content":       stored.Content,
+		"created_at":    stored.CreatedAt.UTC().Format(time.RFC3339),
+		"plan_decision": decision,
+	}
+}
+
+// planDecisionLine is the note as the MODEL reads it. English and plain: the
+// person never sees this string — the panel draws the payload beside it.
+func planDecisionLine(d planDecision) string {
+	if d.Status == model.PlanCancelled {
+		return fmt.Sprintf("The person refused plan %s (%s). Nothing was done.", d.PlanID, d.PlanKind)
+	}
+	return fmt.Sprintf("The person approved plan %s (%s) and the server ran it: %d done, %d not done.",
+		d.PlanID, d.PlanKind, d.Done, d.Skipped+d.Failed)
 }
 
 func countStates(results []planItemResult) (done, skipped, failed int) {

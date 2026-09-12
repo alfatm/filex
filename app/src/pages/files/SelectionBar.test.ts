@@ -8,7 +8,11 @@ import { i18n } from '@/i18n';
 import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 import { createMemoryHistory, createRouter } from 'vue-router';
+import { breakpointMock, setLayout } from '@/test/viewport';
 import SelectionBar from './SelectionBar.vue';
+
+vi.mock('@/composables/useBreakpoint', async () => (await import('@/test/viewport')).breakpointMock);
+void breakpointMock;
 
 const FOLDER = 'demo://Docs';
 const folder: Node = { id: FOLDER, name: 'Docs', kind: 'folder', parentId: 'demo://', size: 0, ownerId: 'u1', shared: false, starred: false };
@@ -91,5 +95,63 @@ describe('the selection bar under role permissions', () => {
     expect(trash.attributes('disabled')).toBeUndefined();
     await trash.trigger('click');
     expect(modals.active).toMatchObject({ kind: 'delete', variant: 'trash' });
+  });
+});
+
+describe('the selection bar on a phone', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    i18n.global.locale.value = 'en';
+    vi.spyOn(repository, 'getNode').mockResolvedValue(folder);
+    vi.spyOn(repository, 'getPath').mockResolvedValue([]);
+    vi.spyOn(repository, 'listPeople').mockResolvedValue({ people: [], canManage: false });
+    vi.spyOn(repository, 'listFilterPeople').mockResolvedValue([]);
+    vi.spyOn(repository, 'listFolder').mockResolvedValue({ nodes: [file], total: 1 });
+  });
+  afterEach(() => {
+    setLayout('desktop');
+    vi.restoreAllMocks();
+  });
+
+  async function phoneBar() {
+    setLayout('mobile');
+    const files = useFilesStore();
+    await files.open(FOLDER);
+    files.select(file.id);
+    useCapabilitiesStore().can = { ...noCapabilities(), delete: true, move: true, copy: true, folderDownload: true, allowed: new Set(ROLE_PERMISSIONS) };
+    const wrapper = mount(SelectionBar, { attachTo: document.body, global: { plugins: [i18n, router] } });
+    await flushPromises();
+    return wrapper;
+  }
+
+  /*
+   * Measured at 390: the bar draws a count, seven icons and a clear button in ~300px, and the last three were
+   * painted past its right edge where nothing could reach them. Three stay, the rest move under ⋮ (spec §10).
+   */
+  it('keeps three actions and puts the rest under a menu', async () => {
+    const wrapper = await phoneBar();
+    const labels = wrapper.findAll('button').map((b) => b.attributes('aria-label'));
+
+    expect(labels).toContain('More');
+    expect(labels).not.toContain('Delete');
+
+    await wrapper.findAll('button').find((b) => b.attributes('aria-label') === 'More')!.trigger('click');
+    await flushPromises();
+    expect([...document.querySelectorAll('[role="menu"] button')].map((b) => b.textContent?.trim() ?? '')).toContain('Delete');
+    wrapper.unmount();
+  });
+
+  it('draws every action at the design width', async () => {
+    const files = useFilesStore();
+    await files.open(FOLDER);
+    files.select(file.id);
+    useCapabilitiesStore().can = { ...noCapabilities(), delete: true, move: true, copy: true, folderDownload: true, allowed: new Set(ROLE_PERMISSIONS) };
+    const wrapper = mount(SelectionBar, { global: { plugins: [i18n, router] } });
+    await flushPromises();
+
+    const labels = wrapper.findAll('button').map((b) => b.attributes('aria-label'));
+    expect(labels).toContain('Delete');
+    expect(labels).not.toContain('More');
+    wrapper.unmount();
   });
 });

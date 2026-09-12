@@ -280,6 +280,12 @@ export interface Repository {
    * question and the answer are both written, so a turn without one has nowhere to go.
    */
   assistantAsk(prompt: string, mode: AssistantMode, conversationId: string | null, signal: AbortSignal, context?: AssistantContext): AsyncIterable<AssistantEvent>;
+  /**
+   * Streams a turn nobody typed: the executor has just written what a plan did and the assistant is let back in to
+   * deal with what it left undone. Nothing is added to the conversation for it — the note is already the last thing
+   * in it — and the server refuses the call unless that is still true.
+   */
+  assistantResume(conversationId: string, signal: AbortSignal): AsyncIterable<AssistantEvent>;
 
   // The assistant's history. Private to the account: the server has no route that hands one person's conversation
   // to anybody else, an administrator included.

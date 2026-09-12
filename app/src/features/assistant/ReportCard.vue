@@ -53,7 +53,7 @@ function downloadCsv() {
 
   <Modal v-if="expanded" :title="report.title" :close-label="t('modal.close')" :width="720" @close="expanded = false">
     <AnswerText v-if="report.text" :text="report.text" />
-    <ul v-if="report.rows.length" class="max-h-[60vh] overflow-y-auto" :class="{ 'mt-3': report.text }">
+    <ul v-if="report.rows.length" :class="{ 'mt-3': report.text }">
       <li v-for="{ node } in report.rows" :key="node.id" class="flex items-center gap-3 border-b border-border-soft py-2.5 last:border-b-0">
         <div class="min-w-0 flex-1">
           <p class="truncate-safe text-11.5 font-medium leading-snug">{{ node.name }}</p>

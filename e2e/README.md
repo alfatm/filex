@@ -71,6 +71,39 @@ coverage. It went when the mock did, together with the generated demo dataset
 underneath it. What is left is a handful of journeys that cannot pass unless a
 real server answered, which leaves the screens themselves untested end to end.
 
+The **app-responsive** profile drives the same SPA at three widths at once —
+390 (phone), 834 (tablet) and 1672 (the width the design is measured at), per
+`app/docs/DESIGN-SPEC.md` §10:
+
+```bash
+node e2e/run.mjs app-responsive --build     # assertions
+node e2e/run.mjs app-responsive --shots     # screenshot catalogue instead
+```
+
+It differs from `app` in one way that matters: **nothing here writes.** The live
+suite is serial with a single worker because its specs rename and trash rows in
+one shared tree; these only look, so the three widths run side by side instead
+of one after the other.
+
+Its fixture is the demo-assets repository
+(`github.com/alfatm/filex-demo-assets`), cloned OUTSIDE this repo into
+`$XDG_CACHE_HOME/filex-e2e/demo-assets` and copied into the run's own directory.
+Nothing in this repository describes that tree — no manifest, no generator, no
+vendored files: the server finds the files itself (`internal/sync`), and the
+runner asks for that walk and waits for the listing to stop changing before
+Playwright starts. `--assets <path>` points at a checkout you already have,
+`--assets-update` pulls the cached one.
+
+⚠ Specs here assert **structure and anchors, never counts**. The assets live in
+their own repository and gain files without asking this one; "144 files" would
+paint this suite red on somebody else's commit.
+
+`--shots` turns the same stand into a catalogue: every screen × every width ×
+both themes into `shots/app/`, plus an `index.html` contact sheet. It asserts
+nothing — it is what an adaptive layout gets reviewed with. Pinned baselines
+(`toHaveScreenshot`) answer a different question and are not set up yet; when
+they are, they belong on the shell alone and are generated in a container.
+
 The **deployment** profile is a separate, read-only smoke against something
 already live, and is deliberately not part of a build check:
 

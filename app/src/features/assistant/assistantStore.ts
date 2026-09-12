@@ -4,7 +4,7 @@ import { repository } from '@/data';
 import { HttpError } from '@/data/http/client';
 import { errorMessage } from '@/lib/errors';
 import { useSettingsStore } from '@/features/settings/settingsStore';
-import type { ApprovalCard, AssistantCard, AssistantContext, AssistantFailure, AssistantMessage, AssistantMode, AssistantSession, PlanCard, PlanOutcome } from '@/data/types';
+import type { ApprovalCard, AssistantCard, AssistantContext, AssistantEvent, AssistantFailure, AssistantMessage, AssistantMode, AssistantSession, PlanCard, PlanOutcome } from '@/data/types';
 
 export const ASSISTANT_MODES: AssistantMode[] = ['filename', 'content', 'tags'];
 
@@ -85,7 +85,10 @@ export const useAssistantStore = defineStore('assistant', () => {
   function push(role: AssistantMessage['role'], text: string): AssistantMessage {
     const message: AssistantMessage = { id: `m${++seq}`, role, text, at: new Date().toISOString() };
     messages.value.push(message);
-    return message;
+    // The element as the LIST now holds it, not the object handed over: a ref stores what it is given raw, so the
+    // streamed deltas, hits, cards and errors written onto the returned message afterwards changed nothing anyone
+    // could see — the panel only caught up when some other ref happened to re-render it.
+    return messages.value[messages.value.length - 1];
   }
 
   /**
@@ -101,6 +104,21 @@ export const useAssistantStore = defineStore('assistant', () => {
     // The question goes on screen before anything is awaited: it is already typed, and watching it hang in the box
     // while a session is created would be the app pretending not to have it.
     push('user', prompt);
+    await runTurn((session, signal) => repository.assistantAsk(prompt, mode.value, session, signal, context));
+  }
+
+  /**
+   * Lets the assistant back in after a plan ran and left something undone. Nobody typed anything: the executor's
+   * line is already the last thing in the conversation, and this streams the answer to it the same way a question
+   * would. A plan that ran in full, or one the person refused, never gets here — there is nothing left to say.
+   */
+  async function resume() {
+    if (streaming.value || !sessionId.value) return;
+    await runTurn((session, signal) => repository.assistantResume(session, signal));
+  }
+
+  /** One turn on the wire, however it was started: the watchdog, the abort handling, and the events onto the log. */
+  async function runTurn(open: (session: string, signal: AbortSignal) => AsyncIterable<AssistantEvent>) {
     streaming.value = true;
     const own = new AbortController();
     controller = own;
@@ -123,7 +141,7 @@ export const useAssistantStore = defineStore('assistant', () => {
       rearm();
       // Created inline rather than through newSession(), which clears the log — the question just pushed is in it.
       if (!sessionId.value) sessionId.value = (await repository.createAssistantSession()).id;
-      for await (const event of repository.assistantAsk(prompt, mode.value, sessionId.value, own.signal, context)) {
+      for await (const event of open(sessionId.value, own.signal)) {
         if (own.signal.aborted) break;
         // An event while a card is open (a keepalive, say) must not shorten the watch back to a minute: the turn is
         // still standing at the card, and the person has five of them to answer in.
@@ -407,17 +425,22 @@ export const useAssistantStore = defineStore('assistant', () => {
    * The request carries no work — the plan is already stored, resolved and fingerprinted, and the server executes
    * that. What comes back is what actually happened, which is written onto the card so the person sees per item
    * whether it was done, skipped or failed.
+   *
+   * ⚠ Nothing is SAID in the chat on the app's behalf. The outcome used to be reported by sending a message worded
+   * as the person ("I did not approve that plan") — words nobody typed, answered by a model turn that had nothing
+   * to add. The server writes its own line instead, as the executor, and that line is what goes into the log here.
    */
   async function decidePlan(card: PlanCard, approve: boolean): Promise<PlanOutcome | null> {
     const key = cardKey(card);
     if (!sessionId.value || card.status !== 'pending' || deciding.value.includes(key)) return null;
     deciding.value = [...deciding.value, key];
     decisionError.value = null;
+    let outcome: PlanOutcome;
     try {
-      const outcome = await repository.decideAssistantPlan(sessionId.value, card.id, approve);
+      outcome = await repository.decideAssistantPlan(sessionId.value, card.id, approve);
       card.status = outcome.status;
       if (outcome.results.length) card.results = outcome.results;
-      return outcome;
+      if (outcome.note) messages.value.push(outcome.note);
     } catch (error) {
       decisionError.value = { card: key, message: errorMessage(error) };
       await resyncCard(card);
@@ -425,6 +448,10 @@ export const useAssistantStore = defineStore('assistant', () => {
     } finally {
       deciding.value = deciding.value.filter((each) => each !== key);
     }
+    // Work the plan did not do is still work: the assistant is let back in to deal with it. A plan that ran in full
+    // and a plan that was refused both end here — the conversation waits for the person to ask something else.
+    if (outcome.status === 'done' && outcome.skipped + outcome.failed > 0) void resume();
+    return outcome;
   }
 
   /** Narrowing helper, so a template does not have to know the union's shape. */

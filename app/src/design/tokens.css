@@ -14,6 +14,18 @@
   --control-md: 34px; /* search box, nav rows, toolbar buttons, default controls */
   --control-lg: 40px; /* the New button and the other primary calls to action */
 
+  /* Touch (spec §10). A finger needs ~44px and the drawn heights are 28 / 34 / 40, so under a coarse pointer the
+     three tokens step up and every `h-control-*` in the app follows — no component is touched, and the hit size
+     has one place to be tuned.
+     ⚠ Width is part of the condition, not just the pointer: a touch-screen laptop at desktop width keeps the
+     reference geometry, which is what the rest of this file is measured against. 767 = BREAKPOINTS.md − 1
+     (src/design/breakpoints.ts); a media query cannot read a custom property, so this one number is spelled twice. */
+  @media (pointer: coarse) and (max-width: 767px) {
+    --control-sm: 40px;
+    --control-md: 44px;
+    --control-lg: 48px;
+  }
+
   /* Spacing steps. 4 / 8 / 12 / 16 — the same ladder Tailwind's 1 / 2 / 3 / 4 already spell, named here so the
      spec can refer to them. Anything off this ladder needs a visual reason. */
   --space-1: 4px;

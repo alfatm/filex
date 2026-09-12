@@ -12,6 +12,8 @@ import { useAssistantStore } from './assistantStore';
 const calls: { prompt: string; mode: AssistantMode }[] = [];
 const approvals: { id: string; path: string; allow: boolean }[] = [];
 const decisions: { id: string; planId: string; approve: boolean }[] = [];
+/** Conversations the assistant was let back into after a plan left work undone. */
+const resumes: string[] = [];
 let script: AssistantEvent[] = [];
 let release: (() => void) | null = null;
 
@@ -22,6 +24,31 @@ vi.stubGlobal('localStorage', {
   setItem: (key: string, value: string) => backing.set(key, value),
   removeItem: (key: string) => backing.delete(key),
 });
+
+/**
+ * happy-dom lays nothing out, so the magnet's two inputs are supplied by hand: the log's geometry, and the growth
+ * signal a real browser sends when the conversation gets taller.
+ */
+const grow = () => sizeObservers.forEach((run) => run([], {} as ResizeObserver));
+const sizeObservers: ResizeObserverCallback[] = [];
+vi.stubGlobal(
+  'ResizeObserver',
+  class {
+    constructor(callback: ResizeObserverCallback) {
+      sizeObservers.push(callback);
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+);
+
+/** The log as a 300px window onto a 1000px conversation, scrolled to `scrollTop`. */
+function layOutLog(el: HTMLElement, scrollTop: number) {
+  Object.defineProperty(el, 'clientHeight', { value: 300, configurable: true });
+  Object.defineProperty(el, 'scrollHeight', { value: 1000, configurable: true });
+  Object.defineProperty(el, 'scrollTop', { value: scrollTop, writable: true, configurable: true });
+}
 
 vi.mock('@/data', () => ({
   repository: {
@@ -44,12 +71,46 @@ vi.mock('@/data', () => ({
     },
     async decideAssistantPlan(id: string, planId: string, approve: boolean) {
       decisions.push({ id, planId, approve });
+      // The server's own line about the decision travels back with the outcome, the way it does against a real one.
       return approve
-        ? { status: 'done' as const, results: [{ path: 'main://Docs/a.pdf', state: 'skipped' as const, code: 'changed' }], done: 0, skipped: 1, failed: 0 }
-        : { status: 'cancelled' as const, results: [], done: 0, skipped: 0, failed: 0 };
+        ? {
+            status: 'done' as const,
+            results: [{ path: 'main://Docs/a.pdf', state: 'skipped' as const, code: 'changed' }],
+            done: 0,
+            skipped: 1,
+            failed: 0,
+            note: {
+              id: 'n1',
+              role: 'system' as const,
+              text: 'The person approved plan 7 (tags) and the server ran it: 0 done, 1 not done.',
+              at: '2026-07-01T10:01:00Z',
+              planDecision: { planId, status: 'done' as const, done: 0, skipped: 1, failed: 0 },
+            },
+          }
+        : {
+            status: 'cancelled' as const,
+            results: [],
+            done: 0,
+            skipped: 0,
+            failed: 0,
+            note: {
+              id: 'n1',
+              role: 'system' as const,
+              text: 'The person refused plan 7 (tags). Nothing was done.',
+              at: '2026-07-01T10:01:00Z',
+              planDecision: { planId, status: 'cancelled' as const, done: 0, skipped: 0, failed: 0 },
+            },
+          };
     },
     async *assistantAsk(prompt: string, mode: AssistantMode) {
       calls.push({ prompt, mode });
+      for (const event of script) {
+        await new Promise<void>((resolve) => (release = resolve));
+        yield event;
+      }
+    },
+    async *assistantResume(id: string) {
+      resumes.push(id);
       for (const event of script) {
         await new Promise<void>((resolve) => (release = resolve));
         yield event;
@@ -75,9 +136,36 @@ describe('AssistantPanel', () => {
   afterEach(() => {
     cleanup?.();
     calls.length = 0;
+    decisions.length = 0;
+    resumes.length = 0;
     release = null;
     backing.clear();
     Object.defineProperty(navigator, 'onLine', { value: true, configurable: true });
+  });
+
+  // The magnet: at the end of the log it follows the stream, and it lets go the moment the reader scrolls up to
+  // re-read — taking hold again when they come back down.
+  it('follows the stream while the log is at its end, and lets go once the reader scrolls up', async () => {
+    sizeObservers.length = 0;
+    const { wrapper } = await setup();
+    cleanup = () => wrapper.unmount();
+    const log = wrapper.find<HTMLElement>('[role="log"]').element;
+
+    layOutLog(log, 700);
+    grow();
+    expect(log.scrollTop).toBe(1000);
+
+    // Scrolled up to re-read: what arrives next must not yank the page away.
+    log.scrollTop = 200;
+    await wrapper.find('[role="log"]').trigger('scroll');
+    grow();
+    expect(log.scrollTop).toBe(200);
+
+    // Back at the end, and following again.
+    log.scrollTop = 700;
+    await wrapper.find('[role="log"]').trigger('scroll');
+    grow();
+    expect(log.scrollTop).toBe(1000);
   });
 
   it('focuses the textarea on mount and closes on Escape from anywhere in the window', async () => {
@@ -380,8 +468,51 @@ describe('AssistantPanel', () => {
     expect(decisions).toEqual([{ id: 's1', planId: '7', approve: true }]);
     // The outcome is per item, in the reader's language, not the server's English.
     expect(wrapper.text()).toContain('it had changed since the plan was made');
-    expect(calls.at(-1)?.prompt).toBe('I approved the plan. 0 done, 1 not done.');
+    // ⚠ The executor says what it did, as itself. Nothing is sent as if the person had typed it.
+    expect(wrapper.text()).toContain('Plan carried out: 0 done, 1 not done.');
+    expect(calls).toHaveLength(0);
+    // This plan left an item undone, so the assistant is let back in — without a prompt — to deal with it.
+    expect(resumes).toEqual(['s1']);
     expect(wrapper.findAll('button').some((b) => b.text() === 'Approve and run')).toBe(false);
+  });
+
+  // A refusal ends the exchange. Nothing is typed on the person's behalf and the model is not called at all: the
+  // conversation waits for whatever they ask next.
+  it('records a refused plan as the executor\'s own line, and asks the model nothing', async () => {
+    script = [{ type: 'done' }];
+    const { wrapper, store } = await setup();
+    cleanup = () => wrapper.unmount();
+    store.sessionId = 's1';
+    store.seed([
+      { id: 'm1', role: 'user', text: 'tag the invoices', at: '2026-07-01T10:00:00Z' },
+      {
+        id: 'm2',
+        role: 'assistant',
+        text: 'I have proposed tagging them.',
+        at: '2026-07-01T10:00:01Z',
+        cards: [
+          {
+            kind: 'plan',
+            id: '7',
+            planKind: 'tags',
+            summary: 'Tag two invoices',
+            status: 'pending',
+            items: [{ path: 'main://Docs/a.pdf', action: 'tag', args: { tags: 'invoices' }, size: 12000 }],
+          },
+        ],
+      },
+    ]);
+    await nextTick();
+
+    await wrapper.findAll('button').find((b) => b.text() === "Don't do this")!.trigger('click');
+    await flushPromises();
+    await nextTick();
+
+    expect(decisions).toEqual([{ id: 's1', planId: '7', approve: false }]);
+    expect(wrapper.text()).toContain('Plan refused. Nothing was done.');
+    expect(wrapper.text()).not.toContain('I did not approve');
+    expect(calls).toHaveLength(0);
+    expect(resumes).toHaveLength(0);
   });
 
   // A share plan is the one kind that HANDS SOMETHING BACK. The link is the

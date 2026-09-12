@@ -2,9 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
-import { Copy, File, Loader2, Maximize2, MessagesSquare, Play, Search, Send, Sparkles, SquarePen, Tag, X } from 'lucide-vue-next';
+import { Ban, CheckCheck, Copy, File, Loader2, Maximize2, MessagesSquare, Play, Search, Send, Sparkles, SquarePen, Tag, X } from 'lucide-vue-next';
 import { useFormat } from '@/composables/useFormat';
-import type { ApprovalCard, AssistantMode, PlanCard } from '@/data/types';
+import type { ApprovalCard, AssistantMessage, AssistantMode, PlanCard } from '@/data/types';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
 import { useSearchStore } from '@/features/search/searchStore';
@@ -45,7 +45,7 @@ watch(() => settings.settings.assistantEnabled, (on) => {
 }, { immediate: true });
 
 const MODE_ICONS = { filename: File, content: Search, tags: Tag } satisfies Record<AssistantMode, Component>;
-/** Auto-scroll follows the stream only while the reader is this close to the end. */
+/** The magnet holds while the reader is this close to the end, and lets go as soon as they scroll away from it. */
 const NEAR_BOTTOM_PX = 40;
 
 /** The panel shows either the conversation or the list of them; the header switches between the two. */
@@ -53,6 +53,7 @@ const showSessions = ref(false);
 const draft = ref('');
 const online = ref(navigator.onLine);
 const log = ref<HTMLElement>();
+const logBody = ref<HTMLElement>();
 const textarea = ref<HTMLTextAreaElement>();
 
 const canSend = computed(() => online.value && !assistant.streaming);
@@ -75,6 +76,10 @@ const announcement = computed(() => {
 async function openSession(id: string) {
   await assistant.openSession(id);
   showSessions.value = false;
+  // The log is unmounted while the list is up, so nothing was watching the height when these messages landed: it
+  // mounts at the top otherwise, and a conversation is read from its end.
+  await nextTick();
+  scrollToEnd();
 }
 
 /**
@@ -105,7 +110,7 @@ function decisionOf(card: ApprovalCard) {
 
 /**
  * The person's answer to a plan. Approving runs what the SERVER stored — this sends no work of its own — and the
- * outcome is then said in the chat, so the assistant learns what actually happened rather than assuming.
+ * executor writes what it did into the log itself; nothing is said here on anybody's behalf.
  */
 async function decidePlan(card: PlanCard, approve: boolean) {
   const outcome = await assistant.decidePlan(card, approve);
@@ -113,7 +118,18 @@ async function decidePlan(card: PlanCard, approve: boolean) {
   if (expanded.value === card) expanded.value = null;
   // The server moved, tagged or removed something behind the listing on screen; it is re-read, not left stale.
   if (outcome.done > 0) void files.reload();
-  send(approve ? t('assistant.plan.approvedPrompt', { done: outcome.done, skipped: outcome.skipped + outcome.failed }) : t('assistant.plan.refusedPrompt'));
+}
+
+/**
+ * The executor's line, in the reader's language. It is drawn from the decision's codes and counts, not from the
+ * English sentence stored beside them — that one is for the model, and is only fallen back on if a newer server
+ * sends a note this panel has no words for.
+ */
+function systemLine(message: AssistantMessage) {
+  const decision = message.planDecision;
+  if (!decision) return message.text;
+  if (decision.status === 'cancelled') return t('assistant.plan.refusedNote');
+  return t('assistant.plan.executedNote', { done: decision.done, skipped: decision.skipped + decision.failed });
 }
 
 /** The plan as text, addresses and all: to paste into a ticket or a message before, or instead of, approving it. */
@@ -138,6 +154,8 @@ function send(text: string) {
   if (!canSend.value) return;
   void assistant.send(text, pageContext(route.name, files, search));
   draft.value = '';
+  // Asking is an answer to "am I still reading back there?": the log goes to the end and follows the reply.
+  stuck.value = true;
 }
 
 function setOnline() {
@@ -158,21 +176,36 @@ function onModeKeydown(event: KeyboardEvent, index: number) {
   (event.currentTarget as HTMLElement).parentElement?.querySelectorAll<HTMLElement>('[role="radio"]')[ASSISTANT_MODES.indexOf(next)]?.focus();
 }
 
+/**
+ * The magnet: at the end of the log, the log follows whatever arrives; scrolled up to re-read, it stays exactly
+ * where the reader left it, and takes hold again the moment they come back down.
+ *
+ * What is watched is the conversation's HEIGHT, not its messages. A streamed word, a search result, a plan card,
+ * the activity line, a word wrapping onto a second row, the panel being dragged narrower — all of them make the log
+ * taller, and only the element knows about all of them. The message list, watched instead, described a few of them.
+ */
+const stuck = ref(true);
+
 function scrollToEnd() {
-  log.value?.scrollTo({ top: log.value.scrollHeight });
+  const el = log.value;
+  if (!el) return;
+  el.scrollTop = el.scrollHeight;
+  stuck.value = true;
 }
 
-// Keep the newest words in view while the answer streams, unless the reader scrolled up to re-read.
-watch(
-  () => assistant.messages.map((m) => m.text.length + (m.hits?.length ?? 0) + (m.reports?.length ?? 0)).join(),
-  async () => {
-    const el = log.value;
-    if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
-    await nextTick();
-    if (nearBottom) scrollToEnd();
-  },
-);
+function onLogScroll() {
+  const el = log.value;
+  if (el) stuck.value = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
+}
+
+const grew = new ResizeObserver(() => {
+  if (stuck.value) scrollToEnd();
+});
+// Re-attached rather than attached once: the log is unmounted while the session list is up.
+watch(logBody, (body, previous) => {
+  if (previous) grew.unobserve(previous);
+  if (body) grew.observe(body);
+});
 
 onMounted(() => {
   window.addEventListener('online', setOnline);
@@ -187,12 +220,20 @@ onBeforeUnmount(() => {
   window.removeEventListener('online', setOnline);
   window.removeEventListener('offline', setOnline);
   window.removeEventListener('keydown', onWindowKeydown);
+  grew.disconnect();
   assistant.abort();
 });
 </script>
 
 <template>
-  <SidePanel :width="view.assistantWidth" :resize-label="t('assistant.resize')" :aria-label="t('assistant.title')" @resize="view.setAssistantWidth">
+  <SidePanel
+    :width="view.assistantWidth"
+    mobile="full"
+    :resize-label="t('assistant.resize')"
+    :aria-label="t('assistant.title')"
+    @resize="view.setAssistantWidth"
+    @close="emit('close')"
+  >
     <!-- Spec §6: the icon sits at x 1290, 28px in from the panel's content edge. -->
     <div class="flex shrink-0 items-center pl-7">
       <Sparkles :size="26" class="shrink-0 text-primary" />
@@ -218,118 +259,136 @@ onBeforeUnmount(() => {
     <SessionList v-if="showSessions" @open="openSession" />
 
     <template v-else>
-      <div ref="log" role="log" aria-live="off" class="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto">
-        <!-- The intro is a placeholder for the empty log, not a heading: the first message takes its place. -->
-        <p v-if="!assistant.messages.length" class="text-13 leading-normal text-text-3">{{ t('assistant.intro') }}</p>
-        <template v-for="{ message, followUp, streaming } in rows" :key="message.id">
-          <div v-if="message.role === 'user'" class="flex items-start justify-end">
-            <div class="max-w-[300px] rounded-xl bg-primary-soft px-4 py-3">
-              <p class="whitespace-pre-wrap text-13 leading-[1.45]">{{ message.text }}</p>
-              <p class="mt-1 text-10 leading-none text-text-3">{{ formatTime(message.at) }}</p>
-            </div>
-            <Avatar :initial="files.user?.initial ?? ''" :src="files.user?.avatarUrl" class="ml-3" />
-          </div>
-          <div v-else-if="followUp" :aria-live="streaming ? 'off' : undefined">
-            <AnswerText :text="message.text" />
-            <p v-if="message.error" class="mt-1 text-11.5 text-danger">{{ t(`assistant.failure.${message.error}`) }}</p>
-            <p v-else-if="message.aborted" class="mt-1 text-11 text-text-3">{{ t('assistant.stopped') }}</p>
-            <p class="mt-1 text-10 leading-none text-text-3">{{ formatTime(message.at) }}</p>
-          </div>
-          <div v-else class="space-y-3">
-            <div class="flex items-start">
-              <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border">
-                <Sparkles :size="16" class="text-primary" />
-              </span>
-              <div class="ml-3 min-w-0 rounded-xl bg-bg-muted px-4 py-3" :aria-live="streaming ? 'off' : undefined">
-                <AnswerText :text="message.text" />
-                <p v-if="message.error" class="mt-1 text-11.5 text-danger">{{ t(`assistant.failure.${message.error}`) }}</p>
-                <p v-else-if="message.aborted" class="mt-1 text-11 text-text-3">{{ t('assistant.stopped') }}</p>
+      <div ref="log" role="log" aria-live="off" class="scroll-thin -mr-2 mt-4 min-h-0 flex-1 overflow-y-auto pr-2" @scroll="onLogScroll">
+        <!-- The inner box is what the magnet measures: a scroll container reports its own fixed height, never the
+             height of what is in it. -->
+        <div ref="logBody" class="space-y-3">
+          <!-- The intro is a placeholder for the empty log, not a heading: the first message takes its place. -->
+          <p v-if="!assistant.messages.length" class="text-13 leading-normal text-text-3">{{ t('assistant.intro') }}</p>
+          <template v-for="{ message, followUp, streaming } in rows" :key="message.id">
+            <!-- The executor: neither the person nor the assistant, so it is drawn as neither — one quiet line saying
+                 what the server did once the plan was decided. -->
+            <div v-if="message.role === 'system'" class="flex items-start gap-3 rounded-xl border border-border-soft bg-bg-muted px-4 py-3">
+              <component
+                :is="message.planDecision?.status === 'cancelled' ? Ban : CheckCheck"
+                :size="16"
+                class="mt-0.5 shrink-0 text-text-3"
+                aria-hidden="true"
+              />
+              <div class="min-w-0 flex-1">
+                <p class="text-12 leading-snug text-text-2">{{ systemLine(message) }}</p>
                 <p class="mt-1 text-10 leading-none text-text-3">{{ formatTime(message.at) }}</p>
               </div>
             </div>
-            <!-- All hits of one answer read as a single result list, not as a stack of separate cards. -->
-            <div v-if="message.hits?.length" class="divide-y divide-border-soft overflow-hidden rounded-lg border border-border">
-              <ResultCard v-for="hit in message.hits" :key="hit.node.id" :hit="hit" />
+            <div v-else-if="message.role === 'user'" class="flex items-start justify-end">
+              <div class="max-w-[300px] rounded-xl bg-primary-soft px-4 py-3">
+                <p class="whitespace-pre-wrap text-13 leading-[1.45]">{{ message.text }}</p>
+                <p class="mt-1 text-10 leading-none text-text-3">{{ formatTime(message.at) }}</p>
+              </div>
+              <Avatar :initial="files.user?.initial ?? ''" :src="files.user?.avatarUrl" class="ml-3" />
             </div>
-            <ReportCard v-for="(report, at) in message.reports" :key="at" :report="report" />
+            <div v-else-if="followUp" :aria-live="streaming ? 'off' : undefined">
+              <AnswerText :text="message.text" />
+              <p v-if="message.error" class="mt-1 text-11.5 text-danger">{{ t(`assistant.failure.${message.error}`) }}</p>
+              <p v-else-if="message.aborted" class="mt-1 text-11 text-text-3">{{ t('assistant.stopped') }}</p>
+              <p class="mt-1 text-10 leading-none text-text-3">{{ formatTime(message.at) }}</p>
+            </div>
+            <div v-else class="space-y-3">
+              <div class="flex items-start">
+                <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border">
+                  <Sparkles :size="16" class="text-primary" />
+                </span>
+                <div class="ml-3 min-w-0 rounded-xl bg-bg-muted px-4 py-3" :aria-live="streaming ? 'off' : undefined">
+                  <AnswerText :text="message.text" />
+                  <p v-if="message.error" class="mt-1 text-11.5 text-danger">{{ t(`assistant.failure.${message.error}`) }}</p>
+                  <p v-else-if="message.aborted" class="mt-1 text-11 text-text-3">{{ t('assistant.stopped') }}</p>
+                  <p class="mt-1 text-10 leading-none text-text-3">{{ formatTime(message.at) }}</p>
+                </div>
+              </div>
+              <!-- All hits of one answer read as a single result list, not as a stack of separate cards. -->
+              <div v-if="message.hits?.length" class="divide-y divide-border-soft overflow-hidden rounded-lg border border-border">
+                <ResultCard v-for="hit in message.hits" :key="hit.node.id" :hit="hit" />
+              </div>
+              <ReportCard v-for="(report, at) in message.reports" :key="at" :report="report" />
 
-            <!-- Spec §6: permission is asked for one file at a time, and the card says which file and why. -->
-            <template v-for="(card, at) in message.cards" :key="at">
-              <!-- A plan: everything it would do, listed, before anything is done. -->
-              <div v-if="assistant.isPlan(card)" class="rounded-2xl border border-border-soft bg-bg-muted p-4">
-                <div class="flex items-start gap-3">
-                  <Sparkles :size="22" class="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
-                  <p class="min-w-0 flex-1 text-13 font-medium leading-snug">{{ card.summary || t('assistant.plan.title') }}</p>
-                  <IconButton :label="t('assistant.plan.copy')" :size="28" class="-mt-1 shrink-0 text-text-2" @click="copyPlan(card)">
-                    <Copy :size="16" />
-                  </IconButton>
-                  <IconButton :label="t('assistant.plan.expand')" :size="28" class="-mr-1 -mt-1 shrink-0 text-text-2" @click="expanded = card">
-                    <Maximize2 :size="16" />
-                  </IconButton>
+              <!-- Spec §6: permission is asked for one file at a time, and the card says which file and why. -->
+              <template v-for="(card, at) in message.cards" :key="at">
+                <!-- A plan: everything it would do, listed, before anything is done. -->
+                <div v-if="assistant.isPlan(card)" class="rounded-2xl border border-border-soft bg-bg-muted p-4">
+                  <div class="flex items-start gap-3">
+                    <Sparkles :size="22" class="mt-0.5 shrink-0 text-primary" aria-hidden="true" />
+                    <p class="min-w-0 flex-1 text-13 font-medium leading-snug">{{ card.summary || t('assistant.plan.title') }}</p>
+                    <IconButton :label="t('assistant.plan.copy')" :size="28" class="-mt-1 shrink-0 text-text-2" @click="copyPlan(card)">
+                      <Copy :size="16" />
+                    </IconButton>
+                    <IconButton :label="t('assistant.plan.expand')" :size="28" class="-mr-1 -mt-1 shrink-0 text-text-2" @click="expanded = card">
+                      <Maximize2 :size="16" />
+                    </IconButton>
+                  </div>
+                  <PlanDetails :card="card" list-class="max-h-[400px]" />
+                  <div v-if="card.status === 'pending'" class="mt-3 flex flex-wrap gap-[10px]">
+                    <button
+                      type="button"
+                      :disabled="!canSend || assistant.isDeciding(card)"
+                      class="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-11.5 font-medium leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                      @click="decidePlan(card, true)"
+                    >
+                      <Play :size="16" fill="currentColor" :stroke-width="0" aria-hidden="true" />
+                      {{ t('assistant.plan.approve') }}
+                    </button>
+                    <button
+                      type="button"
+                      :disabled="!canSend || assistant.isDeciding(card)"
+                      class="inline-flex h-10 items-center rounded-full border border-border bg-bg px-5 text-11.5 font-medium leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                      @click="decidePlan(card, false)"
+                    >
+                      {{ t('assistant.plan.refuse') }}
+                    </button>
+                  </div>
+                  <p v-else-if="card.status === 'cancelled'" class="mt-3 text-11 leading-none text-text-3">{{ t('assistant.plan.cancelled') }}</p>
+                  <p v-if="assistant.decisionErrorOf(card)" class="mt-2 text-11 leading-snug text-danger" role="alert">{{ assistant.decisionErrorOf(card) }}</p>
                 </div>
-                <PlanDetails :card="card" list-class="max-h-[400px]" />
-                <div v-if="card.status === 'pending'" class="mt-3 flex flex-wrap gap-[10px]">
+
+                <div v-else class="rounded-xl border border-border p-4">
+                <p class="text-11.5 font-medium leading-snug">{{ t('assistant.card.title') }}</p>
+                <p class="mt-1 break-all text-11.5 leading-snug text-text-3">{{ card.path }}</p>
+                <p v-if="card.reason" class="mt-1 text-11 leading-snug text-text-3">{{ card.reason }}</p>
+                <p
+                  v-if="decisionOf(card)"
+                  class="mt-3 text-11 leading-none"
+                  :class="decisionOf(card) === 'allowed' ? 'text-success' : 'text-text-3'"
+                >
+                  {{ t(`assistant.card.${decisionOf(card)}`) }}
+                </p>
+                <!-- Answered while the turn streams — that is the point: the turn is waiting for exactly this. -->
+                <div v-else class="mt-3 flex flex-wrap gap-[10px]">
                   <button
                     type="button"
-                    :disabled="!canSend || assistant.isDeciding(card)"
-                    class="inline-flex h-10 items-center gap-2 rounded-full bg-primary px-5 text-11.5 font-medium leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
-                    @click="decidePlan(card, true)"
+                    :disabled="!online || assistant.isDeciding(card)"
+                    class="inline-flex h-9 items-center rounded-full bg-primary px-4 text-11.5 leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                    @click="assistant.decideRead(card, true)"
                   >
-                    <Play :size="16" fill="currentColor" :stroke-width="0" aria-hidden="true" />
-                    {{ t('assistant.plan.approve') }}
+                    {{ t('assistant.card.allow') }}
                   </button>
                   <button
                     type="button"
-                    :disabled="!canSend || assistant.isDeciding(card)"
-                    class="inline-flex h-10 items-center rounded-full border border-border bg-bg px-5 text-11.5 font-medium leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
-                    @click="decidePlan(card, false)"
+                    :disabled="!online || assistant.isDeciding(card)"
+                    class="inline-flex h-9 items-center rounded-full border border-border px-4 text-11.5 leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+                    @click="assistant.decideRead(card, false)"
                   >
-                    {{ t('assistant.plan.refuse') }}
+                    {{ t('assistant.card.deny') }}
                   </button>
                 </div>
-                <p v-else-if="card.status === 'cancelled'" class="mt-3 text-11 leading-none text-text-3">{{ t('assistant.plan.cancelled') }}</p>
                 <p v-if="assistant.decisionErrorOf(card)" class="mt-2 text-11 leading-snug text-danger" role="alert">{{ assistant.decisionErrorOf(card) }}</p>
-              </div>
-
-              <div v-else class="rounded-xl border border-border p-4">
-              <p class="text-11.5 font-medium leading-snug">{{ t('assistant.card.title') }}</p>
-              <p class="mt-1 break-all text-11.5 leading-snug text-text-3">{{ card.path }}</p>
-              <p v-if="card.reason" class="mt-1 text-11 leading-snug text-text-3">{{ card.reason }}</p>
-              <p
-                v-if="decisionOf(card)"
-                class="mt-3 text-11 leading-none"
-                :class="decisionOf(card) === 'allowed' ? 'text-success' : 'text-text-3'"
-              >
-                {{ t(`assistant.card.${decisionOf(card)}`) }}
-              </p>
-              <!-- Answered while the turn streams — that is the point: the turn is waiting for exactly this. -->
-              <div v-else class="mt-3 flex flex-wrap gap-[10px]">
-                <button
-                  type="button"
-                  :disabled="!online || assistant.isDeciding(card)"
-                  class="inline-flex h-9 items-center rounded-full bg-primary px-4 text-11.5 leading-none text-white hover:bg-primary-hover disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
-                  @click="assistant.decideRead(card, true)"
-                >
-                  {{ t('assistant.card.allow') }}
-                </button>
-                <button
-                  type="button"
-                  :disabled="!online || assistant.isDeciding(card)"
-                  class="inline-flex h-9 items-center rounded-full border border-border px-4 text-11.5 leading-none text-text hover:bg-hover-row disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
-                  @click="assistant.decideRead(card, false)"
-                >
-                  {{ t('assistant.card.deny') }}
-                </button>
-              </div>
-              <p v-if="assistant.decisionErrorOf(card)" class="mt-2 text-11 leading-snug text-danger" role="alert">{{ assistant.decisionErrorOf(card) }}</p>
-              </div>
-            </template>
-          </div>
-        </template>
-        <p v-if="activityLabel" class="flex items-center text-11 leading-snug text-text-3">
-          <Loader2 :size="14" class="mr-2 shrink-0 animate-spin" />
-          <span class="min-w-0 break-all">{{ activityLabel }}</span>
-        </p>
+                </div>
+              </template>
+            </div>
+          </template>
+          <p v-if="activityLabel" class="flex items-center text-11 leading-snug text-text-3">
+            <Loader2 :size="14" class="mr-2 shrink-0 animate-spin" />
+            <span class="min-w-0 break-all">{{ activityLabel }}</span>
+          </p>
+        </div>
       </div>
       <p role="status" class="sr-only">{{ announcement }}</p>
 
@@ -386,7 +445,7 @@ onBeforeUnmount(() => {
     :width="720"
     @close="expanded = null"
   >
-    <PlanDetails :card="expanded" list-class="max-h-[60vh]" />
+    <PlanDetails :card="expanded" />
     <p v-if="expanded.status === 'cancelled'" class="mt-3 text-11 leading-none text-text-3">{{ t('assistant.plan.cancelled') }}</p>
     <template v-if="expanded.status === 'pending'" #footer>
       <Button variant="outline" :disabled="!canSend || assistant.isDeciding(expanded)" @click="decidePlan(expanded, false)">{{ t('assistant.plan.refuse') }}</Button>

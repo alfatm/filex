@@ -1,15 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink, useRoute } from 'vue-router';
 import {
   Cable,
   ChevronDown,
   Clock,
-  FilePlus,
   Folder,
-  FolderPlus,
-  FolderUp,
   HardDrive,
   Home,
   KeyRound,
@@ -17,20 +14,25 @@ import {
   Plus,
   Star,
   Trash2,
-  Upload,
   Users,
 } from 'lucide-vue-next';
-import type { RolePermission } from '@/data/types';
 import { filesRoute } from '@/lib/path';
-import { useModalsStore } from '@/features/files/modalsStore';
-import { useUploadStore } from '@/features/files/uploadStore';
+import { useNewMenu } from '@/features/files/useNewMenu';
+import { useBreakpoint } from '@/composables/useBreakpoint';
 import { useFormat } from '@/composables/useFormat';
 import { useBrandingStore } from '@/stores/branding';
 import { useCapabilitiesStore } from '@/stores/capabilities';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
 import { Button, IconButton, ProgressBar } from '@/ui';
-import FloatingMenu, { type FloatingMenuEntry } from '@/ui/FloatingMenu.vue';
+import FloatingMenu from '@/ui/FloatingMenu.vue';
+
+/**
+ * `drawer` is the phone's sidebar (spec §10): the same navigation, but over the listing instead of beside it, and
+ * always expanded — a rail inside a drawer would be a menu that hides its own labels. AppShell is what puts it in
+ * the drawer; this prop is how the sidebar knows which of the two it is.
+ */
+const props = withDefaults(defineProps<{ drawer?: boolean }>(), { drawer: false });
 
 const { t, locale } = useI18n();
 const baseUrl = import.meta.env.BASE_URL;
@@ -41,8 +43,7 @@ const capabilities = useCapabilitiesStore();
 // The operator's mark and name stand in for filex's own when this installation is branded.
 const branding = useBrandingStore();
 const view = useViewStore();
-const modals = useModalsStore();
-const uploads = useUploadStore();
+const { menu: newMenu, items: newItems, fileInput, folderInput, openAt: openNewMenu, select: onNewSelect, onFilesPicked } = useNewMenu();
 
 const nav = [
   { name: 'home', icon: Home, label: 'nav.home' },
@@ -77,20 +78,8 @@ const connections = [
  * Both halves of the question, with a sentence each: an installation that cannot do it says "Not available on this
  * server", a role that may not do it says "Your role may not do this".
  */
-function gate(supported: boolean, permission: RolePermission) {
-  if (!supported) return { disabled: true, hint: t('common.unavailable') };
-  if (!capabilities.allows(permission)) return { disabled: true, hint: t('common.notAllowed') };
-  return {};
-}
 
 // Creating comes first, bringing something in second; the divider is the line between the two.
-const newItems = computed<FloatingMenuEntry[]>(() => [
-  { id: 'folder', label: t('new.folder'), icon: FolderPlus, ...gate(capabilities.can.mkdir, 'files.mkdir') },
-  { id: 'file', label: t('new.file'), icon: FilePlus, ...gate(capabilities.can.upload, 'files.upload') },
-  { id: 'fileUpload', label: t('new.fileUpload'), icon: Upload, dividerBefore: true, ...gate(capabilities.can.upload, 'files.upload') },
-  { id: 'folderUpload', label: t('new.folderUpload'), icon: FolderUp, ...gate(capabilities.can.upload, 'files.upload') },
-]);
-
 /**
  * The other two ways an account can be full, on one line under the bar.
  *
@@ -116,11 +105,6 @@ const quotaLimits = computed(() => {
   return parts.join(' · ');
 });
 
-const newMenu = ref<{ x: number; y: number } | null>(null);
-const fileInput = ref<HTMLInputElement>();
-const folderInput = ref<HTMLInputElement>();
-const NEW_MENU_GAP = 6;
-
 /**
  * The logo reloads the app, the way the logo of a web app usually does.
  *
@@ -129,25 +113,6 @@ const NEW_MENU_GAP = 6;
  */
 function reload() {
   window.location.reload();
-}
-
-function openNewMenu(event: MouseEvent) {
-  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-  newMenu.value = { x: rect.left, y: rect.bottom + NEW_MENU_GAP };
-}
-
-function onNewSelect(id: string) {
-  newMenu.value = null;
-  if (id === 'folder') modals.open({ kind: 'newFolder' });
-  else if (id === 'file') modals.open({ kind: 'newFile' });
-  else if (id === 'fileUpload') fileInput.value?.click();
-  else if (id === 'folderUpload') folderInput.value?.click();
-}
-
-function onFilesPicked(event: Event) {
-  const input = event.target as HTMLInputElement;
-  if (input.files?.length) void uploads.start(input.files);
-  input.value = '';
 }
 
 /**
@@ -189,26 +154,13 @@ function onResizeKeydown(event: KeyboardEvent) {
 
 onBeforeUnmount(() => stopDrag?.());
 
-/**
- * The width below which the sidebar is a rail whatever the stored preference says.
- *
- * At 390 px an expanded sidebar left the listing about 150 px — narrower than a row can be drawn in — so the ⋮ at
- * the end of every row sat outside the page and a row's actions could not be reached at all. The person's own
- * choice is untouched: it is what comes back the moment there is room for it again.
- */
-const RAIL_BELOW_PX = 768;
-const narrow = ref(false);
-let viewport: MediaQueryList | undefined;
-const onViewportChange = (event: MediaQueryListEvent) => (narrow.value = event.matches);
-onMounted(() => {
-  viewport = window.matchMedia(`(max-width: ${RAIL_BELOW_PX - 1}px)`);
-  narrow.value = viewport.matches;
-  viewport.addEventListener('change', onViewportChange);
-});
-onBeforeUnmount(() => viewport?.removeEventListener('change', onViewportChange));
+const { isMobile } = useBreakpoint();
 
-/** What the sidebar actually draws as: the preference, or the rail a narrow screen forces. */
-const collapsed = computed(() => narrow.value || view.sidebarCollapsed);
+/**
+ * What the sidebar actually draws as. The drawer is always the full column — a rail inside a drawer would be a
+ * menu that hides its own labels — and beside the listing it is whatever the person last chose.
+ */
+const collapsed = computed(() => !props.drawer && view.sidebarCollapsed);
 
 // Spec §2: a row is one --control-md tall and the active one paints the full width between the rail's gutters.
 // Rail mode keeps the same rows and paints the same active box; only the labels and the section captions go.
@@ -227,10 +179,10 @@ const captionClass = 'mt-4 px-[18px] text-10 font-semibold uppercase leading-non
   <nav
     class="relative flex h-full shrink-0 flex-col border-r border-border bg-bg-sidebar"
     :class="collapsed ? 'w-[60px] items-center' : ''"
-    :style="collapsed ? undefined : { width: `${view.sidebarWidth}px` }"
+    :style="collapsed ? undefined : { width: drawer ? '280px' : `${view.sidebarWidth}px` }"
   >
     <div
-      v-if="!collapsed"
+      v-if="!collapsed && !drawer"
       role="separator"
       aria-orientation="vertical"
       :aria-label="t('nav.resize')"
@@ -242,11 +194,12 @@ const captionClass = 'mt-4 px-[18px] text-10 font-semibold uppercase leading-non
     />
     <!-- Same height as the topbar beside it, so the two rules across the top of the app line up. -->
     <div class="flex h-12 items-center" :class="collapsed ? 'justify-center' : 'pl-2'">
+      <!-- In the drawer the same button is the way OUT of it: there is no column here to collapse. -->
       <IconButton
-        :label="t(collapsed ? 'nav.expandMenu' : 'nav.collapseMenu')"
+        :label="drawer ? t('nav.closeMenu') : t(collapsed ? 'nav.expandMenu' : 'nav.collapseMenu')"
         class="text-text"
-        :aria-expanded="!collapsed"
-        @click="view.sidebarCollapsed = !collapsed"
+        :aria-expanded="drawer ? undefined : !collapsed"
+        @click="drawer ? (view.drawerOpen = false) : (view.sidebarCollapsed = !collapsed)"
       >
         <MenuIcon :size="18" :stroke-width="1.75" />
       </IconButton>
@@ -268,15 +221,17 @@ const captionClass = 'mt-4 px-[18px] text-10 font-semibold uppercase leading-non
       </button>
     </div>
 
-    <!-- Same left edge (x 14) as the active nav pill below; the button's own icon and label are centred inside it. -->
-    <div class="mt-2" :class="collapsed ? '' : 'px-1.5'">
+    <!-- Same left edge (x 14) as the active nav pill below; the button's own icon and label are centred inside it.
+         On a phone this is not here at all: the `+` in the listing toolbar is the single way in (spec §10), and two
+         entry points to the same menu is one more than anybody needs on a 390px screen. -->
+    <div v-if="!isMobile" class="mt-2" :class="collapsed ? '' : 'px-1.5'">
       <Button
         :size="collapsed ? 'sm' : 'md'"
         :class="collapsed ? '!h-control-lg !w-control-lg !rounded-full !px-0' : 'w-full !gap-0 !px-0'"
         aria-haspopup="menu"
         :aria-expanded="!!newMenu"
         :aria-label="collapsed ? t('new.button') : undefined"
-        @click="openNewMenu"
+        @click="openNewMenu($event.currentTarget as HTMLElement)"
       >
         <Plus v-if="collapsed" :size="18" />
         <template v-else>

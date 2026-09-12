@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, Download, ExternalLink, Maximize, Minus, Plu
 import { repository } from '@/data';
 import type { Node } from '@/data/types';
 import { useFormat } from '@/composables/useFormat';
+import { swallowGhostClick } from '@/lib/ghostClick';
 // The Markdown parser and renderer the assistant answers with. It is the app's one Markdown reader: a safe block
 // parser with no `v-html` behind it, and a `.md` file is untrusted text for exactly the same reason an answer is.
 import AnswerText from '@/features/assistant/AnswerText.vue';
@@ -95,8 +96,15 @@ function onWheel(event: WheelEvent) {
   scale.value = next;
 }
 
+/**
+ * Panning is a mouse and pen gesture only.
+ *
+ * There is no pinch to zoom, so on a phone the image is always whole and there is nothing to pan TO — the drag
+ * only ever shifted a fitted image off its own frame. The finger's downward drag means dismiss instead, and the
+ * stage below owns it.
+ */
 function onPanStart(event: PointerEvent) {
-  if (event.button !== 0) return;
+  if (event.button !== 0 || event.pointerType === 'touch') return;
   panning.value = true;
   panOrigin = { x: event.clientX, y: event.clientY, offsetX: offsetX.value, offsetY: offsetY.value };
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
@@ -112,6 +120,53 @@ function onPanEnd(event: PointerEvent) {
   if (!panning.value) return;
   panning.value = false;
   (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+}
+
+/**
+ * The two swipes: sideways walks the listing, down dismisses.
+ *
+ * One distance for both — the same 56px the details sheet closes at (SidePanel.vue), because a gesture has to
+ * mean the same thing wherever it is made. The axis is settled by whichever offset is the larger when the
+ * threshold is first crossed, so a diagonal drag does one thing rather than both, and the gesture is then spent:
+ * a long drag steps ONE file, the way a page turns once.
+ *
+ * Never started inside something that scrolls: a text or CSV preview is READ by dragging it, and a drag that
+ * closed the file instead of scrolling it would put the bottom of every long file out of reach. A PDF draws in an
+ * iframe, whose pointer events never cross into this document, so there the close button stays the only way out.
+ */
+const SWIPE_PX = 56;
+const stage = ref<HTMLElement>();
+let swipeFrom: { x: number; y: number } | null = null;
+
+function scrolls(target: EventTarget | null): boolean {
+  let el = target instanceof HTMLElement ? target : null;
+  while (el && el !== stage.value) {
+    if (el.scrollHeight > el.clientHeight) return true;
+    el = el.parentElement;
+  }
+  return false;
+}
+
+function swipeStart(event: PointerEvent) {
+  swipeFrom = event.pointerType === 'touch' && !scrolls(event.target) ? { x: event.clientX, y: event.clientY } : null;
+}
+
+function swipeMove(event: PointerEvent) {
+  if (!swipeFrom) return;
+  const dx = event.clientX - swipeFrom.x;
+  const dy = event.clientY - swipeFrom.y;
+  if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_PX) return;
+  swipeFrom = null;
+  // The preview is gone before the finger is lifted, so the click this gesture ends with would land on the card
+  // underneath it.
+  swallowGhostClick();
+  // Left uncovers what is further down the listing, the way a photo roll moves under the finger.
+  if (Math.abs(dx) > Math.abs(dy)) step(dx < 0 ? 1 : -1);
+  else if (dy > 0) emit('close');
+}
+
+function swipeEnd() {
+  swipeFrom = null;
 }
 
 // Fetched content of text-like files.
@@ -254,7 +309,14 @@ const CLOSE_CLASS =
         </div>
       </header>
 
-      <div class="relative flex min-h-0 flex-1 items-center justify-center">
+      <div
+        ref="stage"
+        class="relative flex min-h-0 flex-1 items-center justify-center"
+        @pointerdown="swipeStart"
+        @pointermove="swipeMove"
+        @pointerup="swipeEnd"
+        @pointercancel="swipeEnd"
+      >
         <template v-if="nodes.length > 1">
           <button type="button" :class="[CHEVRON_CLASS, 'left-5']" :disabled="!hasPrevious" class="disabled:opacity-30" :aria-label="t('preview.previous')" @click="step(-1)">
             <ChevronLeft :size="24" />
@@ -305,7 +367,7 @@ const CLOSE_CLASS =
           </div>
         </div>
 
-        <video v-else-if="kind === 'video'" :key="current.id" :src="current.assetUrl" controls autoplay muted playsinline class="max-h-[80vh] max-w-[90vw] rounded-lg" />
+        <video v-else-if="kind === 'video'" :key="current.id" :src="current.assetUrl" controls autoplay muted playsinline class="max-h-[80dvh] max-w-[90vw] rounded-lg" />
 
         <!-- Sound has nothing to show, so the card carries the file's identity and the browser's own transport. -->
         <div v-else-if="kind === 'audio'" class="flex w-[420px] max-w-[90vw] flex-col items-center rounded-2xl bg-bg p-[26px] text-center shadow-modal">
@@ -335,7 +397,7 @@ const CLOSE_CLASS =
           :key="current.id"
           :src="current.assetUrl"
           :title="current.name"
-          class="h-[80vh] w-[80vw] rounded-lg bg-bg"
+          class="h-[80dvh] w-[80vw] rounded-lg bg-bg"
           @load="onPdfLoad"
         />
 
@@ -347,7 +409,7 @@ const CLOSE_CLASS =
               <Download :size="18" />{{ t('preview.download') }}
             </a>
           </div>
-          <div v-else class="max-h-[80vh] w-[80vw] overflow-auto rounded-lg bg-bg text-text">
+          <div v-else class="max-h-[80dvh] w-[80vw] overflow-auto rounded-lg bg-bg text-text">
             <table v-if="kind === 'csv'" class="w-full border-collapse text-11.5">
               <thead v-if="rows.length">
                 <tr class="border-b border-border bg-bg-muted">
@@ -367,7 +429,18 @@ const CLOSE_CLASS =
           </div>
         </template>
 
-        <div v-else class="flex w-[420px] flex-col items-center rounded-2xl bg-bg p-[26px] text-center shadow-modal">
+        <div v-else class="relative flex w-[420px] flex-col items-center rounded-2xl bg-bg p-[26px] text-center shadow-modal">
+          <!-- The header's close button is far from the card; a file with nothing to show is all the reader is
+               looking at, so the way out sits on it. -->
+          <button
+            type="button"
+            class="absolute right-2.5 top-2.5 flex h-8 w-8 items-center justify-center rounded-md text-text-2 hover:bg-bg-muted"
+            :aria-label="t('preview.close')"
+            :title="t('preview.close')"
+            @click="emit('close')"
+          >
+            <X :size="18" />
+          </button>
           <FileTypeTile :type="current.fileType ?? 'other'" :size="56" />
           <p class="mt-4 max-w-full truncate text-13 font-medium text-text">{{ current.name }}</p>
           <p class="mt-1 text-11.5 leading-none text-text-3">{{ formatSize(current.size) }}</p>

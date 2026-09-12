@@ -55,7 +55,9 @@
     "collapseMenu": "Menüyü daralt",
     "expandMenu": "Menüyü genişlet",
     "reload": "Yeniden yükle",
-    "resize": "Kenar çubuğunun genişliğini değiştir"
+    "resize": "Kenar çubuğunun genişliğini değiştir",
+    "openMenu": "Menüyü aç",
+    "closeMenu": "Menüyü kapat"
   },
   "new": {
     "button": "Yeni",
@@ -277,7 +279,8 @@
     "account": "Hesap",
     "theme": "Tema: {current}. {next} moduna geç",
     "adminSettings": "Yönetici ayarları",
-    "signOut": "Oturumu kapat"
+    "signOut": "Oturumu kapat",
+    "closeSearch": "Aramayı kapat"
   },
   "files": {
     "breadcrumbHome": "Ana sayfa",
@@ -310,7 +313,8 @@
     "listingActions": "Liste eylemleri",
     "dropHere": "“{folder}” klasörüne yüklemek için bırakın",
     "fileKind": "Tür",
-    "location": "Konum"
+    "location": "Konum",
+    "breadcrumbUp": "Bir üst düzeye"
   },
   "filter": {
     "type": "Tür",
@@ -643,8 +647,8 @@
       "cancelled": "Bu planı reddettiniz",
       "ran": "Bitti — her satırda ona ne olduğu görünüyor",
       "itemDone": "yapıldı",
-      "approvedPrompt": "Planı onayladım. {done} yapıldı, {skipped} yapılmadı.",
-      "refusedPrompt": "Bu planı onaylamıyorum.",
+      "executedNote": "Plan uygulandı: {done} yapıldı, {skipped} yapılmadı.",
+      "refusedNote": "Plan reddedildi. Hiçbir şey yapılmadı.",
       "reason": {
         "gone": "artık yoktu",
         "changed": "plan yapıldıktan sonra değişmişti",

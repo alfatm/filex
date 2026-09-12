@@ -78,9 +78,15 @@ type AssistantPlan struct {
 }
 
 // Assistant message roles.
+//
+// AssistantRoleSystem is the EXECUTOR speaking: the server saying what it did
+// after the person decided on a plan. It is a third side of the conversation —
+// neither the person nor the model — and it exists because the outcome used to
+// be reported by sending a chat message worded as if the person had typed it.
 const (
 	AssistantRoleUser      = "user"
 	AssistantRoleAssistant = "assistant"
+	AssistantRoleSystem    = "system"
 )
 
 // AssistantSession is one conversation. It carries no message text at all — see

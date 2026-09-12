@@ -55,7 +55,7 @@ onMounted(() => void assistant.loadSessions());
       {{ t('assistant.capacity', { count: assistant.sessions.length, max: assistant.sessionMax }) }}
     </p>
 
-    <ul v-if="shown.length" class="mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto" :aria-label="t('assistant.sessions')">
+    <ul v-if="shown.length" class="scroll-thin -mr-2 mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto pr-2" :aria-label="t('assistant.sessions')">
       <li v-for="session in shown" :key="session.id" class="group flex items-center gap-1 rounded-lg px-1 hover:bg-hover-row">
         <template v-if="editing === session.id">
           <Input
@@ -83,7 +83,7 @@ onMounted(() => void assistant.loadSessions());
             </span>
           </button>
           <!-- Shown on hover and on keyboard focus alike: a control only a mouse can reach is not a control. -->
-          <span class="flex shrink-0 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+          <span class="hover-reveal flex shrink-0">
             <IconButton
               :label="t('assistant.rename', { title: titleOf(session.title) })"
               :size="32"

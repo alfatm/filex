@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { defineAsyncComponent, onBeforeUnmount, onMounted, watch } from 'vue';
+import { Dialog, DialogPanel } from '@headlessui/vue';
 import { useI18n } from 'vue-i18n';
+import { useRoute } from 'vue-router';
+import { useBreakpoint } from '@/composables/useBreakpoint';
 import { repository } from '@/data';
 import { useDragStore } from '@/features/files/dragStore';
 import { useSettingsStore } from '@/features/settings/settingsStore';
@@ -24,6 +27,15 @@ const settings = useSettingsStore();
 const files = useFilesStore();
 const drag = useDragStore();
 const capabilities = useCapabilitiesStore();
+
+/**
+ * On a phone the sidebar is not in the layout at all (spec §10): a 60px rail beside a 390px screen is a sixth of
+ * it spent on icons whose labels are not shown. It opens as a drawer from the topbar instead, and closes itself
+ * the moment it has done its job — a menu left standing over the page it navigated to is a second thing to dismiss.
+ */
+const { isMobile } = useBreakpoint();
+const route = useRoute();
+watch(() => route.fullPath, () => (view.drawerOpen = false));
 
 /*
  * Start-up that needs an account, and therefore lives HERE rather than in App.vue: the shell is the part of the
@@ -151,7 +163,13 @@ function skipToContent() {
     >
       {{ t('nav.skipToContent') }}
     </button>
-    <Sidebar />
+    <Sidebar v-if="!isMobile" />
+    <Dialog v-else-if="view.drawerOpen" open class="relative z-40" @close="view.drawerOpen = false">
+      <div class="fixed inset-0 bg-overlay" aria-hidden="true" />
+      <DialogPanel class="fixed inset-y-0 left-0 flex max-w-[85vw] shadow-modal">
+        <Sidebar drawer />
+      </DialogPanel>
+    </Dialog>
     <div class="flex min-w-0 flex-1 flex-col">
       <TopBar />
       <!-- Pages own this area: content column plus the optional details panel. -->

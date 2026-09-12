@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia';
-import { nextTick } from 'vue';
+import { nextTick, watch } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ApprovalCard, AssistantCard, AssistantContext, AssistantEvent, AssistantMode, AssistantSession, PlanCard, SearchHit } from '@/data/types';
 import { HttpError } from '@/data/http/client';
@@ -184,6 +184,27 @@ describe('assistant store', () => {
     await turn;
     expect(store.streaming).toBe(false);
     expect(calls[0].prompt).toBe('hello');
+  });
+
+  // The panel watches the messages to redraw and to keep the log at its end. It saw none of this while the answer
+  // was written onto the object `push` handed back rather than onto the element the list actually holds.
+  it('streams every delta as a change anything watching the messages can see', async () => {
+    script = [{ type: 'text', delta: 'one ' }, { type: 'text', delta: 'two' }, { type: 'hits', hits: [hit] }, { type: 'done' }];
+    const store = useAssistantStore();
+    const seen: string[] = [];
+    watch(() => store.messages.map((m) => `${m.text.length}/${m.hits?.length ?? 0}`).join(), (shape) => seen.push(shape));
+
+    const turn = store.send('hello');
+    await nextTick();
+    await step();
+    await nextTick();
+    await step();
+    await nextTick();
+    await step();
+    await nextTick();
+    await step();
+    await turn;
+    expect(seen).toEqual(['5/0', '5/0,4/0', '5/0,7/0', '5/0,7/1']);
   });
 
   it('hands what is on screen to the repository with the question', async () => {

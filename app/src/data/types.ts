@@ -696,6 +696,20 @@ export interface PlanOutcome {
   done: number;
   skipped: number;
   failed: number;
+  /** The executor's own line about this decision, as the server stored it; it goes straight into the log. */
+  note?: AssistantMessage;
+}
+
+/**
+ * What the executor did about one plan, as codes and counts. The panel words it — the same reason a plan item
+ * carries an action code and not a sentence.
+ */
+export interface PlanDecision {
+  planId: string;
+  status: 'done' | 'cancelled';
+  done: number;
+  skipped: number;
+  failed: number;
 }
 
 /** A card is either a request to open one file or a plan of work. Both are answered by the person, not the model. */
@@ -731,7 +745,12 @@ export interface AssistantReport {
 
 export interface AssistantMessage {
   id: string;
-  role: 'user' | 'assistant';
+  /**
+   * `system` is the EXECUTOR: the server saying what it did once the person decided on a plan. A third side of the
+   * conversation, drawn as neither the person nor the assistant — the outcome used to be reported by sending a chat
+   * message worded as if the person had typed it.
+   */
+  role: 'user' | 'assistant' | 'system';
   text: string;
   /** ISO timestamp. */
   at: string;
@@ -745,6 +764,8 @@ export interface AssistantMessage {
   error?: AssistantFailure;
   /** The stream was stopped (panel closed) while this message was open. */
   aborted?: boolean;
+  /** On a `system` message: which plan it is about and how it ended. The panel draws this, not `text`. */
+  planDecision?: PlanDecision;
 }
 
 /**

@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils';
+import { DOMWrapper, mount } from '@vue/test-utils';
 import { nextTick } from 'vue';
 import { afterEach, describe, expect, it } from 'vitest';
 import FloatingMenu from './FloatingMenu.vue';
@@ -21,7 +21,9 @@ async function setup() {
   const wrapper = mount(FloatingMenu, { attachTo: document.body, props: { items, x: 10, y: 20, label: 'More' } });
   await nextTick();
   await nextTick();
-  return { wrapper, trigger, buttons: () => wrapper.findAll('button') };
+  // Teleported to the body, so the menu is outside the wrapper's own element.
+  const buttons = () => [...document.querySelectorAll<HTMLButtonElement>('[role="menu"] button')].map((el) => new DOMWrapper(el));
+  return { wrapper, trigger, buttons };
 }
 
 describe('FloatingMenu', () => {
@@ -96,6 +98,18 @@ describe('FloatingMenu', () => {
     wrapper = s.wrapper;
     document.body.dispatchEvent(new Event('scroll', { bubbles: true }));
     expect(wrapper.emitted('close')).toHaveLength(1);
+  });
+
+  // Below `xl` the filter chips sit in a side-scroller with a `mask-image`, which is a containing block for fixed
+  // descendants: the chip menus were clipped to the chips' own strip and painted nothing, while still being in the
+  // DOM and "visible" to a test. Where the menu is MOUNTED is therefore part of the contract.
+  it('renders at the body, not inside the element that opened it', async () => {
+    document.body.innerHTML = '';
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    wrapper = mount(FloatingMenu, { attachTo: host, props: { items, x: 10, y: 20, label: 'More' } });
+    await nextTick();
+    expect(document.querySelector('[role="menu"]')?.parentElement).toBe(document.body);
   });
 
   it('closes on a pointer press outside, not inside', async () => {

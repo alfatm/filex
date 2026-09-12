@@ -2,19 +2,24 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
-import { AlertTriangle, Filter, Folder, FolderOpen, Info, LayoutGrid, List, MoreVertical, PencilLine, Upload } from 'lucide-vue-next';
+import { AlertTriangle, Filter, Folder, FolderOpen, Info, LayoutGrid, List, MoreVertical, PencilLine, Plus, Upload } from 'lucide-vue-next';
 import FilterChip from '@/features/files/FilterChip.vue';
 import AppliedFilters from '@/features/files/AppliedFilters.vue';
 import { type FilterId } from '@/features/files/filters';
 import { useDragStore } from '@/features/files/dragStore';
+import type { Node } from '@/data/types';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
 import { useFilterQuery } from '@/features/files/useFilterQuery';
 import { useListingKeyboard } from '@/features/files/useListingKeyboard';
 import { useUploadStore } from '@/features/files/uploadStore';
 import { splitRoute } from '@/lib/path';
+import { useBreakpoint } from '@/composables/useBreakpoint';
+import { useNewMenu } from '@/features/files/useNewMenu';
+import { useNodeTaps } from '@/features/files/useNodeTaps';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
 import { Button, IconButton, Input } from '@/ui';
+import FloatingMenu from '@/ui/FloatingMenu.vue';
 import Breadcrumbs from './files/Breadcrumbs.vue';
 import DetailsPanel from './files/DetailsPanel.vue';
 import EmptyState from './files/EmptyState.vue';
@@ -29,6 +34,31 @@ const { t } = useI18n();
 const route = useRoute();
 const files = useFilesStore();
 const view = useViewStore();
+// The name filter is a fixed 210 beside the chips on the desktop; below `xl` it takes its own row (spec §10).
+const { isMobile } = useBreakpoint();
+/**
+ * Touch (spec §10). A tap opens, a double tap on a file puts its details on the whole screen, a long press is the
+ * right button a finger does not have. A mouse keeps the click/double-click/right-click it always had — these
+ * handlers do nothing unless the pointer that produced the event is a finger.
+ */
+const taps = useNodeTaps({
+  tap: (node) => void openNode(node),
+  doubleTap: (node) => showDetails(node),
+  longPress: (node, target) => itemMenu.openFor(node, target),
+});
+
+function showDetails(node: Node) {
+  files.select(node.id);
+  view.detailsOpen = true;
+  view.detailsFull = true;
+}
+
+function closeDetails() {
+  view.detailsOpen = false;
+  view.detailsFull = false;
+}
+
+const { menu: newMenu, items: newItems, fileInput, folderInput, openAt: openNewMenu, select: onNewSelect, onFilesPicked } = useNewMenu();
 const { onKeydown, onMainClick, onMainContextMenu, activeDescendant, open: openNode } = useListingKeyboard();
 const itemMenu = useItemMenuStore();
 const drag = useDragStore();
@@ -158,7 +188,7 @@ watch(
          tags, and on one fixed line they pushed the name box and the sort control off the page. It keeps the
          control-md height until there is a second line to draw. -->
     <div v-else class="mt-2 flex min-h-control-md flex-wrap items-center gap-2">
-      <div role="group" :aria-label="t('filter.title')" class="flex min-w-0 flex-wrap items-center gap-2">
+      <div role="group" :aria-label="t('filter.title')" class="chips-scroller flex min-w-0 basis-full items-center gap-2 md:flex-1 md:basis-auto md:flex-wrap">
         <FilterChip v-for="id in FILTERS" :key="id" :id="id" />
         <AppliedFilters />
       </div>
@@ -169,8 +199,8 @@ watch(
         type="search"
         :icon="Folder"
         :height="28"
-        :width="210"
-        class="!rounded shrink-0"
+        :width="isMobile ? undefined : 210"
+        class="!rounded min-w-[110px] flex-1 md:w-auto md:flex-none"
         :placeholder="t('filter.name')"
         :label="t('filter.name')"
         @update:model-value="files.setName(String($event))"
@@ -188,12 +218,43 @@ watch(
           <MoreVertical :size="16" />
         </IconButton>
       </template>
+
+      <!-- The phone's ONE way to create anything (spec §10): the drawer carries no New button, so this is it. -->
+      <template v-if="isMobile">
+        <Button
+          :size="'sm'"
+          class="ml-1 !h-control-md !w-control-md !rounded-full !px-0"
+          :aria-label="t('new.button')"
+          aria-haspopup="menu"
+          :aria-expanded="!!newMenu"
+          @click="openNewMenu($event.currentTarget as HTMLElement)"
+        >
+          <Plus :size="18" />
+        </Button>
+        <FloatingMenu
+          v-if="newMenu"
+          :items="newItems"
+          :x="newMenu.x"
+          :y="newMenu.y"
+          :label="t('new.button')"
+          @select="onNewSelect"
+          @close="newMenu = null"
+        />
+        <input ref="fileInput" type="file" multiple class="hidden" tabindex="-1" :aria-label="t('new.fileUpload')" @change="onFilesPicked" />
+        <input ref="folderInput" type="file" webkitdirectory multiple class="hidden" tabindex="-1" :aria-label="t('new.folderUpload')" @change="onFilesPicked" />
+      </template>
     </div>
 
     <ListingSkeleton v-if="files.loading && !files.ordered.length" class="mr-[9px] mt-3" :mode="view.mode" />
 
     <div v-else-if="view.mode === 'list' && files.ordered.length" class="mr-[9px] mt-3">
-      <FileTable tabindex="0" :aria-activedescendant="activeDescendant" @keydown="onKeydown" @open="openNode" />
+      <FileTable
+        tabindex="0"
+        :aria-activedescendant="activeDescendant"
+        @keydown="onKeydown"
+        @open="openNode"
+        @details="showDetails"
+      />
     </div>
 
     <!-- One listbox for both sections so ↑/↓ walk folders then files; cards stay tabbable and sync the cursor on focus. -->
@@ -217,6 +278,10 @@ watch(
             :focused="files.cursorId === node.id"
             @click="files.selectFromEvent(node.id, $event)"
             @dblclick="openNode(node)"
+            @pointerdown="taps.down($event, node)"
+            @pointermove="taps.move($event)"
+            @pointerup="taps.up($event, node)"
+            @pointercancel="taps.cancel()"
             @focus="files.focusedId = node.id"
           />
         </div>
@@ -233,6 +298,10 @@ watch(
             :focused="files.cursorId === node.id"
             @click="files.selectFromEvent(node.id, $event)"
             @dblclick="openNode(node)"
+            @pointerdown="taps.down($event, node)"
+            @pointermove="taps.move($event)"
+            @pointerup="taps.up($event, node)"
+            @pointercancel="taps.cancel()"
             @focus="files.focusedId = node.id"
           />
         </div>
@@ -264,6 +333,6 @@ watch(
     :path="files.focusPath"
     :people="files.people"
     :user="files.user"
-    @close="view.detailsOpen = false"
+    @close="closeDetails"
   />
 </template>

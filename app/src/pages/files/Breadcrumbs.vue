@@ -2,9 +2,10 @@
 import { computed, nextTick, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { isNavigationFailure, NavigationFailureType, useRouter } from 'vue-router';
-import { ChevronRight, Home, MoreHorizontal } from 'lucide-vue-next';
+import { ArrowLeft, ChevronRight, Home, MoreHorizontal } from 'lucide-vue-next';
 import { repository } from '@/data';
 import type { Node } from '@/data/types';
+import { useBreakpoint } from '@/composables/useBreakpoint';
 import { filesRoute, segments } from '@/lib/path';
 import { useNodeDrag } from '@/features/files/useNodeDrag';
 import { useFilesStore } from '@/stores/files';
@@ -43,6 +44,16 @@ const crumbs = computed<Crumb[]>(() => {
     current: index === chain.length - 1,
   }));
 });
+
+/**
+ * The phone's version of the chain (spec §10): one step back and the name of the folder you are in.
+ *
+ * The full chain does not fit — measured, it truncated to "d…" and told nobody anything. The ancestors are not
+ * lost: the same chain is still in the address bar behind the pencil, and the drive is one Home away.
+ */
+const { isMobile } = useBreakpoint();
+const current = computed(() => crumbs.value.at(-1) ?? null);
+const parent = computed(() => (crumbs.value.length > 1 ? crumbs.value.at(-2) ?? null : null));
 
 const folded = computed(() => (crumbs.value.length > KEEP_HEAD + KEEP_TAIL ? crumbs.value.slice(KEEP_HEAD, -KEEP_TAIL) : []));
 /** What the bar draws, in order: the kept crumbs with the fold marker where the rest were dropped. */
@@ -127,6 +138,22 @@ async function openSubfolders(event: MouseEvent) {
       @keydown.esc="editing = false"
       @focusout="editing = false"
     />
+
+    <!-- Phone: back, then the open folder as the page's heading. -->
+    <template v-else-if="isMobile">
+      <IconButton
+        :label="parent ? t('files.breadcrumbUp') : t('files.breadcrumbHome')"
+        :size="28"
+        class="-ml-1 mr-1 shrink-0 text-text-2"
+        @click="go(parent?.parts ?? [])"
+      >
+        <ArrowLeft :size="18" />
+      </IconButton>
+      <h1 class="min-w-0 truncate-safe text-15 font-semibold leading-none">{{ current?.node.name ?? '' }}</h1>
+      <IconButton :label="t('files.subfolders')" :size="22" class="ml-0.5 shrink-0 text-text-3" aria-haspopup="menu" @click="openSubfolders">
+        <ChevronRight :size="14" />
+      </IconButton>
+    </template>
 
     <template v-else>
       <IconButton :label="t('files.breadcrumbHome')" :size="28" class="text-text-2" @click="go([])"><Home :size="16" /></IconButton>

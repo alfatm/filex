@@ -57,7 +57,7 @@ const skippable = computed(() => props.hit.folderPath !== '');
         v-if="skippable"
         :label="t('search.skipFolder', { folder: folderLabel })"
         :size="32"
-        class="text-text-3 opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:opacity-100"
+        class="hover-reveal text-text-3"
         @click.stop="emit('skip', hit.folderPath)"
       >
         <FolderMinus :size="18" />

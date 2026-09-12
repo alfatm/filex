@@ -161,6 +161,9 @@ func (h *Assistant) Messages(w http.ResponseWriter, r *http.Request) {
 		if cards := storedCards(m.PayloadJSON); len(cards) > 0 {
 			row["cards"] = hydratePlans(cards, plans)
 		}
+		if decision := storedDecision(m.PayloadJSON); decision != nil {
+			row["plan_decision"] = decision
+		}
 		if hits := storedHits(m.PayloadJSON); len(hits) > 0 {
 			row["hits"] = hits
 		}
@@ -299,6 +302,21 @@ func storedHits(payload string) []json.RawMessage {
 		return nil
 	}
 	return stored.Hits
+}
+
+// storedDecision reads back the executor's note about a plan — what the person
+// decided and what the server then did. The panel words it; nothing here does.
+func storedDecision(payload string) *planDecision {
+	if payload == "" || payload == "{}" {
+		return nil
+	}
+	var stored struct {
+		Decision *planDecision `json:"plan_decision"`
+	}
+	if json.Unmarshal([]byte(payload), &stored) != nil {
+		return nil
+	}
+	return stored.Decision
 }
 
 // storedReports reads back the documents the tools wrote for the person, as

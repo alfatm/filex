@@ -77,6 +77,12 @@ func (h *Assistant) Status(w http.ResponseWriter, r *http.Request) {
 
 type turnReq struct {
 	Prompt string `json:"prompt"`
+	// Resume is a turn nobody typed: the executor has just written what a plan
+	// did, that plan left something undone, and the model is let back in to
+	// deal with it. It carries no prompt — the note is already the last thing
+	// in the conversation — and it is refused unless that note really is the
+	// last thing said AND really left work over.
+	Resume bool `json:"resume"`
 	// Mode is the scope chip the person had selected: "filename", "content" or
 	// "tags". Anything else is ignored rather than refused — it is a hint, and
 	// a turn is worth more than a 400 over a chip.
@@ -307,7 +313,21 @@ func (h *Assistant) Turn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prompt := strings.TrimSpace(req.Prompt)
-	if prompt == "" {
+	if req.Resume {
+		// ⚠ Guarded, and not only because a promptless turn is cheap to ask
+		// for: without this a client could keep re-entering a finished
+		// conversation and have the model answer itself. The executor's note
+		// has to be the last thing said.
+		resumable, err := h.resumable(r.Context(), session.ID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if prompt != "" || !resumable {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "nothing to resume"})
+			return
+		}
+	} else if prompt == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "empty prompt"})
 		return
 	}
@@ -333,14 +353,18 @@ func (h *Assistant) Turn(w http.ResponseWriter, r *http.Request) {
 	defer release()
 
 	// Stored before the model is called: a question the person asked is part of
-	// the conversation whether or not it gets an answer.
-	if _, err := h.Store.AppendAssistantMessage(r.Context(), &model.AssistantMessage{
-		SessionID: session.ID,
-		Role:      model.AssistantRoleUser,
-		Content:   prompt,
-	}); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
+	// the conversation whether or not it gets an answer. A resumed turn stores
+	// nothing — nobody asked anything, and an empty row would be replayed to
+	// the model as a turn the person took.
+	if !req.Resume {
+		if _, err := h.Store.AppendAssistantMessage(r.Context(), &model.AssistantMessage{
+			SessionID: session.ID,
+			Role:      model.AssistantRoleUser,
+			Content:   prompt,
+		}); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
 	}
 	history, err := h.history(r, session.ID)
 	if err != nil {
@@ -521,6 +545,30 @@ func startKeepalive(ctx context.Context, w http.ResponseWriter, stream *http.Res
 		// after the handler has returned races with the server recycling it.
 		<-stopped
 	}
+}
+
+// resumable says whether a turn may be started without anybody asking for it:
+// the last thing in the conversation is the executor's note about a plan that
+// ran and LEFT SOMETHING UNDONE.
+//
+// ⚠ The rule lives here and not only in the panel. A plan that ran in full and
+// a plan that was refused are both the end of the exchange — the model has
+// nothing to add to either — and a client that asked anyway would have it
+// answer itself into an empty room.
+func (h *Assistant) resumable(ctx context.Context, sessionID int64) (bool, error) {
+	rows, err := h.Store.ListAssistantMessages(ctx, sessionID)
+	if err != nil {
+		return false, err
+	}
+	if len(rows) == 0 {
+		return false, nil
+	}
+	last := rows[len(rows)-1]
+	if last.Role != model.AssistantRoleSystem {
+		return false, nil
+	}
+	decision := storedDecision(last.PayloadJSON)
+	return decision != nil && decision.Status == model.PlanDone && decision.Skipped+decision.Failed > 0, nil
 }
 
 // history replays the conversation for the model, oldest first.

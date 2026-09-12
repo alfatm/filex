@@ -199,6 +199,28 @@ approval of it answers 409. When the conversation is reopened, the card is
 redrawn from the stored row with its outcome, so a plan that already ran does
 not come back as a live button.
 
+### Who says what happened
+
+The executor. A decision appends one message of its own to the conversation,
+with role `system` — a third side beside the person and the model. Its payload
+carries the decision as codes and counts (`plan_decision`: the plan, `done` or
+`cancelled`, how many items were done and not done) and the panel words it in
+the reader's language; the English sentence stored in `content` is what the
+MODEL reads. The decide endpoint returns that message, so the panel can show it
+without re-reading the conversation.
+
+It used to be reported by SENDING a chat turn worded as the person — "I did not
+approve that plan" — which put words nobody typed into the transcript as theirs
+and spent a whole model turn having them answered.
+
+Nothing else follows a decision. A plan that ran in full and a plan that was
+refused both end the exchange: the model is not called, and the conversation
+waits for whatever the person asks next. The one exception is a plan that left
+items **undone** — that is work still outstanding, and the assistant is let back
+in to deal with it by `POST …/turn` with `{"resume": true}`: a turn with no
+prompt, which stores no question and is refused unless the last thing in the
+conversation really is a note saying something was left over.
+
 ### The fingerprint
 
 Between the proposal and the approval, a file can be edited, moved, replaced or
@@ -379,9 +401,9 @@ Everything is under `/api/assistant`, cookie-authenticated as the person.
 | `GET /api/assistant/status` | whether an assistant exists here, and which model |
 | `POST /api/assistant/sessions` · `GET` · `PATCH /{id}` · `DELETE /{id}` | conversations |
 | `GET /api/assistant/sessions/{id}` | its messages — owner only |
-| `POST /api/assistant/sessions/{id}/turn` | ask; answers as SSE. The body is `{"prompt", "mode", "context"}` — `mode` is the panel's scope chip, `context` what the person has on screen (`page`, the open `folder`, the `selected` addresses, the search page's `search`). Both are appended to that one question as hints for the model; neither is stored or replayed. `mode` also BINDS `search_files` for the turn — `filename` consults names only, `tags` reads every term as a tag — so the chip does something whether or not the model reads the hint |
+| `POST /api/assistant/sessions/{id}/turn` | ask; answers as SSE. The body is `{"prompt", "mode", "context"}` — `mode` is the panel's scope chip, `context` what the person has on screen (`page`, the open `folder`, the `selected` addresses, the search page's `search`). Both are appended to that one question as hints for the model; neither is stored or replayed. `{"resume": true}` is the one body with no prompt: the assistant being let back in after a plan left work undone, refused unless the conversation ends in a note saying so. `mode` also BINDS `search_files` for the turn — `filename` consults names only, `tags` reads every term as a tag — so the chip does something whether or not the model reads the hint |
 | `POST /api/assistant/sessions/{id}/approvals` | `{"path":"drive://…","decision":"allow"\|"deny"}` — the answer to a request to read that one file; the turn waiting at the card goes on with it |
-| `POST /api/assistant/sessions/{id}/plans/{planID}/approve` \| `/cancel` | decide a plan |
+| `POST /api/assistant/sessions/{id}/plans/{planID}/approve` \| `/cancel` | decide a plan; answers with the per-item outcome and with `message`, the executor's `system` line about the decision |
 | `GET`/`PUT /api/admin/assistant/provider`, `POST …/test` | operator: provider, model, key (write-only), limits |
 | `GET`/`DELETE /api/admin/assistant/sessions[/{id}]` | operator: history as metadata only |
 

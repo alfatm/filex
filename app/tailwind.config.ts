@@ -1,4 +1,6 @@
-/** @type {import('tailwindcss').Config} */
+import type { Config } from 'tailwindcss';
+import { BREAKPOINTS } from './src/design/breakpoints';
+
 // Every value maps onto a CSS variable declared in src/design/tokens.css, so
 // the spec's token table stays the single place where colours are defined.
 //
@@ -10,6 +12,12 @@
 export default {
   content: ['./index.html', './src/**/*.{vue,ts}'],
   theme: {
+    // Replaced rather than extended, and there is only one: `md:` is the phone/desktop edge of DESIGN-SPEC §10,
+    // and a second name would be a width nobody designed a layout for. The number lives in
+    // src/design/breakpoints.ts, which `useBreakpoint` reads as well.
+    screens: {
+      md: `${BREAKPOINTS.md}px`,
+    },
     colors: {
       transparent: 'transparent',
       current: 'currentColor',
@@ -100,4 +108,4 @@ export default {
     },
   },
   plugins: [],
-};
+} satisfies Config;

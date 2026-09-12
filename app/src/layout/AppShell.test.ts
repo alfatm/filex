@@ -3,12 +3,17 @@ import { createPinia, setActivePinia } from 'pinia';
 import { nextTick } from 'vue';
 import { createMemoryHistory, createRouter } from 'vue-router';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { breakpointMock, setLayout } from '@/test/viewport';
 import { repository } from '@/data';
 import { noQuota } from '@/data/types';
 import { useDragStore } from '@/features/files/dragStore';
 import { i18n } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
+import { useViewStore } from '@/stores/view';
 import AppShell from './AppShell.vue';
+
+vi.mock('@/composables/useBreakpoint', async () => (await import('@/test/viewport')).breakpointMock);
+void breakpointMock;
 
 const Page = { template: '<div />' };
 
@@ -129,6 +134,37 @@ describe('AppShell drive usage', () => {
     expect(listed).toHaveBeenCalled();
     expect(files.storages[0].quota.usedBytes).toBe(42);
     listed.mockRestore();
+    wrapper.unmount();
+  });
+});
+
+describe('AppShell sidebar drawer', () => {
+  afterEach(() => setLayout('desktop'));
+
+  // Spec §10: a 60px rail beside a 390px screen is a sixth of it spent on icons whose labels are not shown, so on
+  // a phone the sidebar is not in the layout at all — it comes over the listing when the topbar asks for it.
+  it('swaps the sidebar for a drawer on a phone', async () => {
+    setLayout('mobile');
+    const { wrapper } = await mountShell();
+    const view = useViewStore();
+    // The dialog is teleported to the body, so the sidebar is counted there rather than inside the wrapper.
+    expect(document.querySelectorAll('nav')).toHaveLength(0);
+
+    view.drawerOpen = true;
+    await nextTick();
+    await nextTick();
+    expect(document.querySelectorAll('nav')).toHaveLength(1);
+    wrapper.unmount();
+  });
+
+  it('keeps the sidebar in the layout, and no drawer, beside the listing', async () => {
+    const { wrapper } = await mountShell();
+    const view = useViewStore();
+
+    view.drawerOpen = true;
+    await nextTick();
+    await nextTick();
+    expect(document.querySelectorAll('nav')).toHaveLength(1);
     wrapper.unmount();
   });
 });

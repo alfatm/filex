@@ -40,6 +40,19 @@ const files = useFilesStore();
 const view = useViewStore();
 const { onKeydown, onMainClick, onMainContextMenu, activeDescendant, open } = useListingKeyboard();
 
+/** A double tap on a row asks for its details, full height (spec §10). */
+function showDetails(node: Node) {
+  files.select(node.id);
+  view.detailsOpen = true;
+  view.detailsFull = true;
+}
+
+/** The sheet opened at full height by a double tap has to forget that on the way out (spec §10). */
+function closeDetails() {
+  view.detailsOpen = false;
+  view.detailsFull = false;
+}
+
 useFilterQuery();
 onMounted(() => files.openListing(props.listing));
 </script>
@@ -55,7 +68,7 @@ onMounted(() => files.openListing(props.listing));
     <SelectionBar v-if="files.selected.length >= 2" class="mr-[9px] mt-2" />
     <!-- Wraps for the same reason My files does: a tag chip per tag will not fit one line beside the menus. -->
     <div v-else class="mt-2 flex min-h-control-md flex-wrap items-center gap-2">
-      <div role="group" :aria-label="t('filter.title')" class="flex min-w-0 flex-wrap items-center gap-2">
+      <div role="group" :aria-label="t('filter.title')" class="chips-scroller flex min-w-0 basis-full items-center gap-2 md:flex-1 md:basis-auto md:flex-wrap">
         <FilterChip v-for="id in filters" :key="id" :id="id" />
         <AppliedFilters />
       </div>
@@ -83,6 +96,7 @@ onMounted(() => files.openListing(props.listing));
         :group-by="groupBy"
         @keydown="onKeydown"
         @open="open"
+        @details="showDetails"
       />
     </div>
     <EmptyState v-else-if="files.error" class="mt-16" :icon="AlertTriangle" :title="t(`error.${files.error}.title`)" :hint="t(`error.${files.error}.hint`)">
@@ -107,6 +121,6 @@ onMounted(() => files.openListing(props.listing));
     :path="files.focusPath"
     :people="files.people"
     :user="files.user"
-    @close="view.detailsOpen = false"
+    @close="closeDetails"
   />
 </template>

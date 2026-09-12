@@ -150,33 +150,48 @@ onBeforeUnmount(() => {
 watch(() => [props.x, props.y], place);
 </script>
 
+<!--
+  Rendered at the body, not where it was opened.
+
+  `position: fixed` escapes an ancestor's `overflow`, but NOT an ancestor that is a containing block for fixed
+  descendants — a `mask-image`, a `transform`, a `filter`. Measured: below `xl` the filter chips sit in a masked
+  side-scroller (`.chips-scroller`), so every chip menu was clipped to the strip of the chips themselves and
+  painted nothing at all, while staying in the DOM and "visible" to a test. A menu placed in viewport coordinates
+  belongs in the viewport's own stacking context.
+
+  ⚠ `z-40`, level with the modals and panels rather than above them: a menu opened from inside one is now its
+  SIBLING rather than its descendant, and at the body it comes later in the document, which is what puts it on
+  top. The z-50 surfaces (the drawer, the toasts, the session modal) stay above, and none of them opens a menu.
+-->
 <template>
-  <div
-    ref="root"
-    role="menu"
-    :aria-label="label"
-    class="fixed z-30 rounded-lg bg-bg p-1.5 shadow-menu"
-    :style="{ left: `${left}px`, top: `${top}px`, width: `${width}px` }"
-  >
-    <template v-for="item in items" :key="item.id">
-      <div v-if="item.dividerBefore" class="my-1.5 h-px bg-border" />
-      <button
-        type="button"
-        :role="item.checked === undefined ? 'menuitem' : 'menuitemradio'"
-        :aria-checked="item.checked"
-        :aria-disabled="item.disabled || undefined"
-        :title="item.disabled ? item.hint : undefined"
-        class="flex h-control-sm w-full items-center gap-2 rounded px-2.5 text-12 leading-none hover:bg-bg-muted focus:outline-none focus-visible:bg-bg-muted"
-        :class="item.disabled ? 'cursor-default text-text-3' : item.danger ? 'text-danger' : 'text-text'"
-        @click="onSelect(item)"
-      >
-        <!-- The column is reserved for every entry of a single-choice menu, so the labels stay on one line. -->
-        <span v-if="item.checked !== undefined" class="flex w-4 shrink-0 justify-center text-primary">
-          <Check v-if="item.checked" :size="14" :stroke-width="2.5" />
-        </span>
-        <component :is="item.icon" v-if="item.icon" :size="16" class="shrink-0" />
-        <span>{{ item.label }}</span>
-      </button>
-    </template>
-  </div>
+  <Teleport to="body">
+    <div
+      ref="root"
+      role="menu"
+      :aria-label="label"
+      class="scroll-thin fixed z-40 max-h-[calc(100dvh-16px)] overflow-y-auto rounded-lg bg-bg p-1.5 shadow-menu"
+      :style="{ left: `${left}px`, top: `${top}px`, width: `${width}px` }"
+    >
+      <template v-for="item in items" :key="item.id">
+        <div v-if="item.dividerBefore" class="my-1.5 h-px bg-border" />
+        <button
+          type="button"
+          :role="item.checked === undefined ? 'menuitem' : 'menuitemradio'"
+          :aria-checked="item.checked"
+          :aria-disabled="item.disabled || undefined"
+          :title="item.disabled ? item.hint : undefined"
+          class="flex h-control-sm w-full items-center gap-2 rounded px-2.5 text-12 leading-none hover:bg-bg-muted focus:outline-none focus-visible:bg-bg-muted"
+          :class="item.disabled ? 'cursor-default text-text-3' : item.danger ? 'text-danger' : 'text-text'"
+          @click="onSelect(item)"
+        >
+          <!-- The column is reserved for every entry of a single-choice menu, so the labels stay on one line. -->
+          <span v-if="item.checked !== undefined" class="flex w-4 shrink-0 justify-center text-primary">
+            <Check v-if="item.checked" :size="14" :stroke-width="2.5" />
+          </span>
+          <component :is="item.icon" v-if="item.icon" :size="16" class="shrink-0" />
+          <span>{{ item.label }}</span>
+        </button>
+      </template>
+    </div>
+  </Teleport>
 </template>

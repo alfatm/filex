@@ -282,7 +282,7 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
     <div class="fixed inset-0 bg-overlay" aria-hidden="true" />
     <div class="fixed inset-0 overflow-y-auto">
       <DialogPanel
-        class="absolute left-1/2 top-[62px] ml-px w-[722px] -translate-x-1/2 rounded-2xl bg-bg px-[26px] pb-[22px] pt-[26px] shadow-modal"
+        class="absolute left-0 top-0 min-h-[100dvh] w-full rounded-none bg-bg px-4 pb-5 pt-5 shadow-modal md:left-1/2 md:top-[62px] md:ml-px md:min-h-0 md:w-[722px] md:-translate-x-1/2 md:rounded-2xl md:px-[26px] md:pb-[22px] md:pt-[26px]"
       >
         <div class="flex items-center">
           <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary-soft text-primary-strong">
@@ -333,7 +333,7 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
           </button>
         </div>
 
-        <div class="mt-4 grid grid-cols-2 gap-x-[35px]">
+        <div class="mt-4 grid grid-cols-1 gap-x-[35px] md:grid-cols-2">
           <!-- Left column -->
           <div class="flex flex-col gap-[18px]">
             <section>
@@ -469,7 +469,7 @@ const liveHits = computed(() => store.hits.slice(0, LIVE_ROWS));
           <li v-else-if="!liveHits.length && !store.loading" class="flex h-9 items-center text-13 text-text-3">{{ t('search.noResults') }}</li>
         </ul>
 
-        <div class="mt-[25px] flex items-center">
+        <div class="mt-[25px] flex flex-wrap items-center gap-y-2">
           <Button variant="outline" class="!h-11 w-[104px]" @click="store.reset()">
             <RotateCcw :size="18" />
             {{ t('search.reset') }}

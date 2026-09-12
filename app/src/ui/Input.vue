@@ -36,7 +36,7 @@ defineExpose({
 
 <template>
   <label
-    class="flex items-center rounded-md border border-border bg-bg px-3 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary"
+    class="touch-target flex items-center rounded-md border border-border bg-bg px-3 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary"
     :style="{ height: `${height}px`, width: width ? `${width}px` : undefined }"
   >
     <component :is="icon" v-if="icon" :size="16" class="mr-2 shrink-0 text-text-3" />

@@ -197,7 +197,7 @@ onMounted(load);
         </p>
 
         <div class="mt-3 flex items-center justify-between gap-2">
-          <div class="flex items-center gap-1.5">
+          <div class="flex flex-wrap items-center gap-1.5">
             <Button
               size="sm"
               variant="outline"
@@ -207,7 +207,7 @@ onMounted(load);
               <RefreshCcw class="h-3.5 w-3.5" />
               {{ t('common.syncNow') }}
             </Button>
-            <Button size="sm" variant="outline" @click="thumbTarget = s">
+            <Button size="sm" variant="outline" class="whitespace-nowrap" @click="thumbTarget = s">
               <ImageOff class="h-3.5 w-3.5" />
               {{ t('storages.resetThumbs') }}
             </Button>

@@ -11,6 +11,7 @@ import { LOCALES, setLocale, type Locale } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
 import { useViewStore } from '@/stores/view';
 import { Avatar, Button, Input, Select } from '@/ui';
+import { useBreakpoint } from '@/composables/useBreakpoint';
 import { useFormat } from '@/composables/useFormat';
 import Segmented from './Segmented.vue';
 import SettingRow from './SettingRow.vue';
@@ -384,6 +385,9 @@ async function pickPhoto(event: Event) {
   avatarUrl.value = canvas.toDataURL('image/jpeg', AVATAR_QUALITY);
 }
 
+/** Below `md` the tab column is a scrolling ROW (spec §10), so the pair of arrows that walks it changes with it. */
+const { isMobile } = useBreakpoint();
+
 /** Arrows move between tabs and open them, as everywhere else; Tab itself reaches only the selected one. */
 function step(delta: number) {
   const index = SECTIONS.findIndex((s) => s.id === active.value);
@@ -431,11 +435,11 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
 <template>
   <Dialog open :initial-focus="panelEl" class="relative z-40" @close="store.open = false">
     <div class="fixed inset-0 bg-overlay" aria-hidden="true" />
-    <div class="fixed inset-0 flex items-center justify-center overflow-y-auto p-6">
+    <div class="fixed inset-0 flex items-start justify-center overflow-y-auto p-4 md:items-center md:p-6">
       <DialogPanel
         ref="panel"
         tabindex="-1"
-        class="flex h-[680px] max-h-[calc(100vh-48px)] w-[800px] flex-col rounded-2xl bg-bg px-4 py-5 focus:outline-none shadow-modal"
+        class="flex h-[680px] max-h-[calc(100dvh-32px)] w-full max-w-[800px] flex-col rounded-2xl bg-bg px-4 py-5 focus:outline-none shadow-modal"
       >
         <div class="flex items-start">
           <Avatar :initial="files.user?.initial ?? ''" :src="avatarUrl" :size="44" class="!text-13" />
@@ -453,14 +457,16 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
           </button>
         </div>
 
-        <div class="mt-5 flex min-h-0 flex-1 gap-8">
+        <div class="mt-5 flex min-h-0 flex-1 flex-col gap-4 md:flex-row md:gap-8">
           <div
             role="tablist"
-            aria-orientation="vertical"
+            :aria-orientation="isMobile ? 'horizontal' : 'vertical'"
             :aria-label="t('settings.title')"
-            class="flex w-[150px] shrink-0 flex-col gap-px"
+            class="scroll-thin flex shrink-0 gap-px overflow-x-auto md:w-[150px] md:flex-col md:overflow-x-visible"
             @keydown.up.prevent="step(-1)"
             @keydown.down.prevent="step(1)"
+            @keydown.left.prevent="step(-1)"
+            @keydown.right.prevent="step(1)"
           >
             <button
               v-for="item in nav"
@@ -472,7 +478,7 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
               :aria-selected="active === item.id"
               :aria-controls="`settings-panel-${item.id}`"
               :tabindex="active === item.id ? 0 : -1"
-              class="flex h-10 w-full items-center gap-3 rounded-md px-3 text-13 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring"
+              class="flex h-10 shrink-0 items-center gap-3 whitespace-nowrap rounded-md px-3 text-13 leading-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-ring md:w-full"
               :class="active === item.id ? 'bg-primary-soft font-medium text-primary' : 'text-text-2 hover:bg-hover-row'"
               @click="active = item.id"
             >
@@ -486,16 +492,16 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
             role="tabpanel"
             :aria-labelledby="`settings-tab-${active}`"
             tabindex="0"
-            class="scroll-thin min-h-0 flex-1 overflow-y-auto pr-6 focus:outline-none"
+            class="scroll-thin min-h-0 flex-1 overflow-y-auto focus:outline-none md:pr-6"
           >
             <section v-if="active === 'profile'">
               <h3 class="text-13 font-semibold leading-none">{{ t('settings.nav.profile') }}</h3>
               <p class="mt-1.5 text-11 leading-none text-text-3">{{ t('settings.profile.hint') }}</p>
 
-              <div class="mt-5 flex items-center">
+              <div class="mt-5 flex flex-wrap items-center gap-y-3">
                 <Avatar :initial="files.user?.initial ?? ''" :src="avatarUrl" :size="62" class="!text-18 shrink-0" />
-                <div class="ml-4 min-w-0 flex-1">
-                  <p class="flex items-center gap-2">
+                <div class="ml-4 min-w-[160px] flex-1">
+                  <p class="flex flex-wrap items-center gap-2">
                     <span class="truncate-safe text-13 font-semibold leading-none">{{ displayName }}</span>
                     <span v-if="files.user" class="flex h-[22px] shrink-0 items-center rounded-full bg-primary-soft px-2 text-10 font-medium leading-none text-primary">
                       {{ t(`settings.roles.${files.user.role}`) }}
@@ -508,12 +514,12 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                 <Button v-if="avatarUrl" variant="outline" class="ml-3 shrink-0 !text-danger" @click="avatarUrl = ''">
                   {{ t('settings.profile.removePhoto') }}
                 </Button>
-                <Button variant="outline" class="ml-3 shrink-0" @click="photoInput?.click()">
+                <Button variant="outline" class="ml-3 shrink-0 max-md:ml-0" @click="photoInput?.click()">
                   {{ t('settings.profile.changePhoto') }}
                 </Button>
               </div>
 
-              <div class="mt-5 grid grid-cols-2 gap-x-6 gap-y-4">
+              <div class="mt-5 grid grid-cols-1 gap-x-6 gap-y-4 md:grid-cols-2">
                 <label>
                   <span :class="LABEL">{{ t('settings.profile.fullName') }}</span>
                   <Input v-model="profile.fullName" class="mt-2" :label="t('settings.profile.fullName')" />
@@ -683,7 +689,7 @@ const SECURITY_ROW = '-mx-2 flex h-10 w-full items-center gap-3 rounded-md px-2 
                     <div v-else-if="totpPanel === 'recovery'">
                       <p class="text-11.5 font-medium leading-none">{{ t('settings.security.recoveryCodes') }}</p>
                       <p class="mt-1.5 text-10 leading-[18px] text-text-3">{{ t('settings.security.recoveryCodesHint') }}</p>
-                      <ul :aria-label="t('settings.security.recoveryCodes')" class="mt-3 grid grid-cols-2 gap-x-6 gap-y-1.5 font-mono text-11 leading-none">
+                      <ul :aria-label="t('settings.security.recoveryCodes')" class="mt-3 grid grid-cols-1 gap-x-6 gap-y-1.5 font-mono text-11 leading-none md:grid-cols-2">
                         <li v-for="code in enrollment?.recoveryCodes ?? []" :key="code" class="select-all">{{ code }}</li>
                       </ul>
                       <div class="mt-3 flex gap-2">

@@ -11,6 +11,7 @@ import { filesRoute, segments } from '@/lib/path';
 import { useItemMenuStore } from '@/features/files/itemMenuStore';
 import { useClipboardStore } from '@/features/files/clipboardStore';
 import { useNodeDrag } from '@/features/files/useNodeDrag';
+import { useNodeTaps } from '@/features/files/useNodeTaps';
 import { sharedDriveOf } from '@/features/files/owner';
 import { useSettingsStore } from '@/features/settings/settingsStore';
 import HitIcon from '@/features/search/HitIcon.vue';
@@ -33,7 +34,7 @@ const props = withDefaults(
   }>(),
   { columns: () => ['fileKind', 'owner', 'lastModified', 'fileSize'], groupBy: undefined },
 );
-const emit = defineEmits<{ open: [node: Node] }>();
+const emit = defineEmits<{ open: [node: Node]; details: [node: Node] }>();
 
 const { t } = useI18n();
 const router = useRouter();
@@ -156,6 +157,16 @@ function openMenu(node: Node, event: MouseEvent) {
   itemMenu.openFor(node, event.currentTarget as HTMLElement);
 }
 
+/**
+ * Touch (spec §10): a tap opens the row, a double tap on a file asks for its details, a long press is the right
+ * button. A mouse never reaches these — `useNodeTaps` ignores anything that is not a finger.
+ */
+const taps = useNodeTaps({
+  tap: (node) => emit('open', node),
+  doubleTap: (node) => emit('details', node),
+  longPress: (node, target) => itemMenu.openFor(node, target),
+});
+
 /** Right-click acts on the row under the cursor: it joins the selection unless already part of it. */
 function onContextMenu(node: Node, event: MouseEvent) {
   if (!files.isSelected(node.id)) files.select(node.id);
@@ -238,6 +249,10 @@ function onContextMenu(node: Node, event: MouseEvent) {
             draggable="true"
             @click="files.selectFromEvent(node.id, $event)"
             @dblclick="emit('open', node)"
+            @pointerdown="taps.down($event, node)"
+            @pointermove="taps.move($event)"
+            @pointerup="taps.up($event, node)"
+            @pointercancel="taps.cancel()"
             @contextmenu.prevent="onContextMenu(node, $event)"
             @dragstart="onDragStart(node, $event)"
             @dragend="drag.end()"

@@ -19,7 +19,7 @@ import { itemAction } from './plan';
  */
 const props = defineProps<{
   card: PlanCard;
-  /** Height cap for the list; it scrolls inside it. */
+  /** Height cap for the list; with one the list scrolls inside it, without one it grows and the host scrolls. */
   listClass?: string;
 }>();
 
@@ -83,7 +83,9 @@ const rows = computed(() => {
 </script>
 
 <template>
-  <ul class="mt-3 overflow-y-auto" :class="listClass">
+  <!-- Capped, the list is its own scroller: the thin rail, held off the checks at the end of each line by a padding
+       that the negative margin pays back, so the rows sit exactly where they do when there is nothing to scroll. -->
+  <ul class="mt-3" :class="listClass && `scroll-thin -mr-2 overflow-y-auto pr-2 ${listClass}`">
     <li v-for="row in rows" :key="row.item.path" class="flex items-center gap-3 border-b border-border-soft py-2.5 last:border-b-0">
       <!-- A picture is the fastest way to tell which file this is; the check on the right is its fate. -->
       <FolderIcon v-if="!row.fileType" :width="THUMB_PX" :height="Math.round(THUMB_PX * 0.8125)" class="mx-0" />

@@ -28,6 +28,21 @@
  *                once drove the app against an in-memory mock with no backend
  *                at all; it went when the mock did.
  *
+ *   app-responsive
+ *                The same SPA and the same kind of instance, but at THREE
+ *                viewport widths at once and against a fixture nobody writes
+ *                to. Read-only is what buys the parallelism: `app` is serial
+ *                because its specs rename and trash rows in one shared tree,
+ *                while these only look, so three widths run side by side
+ *                instead of one after the other.
+ *
+ *                Its data is the demo-assets repository, cloned OUTSIDE this
+ *                one and copied into the run's own directory — there is no
+ *                manifest and no generator here, because the server finds the
+ *                files itself (internal/sync) and the run waits for that to
+ *                settle. `--shots` turns the same stand into a screenshot
+ *                catalogue of every screen at every width.
+ *
  *   deployment   Read-only smoke against a URL that is already live. Never
  *                run as part of a build check.
  *
@@ -43,6 +58,8 @@
  *   node e2e/run.mjs cypress
  *   node e2e/run.mjs cypress --spec "cypress/e2e/13-navigation-ui.cy.ts"
  *   node e2e/run.mjs app --build
+ *   node e2e/run.mjs app-responsive --build
+ *   node e2e/run.mjs app-responsive --shots      # screenshot catalogue, no assertions
  *   node e2e/run.mjs deployment --url https://fm.example.com
  *
  * Exit code is the suite's. A profile that cannot set up what it promised
@@ -72,7 +89,7 @@ const value = (name, fallback = undefined) => {
   return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : fallback;
 };
 
-const PROFILES = ['local', 'cypress', 'app', 'deployment'];
+const PROFILES = ['local', 'cypress', 'app', 'app-responsive', 'deployment'];
 if (!PROFILES.includes(profile)) {
   console.error(`usage: node e2e/run.mjs <${PROFILES.join('|')}> [options]\n`);
   console.error('  local       hermetic Playwright run against a binary this script starts');
@@ -94,6 +111,15 @@ if (!PROFILES.includes(profile)) {
   console.error('    --app-port <n>    port for `vite preview` (default: a free one)');
   console.error('    --browser <name>  chromium (default) | firefox | webkit — ONE engine per run');
   console.error('    --scale           also measure a ten-thousand-file folder (adds ~2 min)');
+  console.error('    --grep <pattern>  pass through to playwright');
+  console.error('');
+  console.error('  app-responsive  the SPA at phone / tablet / desktop widths, on a read-only fixture');
+  console.error('    --binary / --build / --port / --keep as above');
+  console.error('    --app-port <n>    port for `vite preview` (default: a free one)');
+  console.error('    --assets <path>   demo assets checkout (default: a cached clone of');
+  console.error('                      github.com/alfatm/filex-demo-assets)');
+  console.error('    --assets-update   `git pull` that cache before running');
+  console.error('    --shots           take the screenshot catalogue instead of asserting');
   console.error('    --grep <pattern>  pass through to playwright');
   console.error('');
   console.error('  deployment  read-only smoke against a live URL');
@@ -564,8 +590,7 @@ async function adminCookie(baseURL) {
  * carries the full story and the bug it caused). It lives under the throwaway
  * data dir so a run cannot inherit the previous one's files.
  */
-async function seedStorage(baseURL, dataDir, name) {
-  const root = path.join(dataDir, 'storages', name);
+async function seedStorage(baseURL, dataDir, name, root = path.join(dataDir, 'storages', name)) {
   fs.mkdirSync(root, { recursive: true });
   const cookie = await adminCookie(baseURL);
   const res = await fetch(`${baseURL}/api/admin/storages`, {
@@ -580,7 +605,7 @@ async function seedStorage(baseURL, dataDir, name) {
     }),
   });
   if (!res.ok) {
-    throw new Error(`seeding the cypress storage failed: ${res.status} ${await res.text()}`);
+    throw new Error(`seeding the "${name}" storage failed: ${res.status} ${await res.text()}`);
   }
   // Assert the server kept the root we asked for. A storage that silently
   // resolved somewhere else is how every spec ends up sharing one directory.
@@ -590,7 +615,101 @@ async function seedStorage(baseURL, dataDir, name) {
     throw new Error(`storage root drifted: asked ${root}, server stored ${stored}`);
   }
   log(`seeded local storage "${name}" at ${root}`);
-  return name;
+  return { name, id: made?.id ?? made?.storage?.id };
+}
+
+/**
+ * The demo assets, as a directory this run may write into.
+ *
+ * ⚠ Cloned OUTSIDE this repository and copied per run, on purpose. The dataset is 144 files across eight folders
+ * and it is NOT vendored here, not as files and not as a json manifest: nothing in the repo describes the tree, so
+ * nothing in the repo can go stale against it. The copy exists because a storage root is a place the SERVER writes
+ * (trash sidecars, versions), and the cache is a git checkout that has to stay clean enough to `git pull`.
+ *
+ * The cache honours XDG_CACHE_HOME; `--assets <path>` points at a checkout you already have, and
+ * `--assets-update` pulls the cached one before the run.
+ */
+const DEMO_ASSETS_REPO = 'https://github.com/alfatm/filex-demo-assets.git';
+
+function demoAssets(dataDir) {
+  const explicit = value('assets') ?? process.env.E2E_DEMO_ASSETS;
+  let checkout;
+  if (explicit) {
+    checkout = path.resolve(process.cwd(), explicit);
+    if (!fs.existsSync(checkout)) throw new Error(`--assets ${checkout} does not exist`);
+  } else {
+    const cacheHome = process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache');
+    checkout = path.join(cacheHome, 'filex-e2e', 'demo-assets');
+    if (!fs.existsSync(path.join(checkout, '.git'))) {
+      log(`cloning ${DEMO_ASSETS_REPO} into ${checkout} (once; ~65 MB)…`);
+      fs.mkdirSync(path.dirname(checkout), { recursive: true });
+      run('git', ['clone', '--depth', '1', DEMO_ASSETS_REPO, checkout]);
+    } else if (flag('assets-update')) {
+      log(`updating ${checkout}…`);
+      run('git', ['-C', checkout, 'pull', '--ff-only']);
+    }
+  }
+
+  // The dataset lives in `demo/`; a checkout passed with --assets may already point INTO it.
+  const source = fs.existsSync(path.join(checkout, 'demo')) ? path.join(checkout, 'demo') : checkout;
+  const entries = fs.readdirSync(source);
+  if (!entries.length) throw new Error(`the demo assets at ${source} are empty`);
+
+  const root = path.join(dataDir, 'storages', 'demo');
+  log(`copying ${entries.length} top-level entries from ${source}`);
+  fs.cpSync(source, root, { recursive: true });
+  return root;
+}
+
+/**
+ * Wait until the server has catalogued the fixture.
+ *
+ * Nothing tells it what is on disk: `internal/sync` walks the storage and feeds the index, so the run has to wait
+ * for that walk rather than for a fixed number of seconds. The probe is the same listing the app itself reads
+ * (`GET /api/files/manager?q=index`), counted over the root and one level down, and "settled" means the count
+ * stopped changing — a sleep would be either a flake or a minute nobody needed.
+ */
+async function waitForIndex(baseURL, drive, storageId, timeoutMs = 180_000) {
+  const cookie = await adminCookie(baseURL);
+  const list = async (folder) => {
+    const url = `${baseURL}/api/files/manager?q=index&path=${encodeURIComponent(folder)}`;
+    const res = await fetch(url, { headers: { cookie } });
+    if (!res.ok) throw new Error(`listing ${folder} failed: ${res.status} ${await res.text()}`);
+    return (await res.json())?.files ?? [];
+  };
+  const count = async () => {
+    const root = await list(`${drive}://`);
+    let total = root.length;
+    // `type` is "dir" or "file" and `path` is already adapter-qualified (`demo://Design`), so a subfolder needs
+    // no path arithmetic here.
+    for (const entry of root.filter((f) => f.type === 'dir')) {
+      total += (await list(entry.path)).length;
+    }
+    return total;
+  };
+
+  if (storageId !== undefined) {
+    // Rather than waiting out the poll cadence (15 minutes by default): the storage was registered a moment ago,
+    // so ask for its first walk now.
+    const res = await fetch(`${baseURL}/api/admin/storages/${storageId}/sync`, { method: 'POST', headers: { cookie } });
+    if (!res.ok) log(`sync trigger answered ${res.status} — falling back to the worker's own cadence`);
+  }
+
+  const deadline = Date.now() + timeoutMs;
+  let previous = -1;
+  let stable = 0;
+  while (Date.now() < deadline) {
+    const total = await count();
+    // Three readings the same, not two: a walk that is between two directories reports a still number for a moment.
+    stable = total === previous ? stable + 1 : 0;
+    previous = total;
+    if (total > 0 && stable >= 2) {
+      log(`index settled at ${total} nodes`);
+      return total;
+    }
+    await new Promise((r) => setTimeout(r, 1_000));
+  }
+  throw new Error(`the index never settled (last count ${previous}); the sync worker may not have walked "${drive}"`);
 }
 
 /**
@@ -686,7 +805,7 @@ async function main() {
   fs.mkdirSync(storageRootDir, { recursive: true });
 
   if (profile === 'cypress') {
-    const storageName = await seedStorage(baseURL, dataDir, 'cypress-local');
+    const { name: storageName } = await seedStorage(baseURL, dataDir, 'cypress-local');
     log('running the Cypress suite');
     return cypress({
       // ⚠ CYPRESS_BASE_URL, not a --config flag: cypress.config.ts reads this
@@ -703,7 +822,7 @@ async function main() {
   if (profile === 'app') {
     // The drive the specs address every node through (`<drive>://path`). Short
     // and recognisable, because it is in every URL the suite navigates to.
-    const storageName = await seedStorage(baseURL, dataDir, 'live');
+    const { name: storageName } = await seedStorage(baseURL, dataDir, 'live');
     buildApp();
     const appPort = Number(value('app-port')) || (await freePort());
     log(`running the app suite against ${baseURL}, bundle served on port ${appPort}`);
@@ -723,6 +842,27 @@ async function main() {
       // together, so it is asked for rather than paid for on every run.
       ...(flag('scale') ? { E2E_APP_SCALE: '1' } : {}),
     }, 'playwright.app.live.config.ts');
+  }
+
+  if (profile === 'app-responsive') {
+    // Same drive name as the assets folder they come from, because it is in every URL the suite navigates to.
+    const { name: storageName, id } = await seedStorage(baseURL, dataDir, 'demo', demoAssets(dataDir));
+    buildApp();
+    const appPort = Number(value('app-port')) || (await freePort());
+    // ⚠ Before Playwright, not inside a spec: three viewports start at once and would each wait for the same walk,
+    // and a spec that opens a half-catalogued folder fails as "the app is broken".
+    await waitForIndex(baseURL, storageName, id);
+    log(`running the responsive suite against ${baseURL}, bundle served on port ${appPort}`);
+    return playwright([], {
+      FILEX_API_PROXY: baseURL,
+      E2E_APP_PORT: String(appPort),
+      E2E_APP_STORAGE: storageName,
+      E2E_ADMIN_EMAIL: ADMIN_EMAIL,
+      E2E_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      // The catalogue is a different job for the same stand: it takes pictures instead of making assertions, so it
+      // is asked for rather than paid for on every run.
+      ...(flag('shots') ? { E2E_APP_SHOTS: '1' } : {}),
+    }, 'playwright.app.responsive.config.ts');
   }
 
   const env = {

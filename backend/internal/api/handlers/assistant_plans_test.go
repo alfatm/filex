@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,6 +84,119 @@ func TestAssistantPlan_TagsOnlyHappenAfterTheApproval(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, st)
 }
 
+// What the person decided is said by the EXECUTOR, in a message of its own.
+//
+// ⚠ The panel used to report this by sending a chat turn worded as the person
+// ("I approved the plan. 1 done, 0 not done") — words nobody typed, stored in
+// the transcript as theirs, and answered by a model turn that had nothing to
+// add. The server states its own outcome now, as role `system`, and a plan that
+// ran in full is the end of the exchange: the model is not called again.
+func TestAssistantPlan_ApprovedPlanIsReportedByTheExecutor(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "plan_tags", map[string]any{
+			"paths": []string{"main://notes/hello.txt"}, "tags": []string{"sprint"}, "summary": "Tag it",
+		}),
+		textFrame("Proposed."),
+	)
+	srv, client, _ := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+
+	events := turnStream(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", "tag it")
+	planID, _ := planCard(t, events)["plan_id"].(string)
+	rounds := provider.rounds()
+
+	st, raw := doReq(t, client, http.MethodPost, srv.URL+"/api/assistant/sessions/"+session+"/plans/"+planID+"/approve", map[string]any{})
+	require.Equal(t, http.StatusOK, st, "approve: %s", raw)
+	var decided struct {
+		Message struct {
+			Role     string `json:"role"`
+			Content  string `json:"content"`
+			Decision struct {
+				PlanID  string `json:"plan_id"`
+				Status  string `json:"status"`
+				Done    int    `json:"done"`
+				Skipped int    `json:"skipped"`
+			} `json:"plan_decision"`
+		} `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &decided))
+	assert.Equal(t, model.AssistantRoleSystem, decided.Message.Role, "the executor, not the person and not the model")
+	assert.Equal(t, planID, decided.Message.Decision.PlanID)
+	assert.Equal(t, model.PlanDone, decided.Message.Decision.Status)
+	assert.Equal(t, 1, decided.Message.Decision.Done)
+	assert.Equal(t, 0, decided.Message.Decision.Skipped)
+
+	// In the conversation: one question the person asked, and nothing else in their name.
+	roles, contents := conversation(t, client, srv, session)
+	assert.Equal(t, []string{"user", "assistant", "system"}, roles)
+	assert.Equal(t, "tag it", contents[0], "the only thing stored as the person's words is what they typed")
+	assert.Contains(t, contents[2], "approved plan")
+
+	// Nothing was left undone, so there is nothing to let the model back in for.
+	st, raw = doReq(t, client, http.MethodPost, srv.URL+"/api/assistant/sessions/"+session+"/turn", map[string]any{"resume": true})
+	assert.Equal(t, http.StatusBadRequest, st, "resume: %s", raw)
+	assert.Equal(t, rounds, provider.rounds(), "the model was not asked to say anything about a plan that ran in full")
+}
+
+// A refusal ends it. The executor records it, the model is not called, and the
+// conversation waits for whatever the person asks next.
+func TestAssistantPlan_RefusedPlanEndsTheExchange(t *testing.T) {
+	provider := newScriptedProvider(t,
+		toolFrame("call_1", "plan_tags", map[string]any{
+			"paths": []string{"main://notes/hello.txt"}, "tags": []string{"sprint"}, "summary": "Tag it",
+		}),
+		textFrame("Proposed."),
+	)
+	srv, client, _ := assistantFiles(t, provider)
+	session := newSession(t, srv, client)
+
+	events := turnStream(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", "tag it")
+	planID, _ := planCard(t, events)["plan_id"].(string)
+	rounds := provider.rounds()
+
+	st, raw := doReq(t, client, http.MethodPost, srv.URL+"/api/assistant/sessions/"+session+"/plans/"+planID+"/cancel", map[string]any{})
+	require.Equal(t, http.StatusOK, st, "cancel: %s", raw)
+	var decided struct {
+		Message struct {
+			Role     string `json:"role"`
+			Content  string `json:"content"`
+			Decision struct {
+				Status string `json:"status"`
+			} `json:"plan_decision"`
+		} `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &decided))
+	assert.Equal(t, model.AssistantRoleSystem, decided.Message.Role)
+	assert.Equal(t, model.PlanCancelled, decided.Message.Decision.Status)
+	assert.Contains(t, decided.Message.Content, "refused")
+
+	roles, _ := conversation(t, client, srv, session)
+	assert.Equal(t, []string{"user", "assistant", "system"}, roles, "nothing was said in the person's name")
+
+	st, raw = doReq(t, client, http.MethodPost, srv.URL+"/api/assistant/sessions/"+session+"/turn", map[string]any{"resume": true})
+	assert.Equal(t, http.StatusBadRequest, st, "resume: %s", raw)
+	assert.Equal(t, rounds, provider.rounds(), "a refusal is not something the model is asked to answer")
+}
+
+// conversation is the stored turns of one session: what each was, and what it said.
+func conversation(t *testing.T, client *http.Client, srv *httptest.Server, session string) (roles, contents []string) {
+	t.Helper()
+	st, raw := doReq(t, client, http.MethodGet, srv.URL+"/api/assistant/sessions/"+session, nil)
+	require.Equal(t, http.StatusOK, st, "messages: %s", raw)
+	var log struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &log))
+	for _, m := range log.Messages {
+		roles = append(roles, m.Role)
+		contents = append(contents, m.Content)
+	}
+	return roles, contents
+}
+
 // ⚠⚠ The fingerprint. The person approved the file they were shown; if it
 // changed in between, the item is skipped rather than applied to something else.
 func TestAssistantPlan_SkipsAFileThatChangedAfterTheProposal(t *testing.T) {
@@ -120,6 +234,13 @@ func TestAssistantPlan_SkipsAFileThatChangedAfterTheProposal(t *testing.T) {
 	tags, err := store.GetNodeTags(context.Background(), node.ID)
 	require.NoError(t, err)
 	assert.Empty(t, tags)
+
+	// An item the plan did not do is work still outstanding, and the one case where the assistant is let back in —
+	// without anybody typing anything — to deal with it.
+	resumed := turnStreamWith(t, client, srv.URL+"/api/assistant/sessions/"+session+"/turn", map[string]any{"resume": true}, nil)
+	assert.NotEmpty(t, resumed, "the turn ran")
+	roles, _ := conversation(t, client, srv, session)
+	assert.Equal(t, []string{"user", "assistant", "system", "assistant"}, roles, "a resumed turn stores no question")
 }
 
 // A refused plan runs never, and says so when it is asked to.
