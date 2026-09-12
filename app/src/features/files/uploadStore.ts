@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { repository } from '@/data';
-import { DUPLICATE_NAME, FileLimitExceeded, UploadConflict, UploadRateLimited } from '@/data/repository';
+import { DUPLICATE_NAME, FileLimitExceeded, QuotaExceeded, UploadConflict, UploadRateLimited } from '@/data/repository';
 import type { Node, UploadSession } from '@/data/types';
 import { i18n } from '@/i18n';
 import { useFilesStore } from '@/stores/files';
@@ -644,6 +644,16 @@ export const useUploadStore = defineStore('uploads', () => {
         if (stopped && stopped.state === 'running') {
           stopped.state = 'failed';
           stopped.error = t('upload.fileLimit', { limit: error.limit.toLocaleString() });
+        }
+        return undefined;
+      }
+      // The drive is full, which is the same kind of answer: a ceiling, not a fault, and a row that says so sends
+      // the person to the one thing that helps — deleting something — instead of to their network settings.
+      if (error instanceof QuotaExceeded) {
+        const stopped = live();
+        if (stopped && stopped.state === 'running') {
+          stopped.state = 'failed';
+          stopped.error = t('upload.quotaExceeded');
         }
         return undefined;
       }

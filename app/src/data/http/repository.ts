@@ -1,4 +1,4 @@
-import { ACCOUNT_DISABLED, DUPLICATE_NAME, FileLimitExceeded, FORBIDDEN, INVALID_CODE, INVALID_NAME, INVALID_CREDENTIALS, NOT_FOUND, OPERATION_PENDING, RBAC_DISABLED, ROLE_FORBIDDEN, SIGN_IN_LIMITED, TOTP_REQUIRED, UploadConflict, UploadRateLimited, WRONG_PASSWORD, type Repository } from '../repository';
+import { ACCOUNT_DISABLED, DUPLICATE_NAME, FileLimitExceeded, FORBIDDEN, INVALID_CODE, INVALID_NAME, INVALID_CREDENTIALS, NOT_FOUND, OPERATION_PENDING, QuotaExceeded, RBAC_DISABLED, ROLE_FORBIDDEN, SIGN_IN_LIMITED, TOTP_REQUIRED, UploadConflict, UploadRateLimited, WRONG_PASSWORD, type Repository } from '../repository';
 import { windowBounds } from '../dateWindow';
 import { MODIFIED_WINDOW_DAYS, SIZE_PRESET_BYTES, TYPE_GROUPS } from '../listingFilter';
 import { extensionsOf } from '../fileTypes';
@@ -452,12 +452,14 @@ function asRoleForbidden(error: unknown): never {
 const RETRY_AFTER_FALLBACK_SECONDS = 5;
 
 /**
- * The two quota refusals an upload (or a new file) can meet, plus the role one. `QUOTA_EXCEEDED` is left as it is:
- * the server's own sentence already says the account is full, and there is nothing per-file to add to it.
+ * The three quota refusals an upload (or a new file) can meet, plus the role one.
  */
 function asQuotaRefusal(error: unknown): never {
   if (error instanceof HttpError) {
     const code = codeOf(error);
+    // The account is full. Nothing per-file is wrong and waiting will not help, so this is a failure with a reason
+    // — it used to fall through to the generic HTTP error and reach the tray as a bare "Upload failed".
+    if (error.status === 413 && code === 'QUOTA_EXCEEDED') throw new QuotaExceeded();
     if (error.status === 413 && code === 'FILE_LIMIT_EXCEEDED') {
       throw new FileLimitExceeded(numberOf(error, 'limit') ?? 0, numberOf(error, 'used') ?? 0);
     }

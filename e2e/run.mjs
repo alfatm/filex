@@ -92,6 +92,8 @@ if (!PROFILES.includes(profile)) {
   console.error('  app         the end-user SPA against the same kind of instance');
   console.error('    --binary / --build / --port / --keep as above');
   console.error('    --app-port <n>    port for `vite preview` (default: a free one)');
+  console.error('    --browser <name>  chromium (default) | firefox | webkit — ONE engine per run');
+  console.error('    --scale           also measure a ten-thousand-file folder (adds ~2 min)');
   console.error('    --grep <pattern>  pass through to playwright');
   console.error('');
   console.error('  deployment  read-only smoke against a live URL');
@@ -714,6 +716,12 @@ async function main() {
       E2E_APP_STORAGE: storageName,
       E2E_ADMIN_EMAIL: ADMIN_EMAIL,
       E2E_ADMIN_PASSWORD: ADMIN_PASSWORD,
+      // One engine per run: the specs are serial against one server and one drive, so a matrix would have two
+      // browsers editing the same tree. The config rejects a name it does not know.
+      E2E_APP_BROWSER: value('browser', 'chromium'),
+      // The large-folder measurement builds and indexes ten thousand files — longer than the rest of the suite
+      // together, so it is asked for rather than paid for on every run.
+      ...(flag('scale') ? { E2E_APP_SCALE: '1' } : {}),
     }, 'playwright.app.live.config.ts');
   }
 

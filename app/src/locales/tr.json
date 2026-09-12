@@ -265,7 +265,8 @@
     "rateLimited": "Yükleme sınırına ulaşıldı · {wait} sonra yeniden deneyin",
     "retryInMinutes": "{minutes} dk",
     "retryInHours": "{hours} sa",
-    "fileLimit": "Dosya sınırına ulaşıldı ({limit})"
+    "fileLimit": "Dosya sınırına ulaşıldı ({limit})",
+    "quotaExceeded": "Yeterli alan yok — sürücü dolu"
   },
   "topbar": {
     "searchPlaceholder": "{storage} içinde ara…",

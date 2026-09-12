@@ -265,7 +265,8 @@
     "rateLimited": "Достигнут лимит загрузки · повтор через {wait}",
     "retryInMinutes": "{minutes} мин",
     "retryInHours": "{hours} ч",
-    "fileLimit": "Достигнут лимит числа файлов ({limit})"
+    "fileLimit": "Достигнут лимит числа файлов ({limit})",
+    "quotaExceeded": "Недостаточно места — диск заполнен"
   },
   "topbar": {
     "searchPlaceholder": "Поиск в {storage}…",

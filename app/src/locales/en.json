@@ -265,7 +265,8 @@
     "rateLimited": "Upload limit reached · try again in {wait}",
     "retryInMinutes": "{minutes} min",
     "retryInHours": "{hours} h",
-    "fileLimit": "File limit reached ({limit})"
+    "fileLimit": "File limit reached ({limit})",
+    "quotaExceeded": "Not enough room — the drive is full"
   },
   "topbar": {
     "searchPlaceholder": "Search in {storage}…",

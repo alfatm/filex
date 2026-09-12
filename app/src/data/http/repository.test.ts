@@ -919,13 +919,19 @@ describe('HttpRepository', () => {
 
   // 413 and 429 both say "not this upload", and each carries the figure the row has to print: the ceiling that was
   // met, or how long the window still has to run.
-  it('reads the two quota refusals of an upload, and takes the wait from the header when the body has none', async () => {
+  it('reads the three quota refusals of an upload, and takes the wait from the header when the body has none', async () => {
     const refuse = (status: number, body: unknown, headers?: Record<string, string>) =>
       vi.stubGlobal('fetch', async () => ({ ok: false, status, headers: new Headers(headers ?? {}), text: async () => JSON.stringify(body) }) as Response);
     const upload = () => new HttpRepository().uploadFile('main://Docs', { name: 'a.txt', size: 3, blob: new Blob(['abc']) });
 
     refuse(413, { error: 'file limit reached', code: 'FILE_LIMIT_EXCEEDED', limit: 5000, used: 5000 });
     await expect(upload()).rejects.toMatchObject({ name: 'FileLimitExceeded', limit: 5000, used: 5000 });
+
+    // A full account used to come through as the generic HTTP error, and the tray printed a bare "Upload failed"
+    // — measured against a stand with a quota set. It is a named refusal now so the row can say what stands in
+    // the way, which is the one thing that tells somebody to delete something rather than check their network.
+    refuse(413, { error: 'quota exceeded', code: 'QUOTA_EXCEEDED' });
+    await expect(upload()).rejects.toMatchObject({ name: 'QuotaExceeded' });
 
     refuse(429, { error: 'too many uploads', code: 'UPLOAD_RATE_LIMITED', retry_after_seconds: 720 });
     await expect(upload()).rejects.toMatchObject({ name: 'UploadRateLimited', retryAfterSeconds: 720 });

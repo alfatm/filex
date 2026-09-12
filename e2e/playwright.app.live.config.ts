@@ -56,6 +56,22 @@ if (!existsSync(path.join(APP_DIR, 'dist', 'index.html'))) {
   );
 }
 
+/**
+ * Which engine to drive. §26 of the audit had no verdict for anything but Chromium because only Chromium was
+ * installed; `node e2e/run.mjs app --browser firefox` is that second run.
+ *
+ * ⚠ One engine per run, not a matrix. These specs are serial against ONE server, ONE drive and ONE admin: two
+ * projects would have two browsers renaming and trashing each other's rows in the same tree.
+ *
+ * ⚠ WebKit needs system libraries Playwright does not ship (libgtk-4, the gstreamer set). `playwright install
+ * webkit` downloads the browser but cannot make it run; `playwright install-deps webkit` needs root.
+ */
+const ENGINES = { chromium: 'Desktop Chrome', firefox: 'Desktop Firefox', webkit: 'Desktop Safari' } as const;
+const BROWSER = (process.env.E2E_APP_BROWSER ?? 'chromium') as keyof typeof ENGINES;
+if (!(BROWSER in ENGINES)) {
+  throw new Error(`E2E_APP_BROWSER=${BROWSER} is not one of ${Object.keys(ENGINES).join(', ')}.`);
+}
+
 /** Cookies for the deterministic admin, minted once by `tests/app-live/auth.setup.ts`. */
 const AUTH_STATE = path.join(E2E_DIR, 'test-results', 'app-live', 'auth.json');
 
@@ -95,8 +111,8 @@ export default defineConfig({
   projects: [
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
     {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'], viewport: { width: 1672, height: 941 }, storageState: AUTH_STATE },
+      name: BROWSER,
+      use: { ...devices[ENGINES[BROWSER]], viewport: { width: 1672, height: 941 }, storageState: AUTH_STATE },
       dependencies: ['setup'],
     },
   ],

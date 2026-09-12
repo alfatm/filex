@@ -100,6 +100,21 @@ export const ROLE_FORBIDDEN = 'roleForbidden';
 export const RBAC_DISABLED = 'rbacDisabled';
 
 /**
+ * The account is out of room (413 `QUOTA_EXCEEDED`). A class of its own rather than the generic HTTP error it used
+ * to be: measured on a stand with a quota configured, the tray said only "Upload failed", which sends somebody
+ * looking for a network problem they do not have and cannot be corrected from anywhere else in the UI.
+ *
+ * It carries no numbers because the server sends none with this refusal — the sidebar's bar already states the
+ * ceiling, and re-reading it here to decorate a message would be a second request on a failing path.
+ */
+export class QuotaExceeded extends Error {
+  constructor() {
+    super('quotaExceeded');
+    this.name = 'QuotaExceeded';
+  }
+}
+
+/**
  * The account may hold no more files (413 `FILE_LIMIT_EXCEEDED`). A class rather than a message, like
  * `UploadConflict`: the row has to print the ceiling, and a message constant cannot carry it.
  */
