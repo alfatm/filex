@@ -524,7 +524,7 @@ filemanager/
 ├── demo/                           # standalone HTML demos
 ├── docker/
 │   ├── Dockerfile                  # both images: --build-arg RUNTIME_BASE
-│   ├── Dockerfile.tools            # the thumbnail toolchain, released apart
+│   │                               # (incl. the `tools` thumbnail toolchain stage)
 │   └── Dockerfile.local            # local hot-fix builds from a host dist
 │
 ├── scripts/

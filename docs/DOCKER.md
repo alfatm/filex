@@ -49,9 +49,10 @@ with a stated reason — not a crash and not a silent failure.
 
 ### The toolchain image
 
-The programs the thumbnailer shells out to are **not** in `docker/Dockerfile`.
-They live in their own image, built from `docker/Dockerfile.tools` and
-published by its own workflow (`.github/workflows/tools-image.yml`) as
+The programs the thumbnailer shells out to live in the **`tools` stage** of
+`docker/Dockerfile` — a stage nothing reaches unless `RUNTIME_BASE` names it,
+so it cannot fatten `slim`. The same stage is also published as an image by its
+own workflow (`.github/workflows/tools-image.yml`) as
 `ghcr.io/brf-tech/filex-tools:alpine<version>-<YYYYMMDD>`:
 
 ```
@@ -64,11 +65,21 @@ release that touches no tool ships one binary layer on top of a base the
 registry already has, instead of re-resolving and re-downloading the whole
 toolchain on both architectures.
 
-`full` **is** that image plus the binary, so `RUNTIME_BASE` is the entire
-slim/full switch — which also means `docker/Dockerfile` installs no thumbnail
-tool at all and cannot accidentally fatten `slim`.
+`RUNTIME_BASE` is the entire slim/full switch, and it takes **either a stage
+name or an image reference**:
 
-The tag filex is built on is **pinned and dated** in `TOOLS_IMAGE`
+| `RUNTIME_BASE` | Result | Registry needed |
+|---|---|---|
+| unset (`alpine:3.20`) | slim | — |
+| `tools` | full, toolchain built from this Dockerfile | no |
+| a published toolchain image | full, toolchain pulled | yes |
+
+The published image is a **cache, not a dependency**: it exists so a weekly
+release does not re-resolve and re-download ~340 MB of packages that change a
+few times a year. A fork, an air-gapped build, or anyone without access to that
+namespace passes `tools` and gets the same result from source.
+
+The tag releases are built on is **pinned and dated** in `TOOLS_TAG`
 (`.github/workflows/release.yml`). Republishing the toolchain does not change
 any release until someone bumps it.
 
@@ -78,14 +89,13 @@ any release until someone bumps it.
 # slim — the default base is plain alpine
 docker build -t filex:slim -f docker/Dockerfile .
 
-# full — pass the toolchain image as the runtime base
+# full — build the toolchain from the same recipe (no registry needed)
+docker build -t filex:full -f docker/Dockerfile \
+  --build-arg RUNTIME_BASE=tools .
+
+# or reuse the published toolchain image instead of rebuilding it
 docker build -t filex:full -f docker/Dockerfile \
   --build-arg RUNTIME_BASE=ghcr.io/brf-tech/filex-tools:alpine3.20-20260911 .
-
-# or build the toolchain yourself first (no registry needed)
-docker build -t filex-tools:local -f docker/Dockerfile.tools docker/
-docker build -t filex:full -f docker/Dockerfile \
-  --build-arg RUNTIME_BASE=filex-tools:local .
 ```
 
 Or through Compose, which is the same recipe with the tag and base read from
@@ -100,7 +110,8 @@ Both variants come from one multi-stage Dockerfile:
 1. `frontend-build` — node 20 + pnpm, builds packages, the admin UI and the end-user app (`/app/`)
 2. `embed-prep` — stages the dist files
 3. `backend-build` — golang 1.25, builds with `//go:embed` consuming the staged dist
-4. `runtime` — `FROM ${RUNTIME_BASE}`: `alpine:3.20` for slim, the toolchain image for full, plus ca-certificates/tzdata, the container metadata and the binary
+4. `tools` — the thumbnail toolchain; off the main path, built only when `RUNTIME_BASE=tools`
+5. `runtime` — `FROM ${RUNTIME_BASE}`: `alpine:3.20` for slim, the `tools` stage or the published toolchain image for full, plus ca-certificates/tzdata, the container metadata and the binary
 
 Pass build-args to embed version metadata into the binary:
 ```bash

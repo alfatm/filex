@@ -50,9 +50,11 @@ env:
   REGISTRY: ${{ vars.REGISTRY || 'ghcr.io' }}
   IMAGE_BASE: ${{ vars.IMAGE_BASE || 'ghcr.io/brf-tech' }}
 
-  # The toolchain tag the `full` image is built on (docker/Dockerfile.tools,
-  # published by tools-image.yml). Dated, never floating: an ffmpeg upgrade
-  # must not land inside a release nobody built for it.
+  # The toolchain tag the `full` image is built on — the `tools` stage of
+  # docker/Dockerfile, published by tools-image.yml. A release pins the image
+  # rather than rebuilding the stage so ~340 MB of packages are not re-resolved
+  # weekly. Dated, never floating: an ffmpeg upgrade must not land inside a
+  # release nobody built for it.
   TOOLS_TAG: alpine3.20-20260911
 
 jobs:

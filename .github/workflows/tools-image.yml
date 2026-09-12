@@ -1,19 +1,20 @@
 name: Toolchain image
 
 # Publishes <IMAGE_BASE>/filex-tools — the programs the thumbnailer shells out
-# to (docker/Dockerfile.tools), which the `full` filex image is built on.
+# to, which the `full` filex image is built on. It is the `tools` stage of
+# docker/Dockerfile, published as an image.
 #
-# It is a separate workflow, on a separate trigger, because that is the whole
-# point of the split: ffmpeg, Ghostscript, poppler, librsvg and the fonts are
-# ~340 MB that change a few times a year, while filex releases weekly. Before
-# the split, every release re-resolved and re-downloaded all of it on both
-# architectures; now a release that changes no tool reuses layers the registry
-# already has.
+# What this workflow buys is CACHING, not capability: `full` builds from source
+# with --build-arg RUNTIME_BASE=tools and needs nothing from any registry. But
+# ffmpeg, Ghostscript, poppler, librsvg and the fonts are ~340 MB that change a
+# few times a year, while filex releases weekly — so a release pins the
+# published image instead, and one that changes no tool reuses layers the
+# registry already has.
 #
 # Run it when: the alpine base moves, a CVE lands in one of the tools, or the
-# tool list in docker/Dockerfile.tools changes. Then bump TOOLS_TAG in
-# release.yml to the dated tag this produced — a release never picks up a new
-# toolchain on its own.
+# tool list in the `tools` stage changes. Then bump TOOLS_TAG in release.yml to
+# the dated tag this produced — a release never picks up a new toolchain on
+# its own.
 #
 # Architecture handling mirrors the `docker` job in release.yml: one native
 # runner per architecture (no QEMU — emulating this apk layer is precisely the
@@ -29,9 +30,15 @@ on:
         default: "alpine3.20"
   # A change to the recipe is published automatically; the dated tag it gets
   # is inert until a human points release.yml at it.
+  #
+  # ⚠ The path is the whole application Dockerfile, so this over-triggers: an
+  # edit to a frontend or Go stage republishes a toolchain identical to the
+  # last one. Wasted CI, nothing more — the dated tag no release points at is
+  # inert, and the floating `alpine<version>` tag is documented as never
+  # pinnable by a build.
   push:
     branches: [main]
-    paths: ["docker/Dockerfile.tools", ".github/workflows/tools-image.yml"]
+    paths: ["docker/Dockerfile", ".github/workflows/tools-image.yml"]
 
 permissions:
   packages: write
@@ -68,10 +75,12 @@ jobs:
       - id: build
         uses: docker/build-push-action@v6
         with:
-          # docker/ only — the recipe needs nothing from the repo tree, and a
-          # narrow context keeps an application change from invalidating it.
+          # docker/ only — the `tools` stage has no COPY, so it needs nothing
+          # from the repo tree, and a narrow context keeps an application change
+          # from invalidating it.
           context: docker
-          file: docker/Dockerfile.tools
+          file: docker/Dockerfile
+          target: tools
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
 

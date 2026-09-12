@@ -31,8 +31,9 @@ services:
     # `docker compose up` pulls the image above. `up --build` builds it from
     # this tree instead — the admin SPA, the end-user app and the Go binary,
     # all embedded. FILEX_RUNTIME_BASE picks slim (the default, plain alpine)
-    # or full (the published toolchain image, see docker/Dockerfile.tools);
-    # keep it in step with the tag in FILEX_IMAGE. BUILD_APP=0 drops the
+    # or full (`tools` to build the toolchain from the same Dockerfile, or a
+    # published toolchain image to pull it); keep it in step with the tag in
+    # FILEX_IMAGE. BUILD_APP=0 drops the
     # end-user app from the build.
     build:
       context: .

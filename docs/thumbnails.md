@@ -226,17 +226,23 @@ fonts (noto/liberation/dejavu)  → so PDF text isn't rendered as boxes
 > — a kind whose tool is missing reports `false` there and lands its files in
 > `skipped`, never in a placeholder.
 
-These tools are not installed by the filex recipe: they are a **separate
-image**, `docker/Dockerfile.tools`, published as
-`filex-tools:alpine<version>-<YYYYMMDD>` on its own cycle (see [The toolchain
-image](DOCKER.md#the-toolchain-image)), and `full` is that image with the filex
-binary on top (`--build-arg RUNTIME_BASE`).
-They change a few times a year and filex changes weekly, so the two have no
-reason to be rebuilt together — and `slim` cannot accidentally acquire them,
-because no line of `docker/Dockerfile` installs a thumbnail tool.
+These tools are not on the path that builds `slim`: they are the **`tools`
+stage** of `docker/Dockerfile`, which nothing reaches unless `RUNTIME_BASE`
+asks for it (see [The toolchain image](DOCKER.md#the-toolchain-image)). `full`
+is that stage with the filex binary on top:
 
-If you build your own leaner image, copy `docker/Dockerfile.tools`, drop what
-you don't need and point `RUNTIME_BASE` at it — the capability probe will
+```bash
+docker build -f docker/Dockerfile --build-arg RUNTIME_BASE=tools -t filex:full .
+```
+
+Because they change a few times a year and filex changes weekly, the stage is
+*also* published as `filex-tools:alpine<version>-<YYYYMMDD>` and releases pin
+that image instead of rebuilding it — a cache, not a requirement. Either way
+`slim` cannot accidentally acquire the tools: its runtime base is plain alpine
+and the stage is not in its graph.
+
+If you want a leaner variant, copy the `tools` stage under another name, drop
+what you don't need and point `RUNTIME_BASE` at it — the capability probe will
 report `video=false` / `pdf=false` / etc. and the pipeline routes around the
 missing generators automatically.
 

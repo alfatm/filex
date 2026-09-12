@@ -231,15 +231,15 @@ jobs:
       # Build both variants end-to-end (frontend + backend + embed) to catch
       # multi-stage regressions. No push — release publishing is separate.
       #
-      # The toolchain image is built HERE rather than pulled from ghcr, so this
-      # job also covers docker/Dockerfile.tools and stays green on a PR that
-      # edits the tool list before anything is published. The full build reuses
-      # every stage of the slim one; only the last FROM differs.
-      - name: Build toolchain image
-        run: docker build -f docker/Dockerfile.tools -t filex-tools:ci docker/
+      # The toolchain is built HERE rather than pulled from ghcr — RUNTIME_BASE
+      # names the `tools` STAGE, so this job covers the tool list itself and
+      # stays green on a PR that edits it before anything is published. It is
+      # also the path a fork or an air-gapped build takes, so CI exercises the
+      # one that must not depend on a registry. The full build reuses every
+      # stage of the slim one; only the last FROM differs.
       - name: Build slim image
         run: docker build -f docker/Dockerfile -t filex:ci-slim .
       - name: Build full image
         run: |
           docker build -f docker/Dockerfile \
-            --build-arg RUNTIME_BASE=filex-tools:ci -t filex:ci-full .
+            --build-arg RUNTIME_BASE=tools -t filex:ci-full .

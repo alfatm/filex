@@ -2,16 +2,20 @@
 #
 #   docker build -f docker/Dockerfile -t filex:slim .                  # default
 #   docker build -f docker/Dockerfile -t filex:full \
-#     --build-arg RUNTIME_BASE=ghcr.io/brf-tech/filex-tools:alpine3.20-20260911 .
+#     --build-arg RUNTIME_BASE=tools .
 #
 # slim carries the Go binary and nothing else. Image thumbnails are produced in
 # pure Go (internal/thumb/image.go) and work there; every thumbnail that shells
-# out to another program needs the toolchain, which lives in its OWN image —
-# docker/Dockerfile.tools, released on its own cycle because ffmpeg and
-# Ghostscript change a few times a year and filex changes weekly. filex probes
-# for each tool at start (internal/capability) and reports what it found on
-# /api/files/capabilities, so a missing one is a disabled feature with a
-# reason, not a crash.
+# out to another program needs the toolchain, which is the `tools` stage below.
+# filex probes for each tool at start (internal/capability) and reports what it
+# found on /api/files/capabilities, so a missing one is a disabled feature with
+# a reason, not a crash.
+#
+# RUNTIME_BASE takes a stage name OR an image reference, which is what keeps
+# the two concerns apart: `tools` builds the toolchain from this file with no
+# registry involved, and a published toolchain image skips that build to reuse
+# layers the registry already has. CI passes the image; everyone else can pass
+# the stage. Neither is required to have the other.
 #
 # ⚠ This replaced `--target slim|full`. The targets are gone on purpose: the
 # recipe below installs NO thumbnail tool, so there is no longer a line anyone
@@ -135,16 +139,71 @@ RUN MODULE="$(go list -m)" && \
     ./cmd/filex
 
 # ---------------------------------------------------------------------------
+# Stage 4: runtime toolchain (off the main path)
+# ---------------------------------------------------------------------------
+# The programs the thumbnailer shells out to. Only built when something asks
+# for it: BuildKit builds a stage only if the target depends on it, and the
+# default target (runtime on plain alpine) does not. So `slim` never pays for
+# this, and no line added here can fatten it — the structural guarantee that
+# the old `--target slim|full` did not have.
+#
+#   docker build -f docker/Dockerfile --build-arg RUNTIME_BASE=tools .
+#
+# It lives here rather than in a file of its own so that building `full` from
+# source needs no image from any registry: `FROM ${RUNTIME_BASE}` resolves a
+# STAGE NAME before it resolves a repository, so `RUNTIME_BASE=tools` is a
+# local build and `RUNTIME_BASE=<a published image>` is the cached one, from
+# the same recipe. CI passes the published image (see "Runtime" below); a fork,
+# an air-gapped build or anyone without access to that namespace passes `tools`.
+#
+#   ca-certificates — outbound TLS (S3, WebDAV, OIDC, update checks).
+#   tzdata          — local-time rendering and scheduled jobs.
+# Both are installed by the runtime stage too, which is a no-op on this base;
+# they are here so this stage is a complete runtime base on its own.
+#
+#   ffmpeg                 — video + audio thumbnails (thumb/video.go, audio.go).
+#   ghostscript + poppler  — PDF -> JPEG (page 1). gs preferred, pdftoppm as
+#                            fallback (thumb/pdf.go).
+#   rsvg-convert           — SVG rasterisation (thumb/svg.go).
+#   fonts                  — without them Ghostscript renders the non-ASCII text
+#                            of a PDF that embeds no font as boxes.
+#
+# ⚠ LibreOffice is NOT here, and adding it costs ~730 MB (libreoffice 558 MB +
+# the openjdk17 JRE its xlsx/docx pipeline needs, 172 MB — measured on
+# alpine:3.20). Office thumbnails go through a conversion SERVICE instead:
+# FILEX_LIBREOFFICE_URL, or the `libreoffice` profile in docker-compose.yml.
+#
+# ⚠ Nothing in filex executes ImageMagick — it was installed and probed for
+# years without a single call site. Image thumbnails are pure Go
+# (thumb/image.go). Do not add it back without a generator that uses it.
+FROM alpine:3.20 AS tools
+RUN apk --no-cache add \
+        ca-certificates \
+        tzdata \
+        ffmpeg \
+        ghostscript \
+        poppler-utils \
+        rsvg-convert \
+        ttf-liberation \
+        ttf-dejavu \
+        font-noto \
+        font-noto-cjk
+
+# ---------------------------------------------------------------------------
 # Runtime
 # ---------------------------------------------------------------------------
 # RUNTIME_BASE is the whole slim/full switch:
 #
-#   alpine:3.20                              → slim (~179 MB)
-#   ghcr.io/brf-tech/filex-tools:alpine3.20-*  → full (~535 MB)
+#   alpine:3.20   (the default)              → slim (~179 MB)
+#   tools         (the stage above)          → full (~535 MB), built here
+#   <a published toolchain image>            → full (~535 MB), pulled
 #
-# The tools tag is PINNED by whoever builds (CI passes it explicitly; see
-# .github/workflows/release.yml), never floating: a toolchain upgrade has to be
-# a deliberate change, not something that lands in a release by itself.
+# The last form is an optimisation, not a dependency: it exists so a weekly
+# release does not rebuild ~340 MB of packages that change a few times a year.
+# When it is used the tag is PINNED and dated by whoever builds (CI passes it
+# explicitly; see .github/workflows/release.yml), never floating — a toolchain
+# upgrade has to be a deliberate change, not something that lands in a release
+# by itself.
 #
 # ca-certificates and tzdata are installed here rather than assumed, so the
 # default alpine base works with no network dependency on a published tools
